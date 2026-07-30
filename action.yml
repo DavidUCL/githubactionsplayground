@@ -1,0 +1,152 @@
+name: "Moodle Playground boot-verify"
+description: >-
+  Boot a moodle-playground blueprint headlessly and emit a closed-schema
+  verdict (pass / verify_fail / infra_fail / rejected). Never fails the job
+  except under a pull_request_target trigger; callers gate on the `status`
+  output AFTER uploading the evidence artifact.
+inputs:
+  blueprint-url:
+    description: "HTTPS URL of the blueprint JSON to verify"
+    required: true
+  playground-host:
+    description: "Playground deployment to boot against"
+    required: false
+    default: "https://moodle-playground.com"
+  timeout-seconds:
+    description: "Hard wall for the browser phase"
+    required: false
+    default: "420"
+  blueprint-hosts:
+    description: "Comma-separated host allowlist for blueprint-url"
+    required: false
+    default: "raw.githubusercontent.com"
+  data-hosts:
+    description: "Comma-separated host allowlist for URLs inside the blueprint"
+    required: false
+    default: "raw.githubusercontent.com"
+  accepted-origins:
+    description: >-
+      Comma-separated extra origins the boot may legitimately end on
+      (the playground-host origin is always accepted). Production
+      moodle-playground.com redirects to its GitHub Pages origin.
+    required: false
+    default: "https://ateeducacion.github.io"
+  artifacts-dir:
+    description: "Directory where evidence + verdict.json are written"
+    required: false
+    default: "boot-verify-out"
+outputs:
+  status:
+    description: "pass | verify_fail | infra_fail | rejected"
+    value: ${{ steps.verdict.outputs.status }}
+  error-class:
+    description: "Closed error_class enum (none on pass)"
+    value: ${{ steps.verdict.outputs.error-class }}
+  verdict-path:
+    description: "Path to verdict.json"
+    value: ${{ steps.verdict.outputs.verdict-path }}
+runs:
+  using: "composite"
+  steps:
+    # Invariant: this action must never run under pull_request_target —
+    # that trigger hands a write token + secrets to a job that executes
+    # PR-controlled code. Hard fail, no override input.
+    - name: Refuse pull_request_target
+      shell: bash
+      run: |
+        if [ "${GITHUB_EVENT_NAME:-}" = "pull_request_target" ]; then
+          echo "::error::boot-verify must never run on pull_request_target (see SPEC.md)"
+          exit 1
+        fi
+
+    # artifacts-dir is joined onto github.workspace and then recursively
+    # DELETED by preflight, so a traversal or absolute path would let a caller
+    # aim that at anything the job can write. Validate before any use.
+    - name: Validate artifacts-dir
+      shell: bash
+      env:
+        ARTIFACTS_DIR: ${{ inputs.artifacts-dir }}
+      run: |
+        case "$ARTIFACTS_DIR" in
+          "" | /* | *..* | *$'\n'*)
+            echo "::error::artifacts-dir must be a relative path without '..'"
+            exit 1 ;;
+        esac
+
+    # Setup failures must NOT take the job red: this action promises a verdict,
+    # and a registry 503 or a runner where `--with-deps` cannot apt-get is an
+    # infrastructure problem, not a blueprint problem. Composite steps cannot
+    # use continue-on-error, so the fallback is in-shell: record the failure
+    # and let the later steps produce infra_fail/browser_launch_failed.
+    - name: Install harness dependencies
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        # Outside the workspace: preflight wipes OUT_DIR, and this marker has
+        # to survive that.
+        SETUP_FAILED_FILE: ${{ runner.temp }}/boot-verify-setup-failed
+      # --ignore-scripts: nothing in the dependency tree needs a postinstall
+      # (browsers come from `playwright install`), and a lifecycle script here
+      # runs arbitrary code in the job that renders the boot we assert on.
+      run: |
+        rm -f "$SETUP_FAILED_FILE"
+        npm ci --ignore-scripts || echo "npm ci failed" >"$SETUP_FAILED_FILE"
+
+    # No browser cache, deliberately. A cache entry is unsigned code that
+    # `playwright install` would then skip re-downloading; anyone able to run
+    # a workflow on any branch can write the key, and the restored browser
+    # renders the boot we assert on — forged log lines, forged pass. The
+    # ~40s download is cheaper than that trust assumption (see SPEC.md §6).
+    - name: Install chromium
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        SETUP_FAILED_FILE: ${{ runner.temp }}/boot-verify-setup-failed
+      run: |
+        if [ -f "$SETUP_FAILED_FILE" ]; then
+          echo "skipping browser install: dependencies are missing"
+          exit 0
+        fi
+        npx playwright install --with-deps chromium \
+          || echo "playwright install failed" >"$SETUP_FAILED_FILE"
+
+    - name: Preflight (allowlists + step-gate + expectations)
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        BLUEPRINT_URL: ${{ inputs.blueprint-url }}
+        BLUEPRINT_HOSTS: ${{ inputs.blueprint-hosts }}
+        DATA_HOSTS: ${{ inputs.data-hosts }}
+        OUT_DIR: ${{ github.workspace }}/${{ inputs.artifacts-dir }}
+        HEAD_SHA: ${{ github.sha }}
+        SETUP_FAILED_FILE: ${{ runner.temp }}/boot-verify-setup-failed
+      run: node scripts/preflight.mjs
+
+    - name: Boot capture
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        BLUEPRINT_URL: ${{ inputs.blueprint-url }}
+        PLAYGROUND_HOST: ${{ inputs.playground-host }}
+        TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
+        OUT_DIR: ${{ github.workspace }}/${{ inputs.artifacts-dir }}
+        SETUP_FAILED_FILE: ${{ runner.temp }}/boot-verify-setup-failed
+      run: node scripts/boot-capture.mjs
+
+    - name: Assess
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        OUT_DIR: ${{ github.workspace }}/${{ inputs.artifacts-dir }}
+        HEAD_SHA: ${{ github.sha }}
+        ACCEPTED_ORIGINS: ${{ inputs.accepted-origins }}
+        SETUP_FAILED_FILE: ${{ runner.temp }}/boot-verify-setup-failed
+      run: node scripts/assert.mjs
+
+    - name: Validate verdict + render summary + outputs
+      id: verdict
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      env:
+        OUT_DIR: ${{ github.workspace }}/${{ inputs.artifacts-dir }}
+      run: node scripts/render-summary.mjs

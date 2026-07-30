@@ -1,0 +1,2 @@
+[console:log] [blueprint] Resolved from ?blueprint-url= param.
+[console:log] Not starting Moodle session timeout warning in this iframe.

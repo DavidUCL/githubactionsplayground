@@ -1,0 +1,3 @@
+[console:warning] [blueprint] Failed to fetch ?blueprint-url=: Invalid blueprint: steps[0]: unknown step 'restoreDatabase'.
+[console:log] [blueprint] Resolved from defaultBlueprintUrl.
+[console:log] Not starting Moodle session timeout warning in this iframe.

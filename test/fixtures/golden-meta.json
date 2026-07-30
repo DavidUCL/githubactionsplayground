@@ -1,0 +1,15 @@
+{
+  "playground_host": "https://moodle-playground.com",
+  "target_url": "https://moodle-playground.com/?blueprint-url=https%3A%2F%2Fraw.githubusercontent.com%2FDavidUCL%2Fmchef-urls%2Fintegrationtest%2Fblueprints%2Fintegration-test-nodb.json",
+  "loopback_sha256": "ed54e510813d3c167dfc2973b8fce73a0035c32e9259abe7fc9b11bf2da81d3c",
+  "loopback_served": 1,
+  "navigations": 1,
+  "browser_launched": true,
+  "nav_ok": true,
+  "page_crashed": false,
+  "final_url": "https://ateeducacion.github.io/moodle-playground/?blueprint-url=https%3A%2F%2Fraw.githubusercontent.com%2FDavidUCL%2Fmchef-urls%2Fintegrationtest%2Fblueprints%2Fintegration-test-nodb.json",
+  "logs_panel_found": true,
+  "anchor_seen": true,
+  "timed_out": false,
+  "duration_ms": 26885
+}

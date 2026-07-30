@@ -1,0 +1,15 @@
+{
+  "playground_host": "https://moodle-playground.com",
+  "target_url": "https://moodle-playground.com/?blueprint-url=https%3A%2F%2Fraw.githubusercontent.com%2FDavidUCL%2Fmchef-urls%2Fintegrationtest%2Fblueprints%2Fintegration-test.json",
+  "loopback_sha256": "dce277c0cf2d7b25ee8b3bc6c52acdfab31bb90ec1769b54b5dec780f7a3fcb2",
+  "loopback_served": 1,
+  "navigations": 1,
+  "browser_launched": true,
+  "nav_ok": true,
+  "page_crashed": false,
+  "final_url": "https://ateeducacion.github.io/moodle-playground/?blueprint-url=https%3A%2F%2Fraw.githubusercontent.com%2FDavidUCL%2Fmchef-urls%2Fintegrationtest%2Fblueprints%2Fintegration-test.json",
+  "logs_panel_found": true,
+  "anchor_seen": true,
+  "timed_out": false,
+  "duration_ms": 22369
+}

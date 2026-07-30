@@ -1,0 +1,57 @@
+[2026-07-30T11:33:18.095Z] Preparing runtime: Registering service worker for PHP 8.3 + Moodle 5.0.
+[2026-07-30T11:33:18.390Z] Refreshing PHP runtime: [13ms] [13ms config] Booting PHP 8.3 + Moodle 5.0.x.
+[2026-07-30T11:33:18.400Z] Bootstrapping Moodle: [23ms] Loading manifest https://ateeducacion.github.io/moodle-playground/assets/manifests/MOODLE_500_STABLE.json
+[2026-07-30T11:33:19.858Z] Bootstrapping Moodle: [1479ms] Downloading Moodle bundle (0%).
+[2026-07-30T11:33:19.881Z] Bootstrapping Moodle: [1504ms] Downloading Moodle bundle (10%).
+[2026-07-30T11:33:19.940Z] Bootstrapping Moodle: [1563ms] Downloading Moodle bundle (20%).
+[2026-07-30T11:33:19.955Z] Bootstrapping Moodle: [1578ms] Downloading Moodle bundle (30%).
+[2026-07-30T11:33:19.968Z] Bootstrapping Moodle: [1591ms] Downloading Moodle bundle (40%).
+[2026-07-30T11:33:19.983Z] Bootstrapping Moodle: [1607ms] Downloading Moodle bundle (50%).
+[2026-07-30T11:33:19.995Z] Bootstrapping Moodle: [1619ms] Downloading Moodle bundle (60%).
+[2026-07-30T11:33:20.068Z] Bootstrapping Moodle: [1686ms] Downloading Moodle bundle (70%).
+[2026-07-30T11:33:20.082Z] Bootstrapping Moodle: [1706ms] Downloading Moodle bundle (80%).
+[2026-07-30T11:33:20.240Z] Bootstrapping Moodle: [1864ms] Downloading Moodle bundle (90%).
+[2026-07-30T11:33:20.250Z] Bootstrapping Moodle: [1873ms] Downloading Moodle bundle (100%).
+[2026-07-30T11:33:20.308Z] Refreshing PHP runtime: [1931ms] [1918ms refresh] PHP runtime ready.
+[2026-07-30T11:33:20.402Z] Bootstrapping Moodle: [2025ms] Bundle resolved in 93ms (waited 93ms after refresh).
+[2026-07-30T11:33:20.403Z] Bootstrapping Moodle: [2026ms] Writing Moodle runtime configuration.
+[2026-07-30T11:33:20.404Z] Bootstrapping Moodle: [2027ms] Writing Moodle bundle into MEMFS.
+[2026-07-30T11:33:21.628Z] Bootstrapping Moodle: [3356ms] Published Moodle core into MEMFS.
+[2026-07-30T11:33:21.635Z] Bootstrapping Moodle: [3363ms] Prepare sub-timings: dirs=1ms mount=1329ms componentCache=0ms files=1ms patches=7ms
+[2026-07-30T11:33:21.636Z] Bootstrapping Moodle: [3363ms] Runtime preparation completed in 1337ms.
+[2026-07-30T11:33:21.636Z] Bootstrapping Moodle: [3364ms] Skipping standalone SQLite DDL probe and continuing with Moodle bootstrap.
+[2026-07-30T11:33:21.636Z] Bootstrapping Moodle: [3364ms] No persisted install marker found. Checking if Moodle is already installed in the database.
+[2026-07-30T11:33:22.290Z] Bootstrapping Moodle: [4019ms] Downloading pre-installed database snapshot.
+[2026-07-30T11:33:22.456Z] Bootstrapping Moodle: [4181ms] Pre-installed snapshot loaded (7958528 bytes).
+[2026-07-30T11:33:22.456Z] Bootstrapping Moodle: [4181ms] Install snapshot loaded in 163ms (skipped full install).
+[2026-07-30T11:33:22.456Z] Bootstrapping Moodle: [4181ms] Downloading pre-built localcache seed (theme CSS + DI).
+[2026-07-30T11:33:22.524Z] Bootstrapping Moodle: [4252ms] Localcache seed applied (14 entries, 4 stylesheet(s) rewritten for base path).
+[2026-07-30T11:33:22.524Z] Bootstrapping Moodle: [4252ms] Normalizing persisted Moodle configuration defaults.
+[2026-07-30T11:33:23.187Z] Bootstrapping Moodle: [4915ms] Seeded missing config defaults: auth_instructions, registerauth, debug, curlsecurityblockedhosts, curlsecurityallowedport, fullname, shortname, usertours. [664ms]
+[2026-07-30T11:33:23.187Z] Bootstrapping Moodle: [4915ms] Theme CSS pre-compiled at build time — skipping SCSS warmup.
+[2026-07-30T11:33:23.368Z] Bootstrapping Moodle: [5096ms] Skipping custom Moodle autoload diagnostics for the current runtime strategy.
+[2026-07-30T11:33:23.368Z] Bootstrapping Moodle: [5096ms] All PHP extensions are provided by the @php-wasm/web runtime.
+[2026-07-30T11:33:23.368Z] Bootstrapping Moodle: [5097ms] Blueprint step 1/6: installMoodle
+[2026-07-30T11:33:23.368Z] Bootstrapping Moodle: [5097ms] Blueprint step 2/6: login
+[2026-07-30T11:33:23.475Z] Bootstrapping Moodle: [5203ms] Blueprint step 3/6: installMoodlePlugin
+[2026-07-30T11:33:23.475Z] Bootstrapping Moodle: [5204ms] Downloading plugin ZIP from https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/plugins/moodle-theme_boost_union-moodle_500_stable-a734ebc2fe60.zip
+[2026-07-30T11:33:23.754Z] Bootstrapping Moodle: [5482ms] Extracting plugin to /www/moodle/theme/boost_union
+[2026-07-30T11:33:24.348Z] Bootstrapping Moodle: [6076ms] Extracted 422 files to /www/moodle/theme/boost_union
+[2026-07-30T11:33:24.349Z] Bootstrapping Moodle: [6077ms] Running Moodle upgrade to register plugin.
+[2026-07-30T11:33:24.983Z] [snapshot] tracking installed plugin: /www/moodle/theme/boost_union
+[2026-07-30T11:33:24.983Z] Bootstrapping Moodle: [6711ms] Blueprint step 4/6: installMoodlePlugin
+[2026-07-30T11:33:24.984Z] Bootstrapping Moodle: [6711ms] Downloading plugin ZIP from https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/plugins/moodle-mod_attendance-moodle_500_stable-8b217b1807bc.zip
+[2026-07-30T11:33:25.129Z] Bootstrapping Moodle: [6857ms] Extracting plugin to /www/moodle/mod/attendance
+[2026-07-30T11:33:25.377Z] Bootstrapping Moodle: [7106ms] Extracted 163 files to /www/moodle/mod/attendance
+[2026-07-30T11:33:25.378Z] Bootstrapping Moodle: [7106ms] Running Moodle upgrade to register plugin.
+[2026-07-30T11:33:26.350Z] [snapshot] tracking installed plugin: /www/moodle/mod/attendance
+[2026-07-30T11:33:26.350Z] Bootstrapping Moodle: [8078ms] Blueprint step 5/6: installMoodlePlugin
+[2026-07-30T11:33:26.350Z] Bootstrapping Moodle: [8078ms] Downloading plugin ZIP from https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/plugins/moodle-filter_multilang2-master-12122660b067.zip
+[2026-07-30T11:33:26.522Z] Bootstrapping Moodle: [8250ms] Extracting plugin to /www/moodle/filter/multilang2
+[2026-07-30T11:33:26.575Z] Bootstrapping Moodle: [8303ms] Extracted 15 files to /www/moodle/filter/multilang2
+[2026-07-30T11:33:26.575Z] Bootstrapping Moodle: [8304ms] Running Moodle upgrade to register plugin.
+[2026-07-30T11:33:27.481Z] [snapshot] tracking installed plugin: /www/moodle/filter/multilang2
+[2026-07-30T11:33:27.481Z] Bootstrapping Moodle: [9209ms] Blueprint step 6/6: setTheme
+[2026-07-30T11:33:28.011Z] Bootstrapping Moodle: [9739ms] Blueprint timing: 6 step(s) in 4642ms. Slowest: #3 installMoodlePlugin (1509ms), #4 installMoodlePlugin (1366ms), #5 installMoodlePlugin (1131ms).
+[2026-07-30T11:33:28.011Z] Bootstrapping Moodle: [9739ms] [blueprint-perf] {"totalMs":4642,"steps":[{"i":1,"step":"installMoodle","label":"","ms":0,"status":"success"},{"i":2,"step":"login","label":"","ms":106,"status":"success"},{"i":3,"step":"installMoodlePlugin","label":"","ms":1509,"status":"success"},{"i":4,"step":"installMoodlePlugin","label":"","ms":1366,"status":"success"},{"i":5,"step":"installMoodlePlugin","label":"","ms":1131,"status":"success"},{"i":6,"step":"setTheme","label":"","ms":529,"status":"success"}]} [/blueprint-perf]
+[2026-07-30T11:33:28.011Z] Boot timing summary: Config: 13ms | PHP refresh: 1918ms | Bootstrap: 7808ms | Bundle wait (post-refresh): 93ms | Total: 9739ms

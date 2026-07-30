@@ -1,0 +1,31 @@
+{
+  "blueprintUrl": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/integration-test.json",
+  "blueprintSha256": "dce277c0cf2d7b25ee8b3bc6c52acdfab31bb90ec1769b54b5dec780f7a3fcb2",
+  "stepCount": 7,
+  "stepNames": [
+    "restoreDatabase",
+    "installMoodle",
+    "login",
+    "installMoodlePlugin",
+    "installMoodlePlugin",
+    "installMoodlePlugin",
+    "setTheme"
+  ],
+  "pluginSteps": [
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/plugins/moodle-theme_boost_union-moodle_500_stable-a734ebc2fe60.zip",
+      "pluginType": "theme",
+      "pluginName": "boost_union"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/plugins/moodle-mod_attendance-moodle_500_stable-8b217b1807bc.zip",
+      "pluginType": "mod",
+      "pluginName": "attendance"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/plugins/moodle-filter_multilang2-master-12122660b067.zip",
+      "pluginType": "filter",
+      "pluginName": "multilang2"
+    }
+  ]
+}

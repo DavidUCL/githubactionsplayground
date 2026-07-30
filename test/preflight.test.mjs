@@ -1,0 +1,248 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  checkUrl,
+  looksFetchable,
+  gateBlueprint,
+  ALLOWED_STEPS,
+  BANNED_STEPS,
+} from "../scripts/preflight.mjs";
+import { validateVerdict, ERROR_CLASSES } from "../scripts/validate-verdict.mjs";
+import { rejectedVerdict } from "../scripts/assert.mjs";
+
+const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures");
+const HOSTS = ["raw.githubusercontent.com"];
+const bp = () =>
+  JSON.parse(readFileSync(join(FIXTURES, "blueprint-nodb.json"), "utf8"));
+
+test("checkUrl accepts allowlisted https, rejects the rest", () => {
+  assert.equal(checkUrl("https://raw.githubusercontent.com/a/b.json", HOSTS), null);
+  assert.match(checkUrl("http://raw.githubusercontent.com/a/b.json", HOSTS), /non-https/);
+  assert.match(checkUrl("https://evil.example/b.json", HOSTS), /not in allowlist/);
+  assert.match(checkUrl("https://user@raw.githubusercontent.com/b.json", HOSTS), /userinfo/);
+  assert.match(checkUrl("nonsense", HOSTS), /unparseable/);
+});
+
+test("real vendored blueprint passes the gate with derived expectations", () => {
+  const { stepErrors, urlErrors, expectations } = gateBlueprint(bp(), HOSTS);
+  assert.deepEqual(stepErrors, []);
+  assert.deepEqual(urlErrors, []);
+  assert.equal(expectations.stepCount, 6);
+  assert.equal(expectations.pluginSteps.length, 3);
+  assert.equal(expectations.pluginSteps[1].pluginName, "attendance");
+});
+
+test("banned step rejected", () => {
+  const b = bp();
+  b.steps.push({ step: "runPhpCode", code: "<?php echo 1;" });
+  const { stepErrors } = gateBlueprint(b, HOSTS);
+  assert.match(stepErrors.join(";"), /runPhpCode: banned/);
+});
+
+test("unknown step rejected (default deny)", () => {
+  const b = bp();
+  b.steps.push({ step: "brandNewStep" });
+  const { stepErrors } = gateBlueprint(b, HOSTS);
+  assert.match(stepErrors.join(";"), /unknown step/);
+});
+
+test("off-allowlist URL anywhere in the blueprint rejected", () => {
+  const b = bp();
+  b.steps[2].url = "https://evil.example/plugin.zip";
+  const { urlErrors } = gateBlueprint(b, HOSTS);
+  assert.match(urlErrors.join(";"), /not in allowlist/);
+});
+
+test("proxy override key anywhere rejected", () => {
+  const b = bp();
+  b.addonProxyUrl = "https://my-proxy.example/";
+  const { urlErrors } = gateBlueprint(b, HOSTS);
+  assert.match(urlErrors.join(";"), /proxy override/);
+});
+
+test("allow/ban partition covers the full 2026-07-29 step registry disjointly", () => {
+  for (const s of ALLOWED_STEPS) assert.equal(BANNED_STEPS.has(s), false, s);
+});
+
+// --- URL screening regressions --------------------------------------------
+
+test("whitespace-smuggled URLs are caught, not silently skipped", () => {
+  // fetch()/new URL() strip these; a prefix test on "https://" would not
+  // even class them as URLs, skipping the allowlist entirely.
+  for (const evil of [
+    " https://evil.example/p.zip",
+    "\thttps://evil.example/p.zip",
+    "\nhttps://evil.example/p.zip",
+    "ht\ttps://evil.example/p.zip",
+    "https://evil.example/p.zip ",
+    "​https://evil.example/p.zip",
+  ]) {
+    assert.equal(looksFetchable(evil), true, `should be screened: ${JSON.stringify(evil)}`);
+    assert.notEqual(checkUrl(evil, HOSTS), null, `should be rejected: ${JSON.stringify(evil)}`);
+  }
+});
+
+test("whitespace-smuggled URL inside a blueprint is rejected", () => {
+  const b = bp();
+  b.steps[2].url = " https://evil.example/p.zip";
+  const { urlErrors } = gateBlueprint(b, HOSTS);
+  assert.equal(urlErrors.length > 0, true);
+});
+
+test("whitespace on an ALLOWLISTED URL is still rejected", () => {
+  // This is the case only the control-character test can catch: the host,
+  // scheme, and absence of query are all fine once the browser trims.
+  for (const evil of [
+    "https://raw.githubusercontent.com/a/b.zip\n",
+    "\nhttps://raw.githubusercontent.com/a/b.zip",
+    "https://raw.githubusercontent.com/a/b.zip\t",
+  ]) {
+    assert.notEqual(checkUrl(evil, HOSTS), null, `should be rejected: ${JSON.stringify(evil)}`);
+  }
+});
+
+test("backslash URLs are screened and rejected", () => {
+  // new URL() folds `\` to `/`, so these resolve to an off-allowlist host
+  // while matching neither a scheme test nor a leading-`//` test.
+  for (const evil of [
+    "\\\\evil.example/p.zip",
+    "/\\evil.example/p.zip",
+    "\\/evil.example/p.zip",
+  ]) {
+    assert.equal(looksFetchable(evil), true, `should be screened: ${JSON.stringify(evil)}`);
+    assert.notEqual(checkUrl(evil, HOSTS), null, `should be rejected: ${JSON.stringify(evil)}`);
+  }
+});
+
+test("a backslash URL inside a blueprint is rejected", () => {
+  const b = bp();
+  b.steps[2].url = "\\\\evil.example/p.zip";
+  const { urlErrors } = gateBlueprint(b, HOSTS);
+  assert.equal(urlErrors.length > 0, true);
+});
+
+test("relative paths that stay on the playground origin are fine", () => {
+  assert.equal(looksFetchable("plugins/thing.zip"), false);
+  assert.equal(looksFetchable("/local/path"), false);
+});
+
+test("over-deep nesting is rejected, not silently skipped", () => {
+  const b = bp();
+  let node = b.steps[1];
+  for (let i = 0; i < 40; i += 1) {
+    node.nested = {};
+    node = node.nested;
+  }
+  node.value = "harmless";
+  const { unsafeStrings, urlErrors, stepErrors } = gateBlueprint(b, HOSTS);
+  assert.equal(
+    [...unsafeStrings, ...urlErrors, ...stepErrors].some((e) => /nested deeper than/.test(e)),
+    true,
+  );
+});
+
+test("scheme-relative and non-https schemes screened", () => {
+  assert.equal(looksFetchable("//evil.example/x"), true);
+  assert.notEqual(checkUrl("//evil.example/x", HOSTS), null);
+  assert.notEqual(checkUrl("data:text/html,<script>1</script>", HOSTS), null);
+  assert.notEqual(checkUrl("file:///etc/passwd", HOSTS), null);
+});
+
+test("an explicit port is rejected", () => {
+  assert.notEqual(checkUrl("https://raw.githubusercontent.com:8443/a/b.zip", HOSTS), null);
+});
+
+test("query strings and fragments rejected (credentials in artifacts)", () => {
+  assert.notEqual(checkUrl("https://raw.githubusercontent.com/a/b.zip?token=s", HOSTS), null);
+  assert.notEqual(checkUrl("https://raw.githubusercontent.com/a/b.zip#f", HOSTS), null);
+});
+
+test("banned step name nested under a step is rejected", () => {
+  const b = bp();
+  b.steps[1].onFailure = { step: "runPhpCode", code: "<?php system($_GET[0]);" };
+  const { stepErrors } = gateBlueprint(b, HOSTS);
+  assert.match(stepErrors.join(";"), /nested step 'runPhpCode' not allowed/);
+});
+
+test("nested allowlisted step name is fine", () => {
+  const b = bp();
+  b.steps[1].detail = { step: "login" };
+  const { stepErrors } = gateBlueprint(b, HOSTS);
+  assert.deepEqual(stepErrors, []);
+});
+
+// --- log-line forgery via non-URL fields ---------------------------------
+
+test("a newline in pluginName is rejected (it would forge a log line)", () => {
+  // One appendLog message containing \n renders as TWO log lines, the second
+  // without a timestamp prefix — supply your own prefix and you have forged
+  // an `Extracting plugin to …` record that satisfies the binding assertion.
+  const b = bp();
+  b.steps[2].pluginName =
+    "boost_union\n[2026-07-30T00:00:00.000Z] Bootstrapping Moodle: [1ms] Extracting plugin to /www/moodle/mod/attendance";
+  const { unsafeStrings } = gateBlueprint(b, HOSTS);
+  assert.match(unsafeStrings.join(";"), /control characters/);
+});
+
+test("control characters anywhere in the blueprint are rejected", () => {
+  for (const evil of ["a\nb", "a\rb", "a\tb", "a b", "a​b"]) {
+    const b = bp();
+    b.steps[1].note = evil;
+    const { unsafeStrings } = gateBlueprint(b, HOSTS);
+    assert.equal(unsafeStrings.length > 0, true, `should reject ${JSON.stringify(evil)}`);
+  }
+});
+
+test("ordinary spaces in human-readable values stay legal", () => {
+  const b = bp();
+  b.steps[1].fullname = "Introduction to Moodle Playground";
+  const { unsafeStrings, stepErrors } = gateBlueprint(b, HOSTS);
+  assert.deepEqual(unsafeStrings, []);
+  assert.deepEqual(stepErrors, []);
+});
+
+// --- plugin steps must be bindable ---------------------------------------
+
+test("installMoodlePlugin without pluginName is rejected as unbindable", () => {
+  const b = bp();
+  delete b.steps[2].pluginName;
+  const { bindErrors } = gateBlueprint(b, HOSTS);
+  assert.match(bindErrors.join(";"), /explicit pluginName required/);
+});
+
+test("installMoodlePlugin without pluginType is rejected as unbindable", () => {
+  const b = bp();
+  delete b.steps[3].pluginType;
+  const { bindErrors } = gateBlueprint(b, HOSTS);
+  assert.match(bindErrors.join(";"), /explicit pluginType required/);
+});
+
+test("installTheme may omit pluginType (defaults to theme)", () => {
+  const b = bp();
+  b.steps[2] = { step: "installTheme", url: b.steps[2].url, pluginName: "boost_union" };
+  const { bindErrors, expectations } = gateBlueprint(b, HOSTS);
+  assert.deepEqual(bindErrors, []);
+  assert.equal(expectations.pluginSteps[0].pluginType, "theme");
+});
+
+test("a traversal-shaped pluginName is rejected", () => {
+  const b = bp();
+  b.steps[2].pluginName = "../../admin/cli";
+  const { bindErrors } = gateBlueprint(b, HOSTS);
+  assert.equal(bindErrors.length > 0, true);
+});
+
+test("plain non-URL strings are not screened as URLs", () => {
+  assert.equal(looksFetchable("attendance"), false);
+  assert.equal(looksFetchable("Boost Union"), false);
+});
+
+test("rejected verdicts validate against the closed schema", () => {
+  for (const ec of Object.keys(ERROR_CLASSES)) {
+    if (ERROR_CLASSES[ec] !== "rejected") continue;
+    assert.deepEqual(validateVerdict(rejectedVerdict(ec, "", "")), []);
+  }
+});

@@ -1,0 +1,56 @@
+# Nightly canary against a known-good published blueprint. Separates
+# "playground/host broke" from "blueprint broke" and accumulates the
+# flake-rate history required by the promotion criteria (design §3):
+# canary pass ≥98%, post-retry INFRA_FAIL <2%. A canary failure with
+# error_class=anchor_drift means a playground deploy changed the log
+# format — fix the parser, not the blueprint.
+
+name: canary
+
+on:
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  canary:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Boot verify (known-good blueprint)
+        id: verify
+        uses: ./
+        with:
+          blueprint-url: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json"
+
+      - name: Retry once on infra failure
+        id: retry
+        if: steps.verify.outputs.status == 'infra_fail'
+        uses: ./
+        with:
+          blueprint-url: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json"
+          artifacts-dir: boot-verify-out-retry
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canary-evidence
+          path: |
+            boot-verify-out/
+            boot-verify-out-retry/
+          if-no-files-found: warn
+
+      - name: Gate
+        env:
+          STATUS: ${{ steps.verify.outputs.status }}
+          RETRY_STATUS: ${{ steps.retry.outputs.status }}
+        run: |
+          FINAL="${RETRY_STATUS:-$STATUS}"
+          echo "first=$STATUS retry=${RETRY_STATUS:-<none>} final=$FINAL"
+          [ "$FINAL" = "pass" ]

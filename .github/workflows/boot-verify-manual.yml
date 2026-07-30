@@ -1,0 +1,73 @@
+name: boot-verify (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      blueprint-url:
+        description: "HTTPS URL of the blueprint JSON (must be on an allowlisted host)"
+        required: true
+        type: string
+      playground-host:
+        description: "Playground deployment to boot against"
+        required: false
+        default: "https://moodle-playground.com"
+        type: string
+      timeout-seconds:
+        description: "Hard wall for the browser phase"
+        required: false
+        default: "420"
+        type: string
+  # Phase 2 (design §8): uncomment to run automatically on same-repo PRs.
+  #
+  # ⚠ TRUST INVERSION — read before uncommenting. This workflow
+  # runs `uses: ./`, i.e. the action code FROM THE CHECKOUT. Under
+  # `pull_request` from a fork, that code is the PR's: it can delete the
+  # pull_request_target refusal, rewrite assert.mjs to emit `pass`, or add a
+  # lifecycle script. Every control in this repo is bypassable in exactly the
+  # mode phase 2 turns on — the only thing that survives is `permissions: {}`
+  # and no secrets, which limits the damage to a green check that means
+  # nothing. Before phase 2: consume the action as `owner/repo@<sha>` so the
+  # verifier is pinned code the PR cannot edit.
+  #
+  # Entry gate also required: one green SHA-pinned consumer run from a real
+  # plugin repo. NEVER change this to pull_request_target.
+  # pull_request:
+  #   types: [opened, synchronize, reopened]
+
+permissions: {}
+
+concurrency:
+  group: boot-verify-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Boot verify
+        id: verify
+        uses: ./
+        with:
+          blueprint-url: ${{ inputs.blueprint-url }}
+          playground-host: ${{ inputs.playground-host }}
+          timeout-seconds: ${{ inputs.timeout-seconds }}
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: boot-verify-evidence
+          path: boot-verify-out/
+          if-no-files-found: warn
+
+      - name: Gate
+        env:
+          STATUS: ${{ steps.verify.outputs.status }}
+          ERROR_CLASS: ${{ steps.verify.outputs.error-class }}
+        run: |
+          echo "status=$STATUS error_class=$ERROR_CLASS"
+          [ "$STATUS" = "pass" ]
