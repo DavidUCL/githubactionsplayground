@@ -66,7 +66,7 @@ const QUIET_MS = 15_000; // stop after boot anchor + this much log silence
 const POLL_MS = 1_000;
 
 async function main() {
-  const host = (process.env.PLAYGROUND_HOST || "https://moodle-playground.com").replace(/\/$/, "");
+  const host = (process.env.PLAYGROUND_HOST || "https://daviducl.github.io/moodle-playground").replace(/\/$/, "");
   const blueprintUrl = process.env.BLUEPRINT_URL;
   const timeoutMs = 1000 * Number(process.env.TIMEOUT_SECONDS || 420);
   const outDir = process.env.OUT_DIR || "boot-verify-out";

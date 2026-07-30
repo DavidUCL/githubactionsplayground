@@ -41,11 +41,18 @@ The action **never fails the job** (except under `pull_request_target`,
 which hard-fails by design). Callers upload the evidence artifact first,
 then gate on the `status` output — see `.github/workflows/boot-verify-manual.yml`.
 
-Key trick the live runs proved necessary: the production playground
-rejected a newer-schema blueprint and **silently booted its default
-starter blueprint to a green-looking finish** — assertion `a3_resolver`
-(console anchor `[blueprint] Resolved from ?blueprint-url= param.`)
-is what catches that, yielding `verify_fail/resolver_fallback`.
+Key trick the live runs proved necessary: an out-of-date playground
+deployment rejected the blueprint and **silently booted its own starter
+blueprint to a green-looking finish** — six steps, zero failures, boot
+anchor present. The identity assertions (`a3_resolver_line`,
+`a3_no_fallback`, `a3_step_names`) are what catch that, yielding
+`verify_fail/resolver_fallback`. Observed in CI on 2026-07-30 against
+`moodle-playground.com`, which runs an older build; the default host
+(`daviducl.github.io/moodle-playground`) parses the same blueprint fine.
+
+That is why `playground-host` defaults to the up-to-date deployment: point
+it at a stale one and you get `resolver_fallback` for every blueprint it
+cannot parse.
 
 ## Statuses
 

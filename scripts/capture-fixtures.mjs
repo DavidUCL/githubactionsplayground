@@ -27,6 +27,7 @@ const CASES = {
   // Its URL deliberately 404s publicly, so a pass PROVES the loopback served
   // our bytes. Keep that property (SPEC §4a).
   golden: {
+    host: "https://daviducl.github.io/moodle-playground",
     localBlueprint: join(FIXTURES, "blueprint-nodb.json"),
     url: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/integration-test-nodb.json",
     expect: "pass",
@@ -36,6 +37,10 @@ const CASES = {
   // This is the false-green detector; if this case ever passes, the deployed
   // playground has caught up and the fixture needs a new rejected blueprint.
   fallback: {
+    // MUST use the older public deployment: this case exists to capture the
+    // silent starter-blueprint substitution, and the current build parses
+    // this blueprint correctly (so it would pass and prove nothing).
+    host: "https://moodle-playground.com",
     fetchFrom: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/integration-test.json",
     url: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/integration-test.json",
     expect: "verify_fail",
@@ -74,7 +79,12 @@ for (const name of names) {
     JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }, null, 2),
   );
 
-  const env = { ...process.env, OUT_DIR: dir, BLUEPRINT_URL: spec.url };
+  const env = {
+    ...process.env,
+    OUT_DIR: dir,
+    BLUEPRINT_URL: spec.url,
+    PLAYGROUND_HOST: spec.host,
+  };
   if (process.env.NSS_LIBS) env.LD_LIBRARY_PATH = process.env.NSS_LIBS;
   execFileSync(process.execPath, [join(ROOT, "scripts", "boot-capture.mjs")], { env, stdio: "inherit" });
   execFileSync(process.execPath, [join(ROOT, "scripts", "assert.mjs")], {

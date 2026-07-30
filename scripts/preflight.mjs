@@ -299,14 +299,24 @@ async function main() {
   mkdirSync(outDir, { recursive: true });
 
   const reject = (errorClass, detail, sha = "") => {
-    console.error(`preflight REJECTED (${errorClass}): ${sanitiseForLog(detail)}`);
+    const safe = sanitiseForLog(detail);
+    console.error(`preflight REJECTED (${errorClass}): ${safe}`);
     // NOTE: preflight must never write verdict.json — assert.mjs is the sole
-    // writer. Otherwise a PR could commit a hand-made verdict.json into the
-    // checkout and every later step would treat it as "already decided"
-    // would be read as "already decided" — a pass with no boot at all.
+    // writer. A pre-placed verdict.json in the workspace would otherwise be
+    // read as "already decided" — a pass with no boot at all.
+    //
+    // `detail` is recorded so the job summary can say WHICH host or step was
+    // refused. It is safe to surface for a rejection specifically: nothing
+    // has booted, so the text comes from the caller's own inputs, not from
+    // plugin-controlled boot output. It is sanitised and length-capped all
+    // the same, and never reaches an output variable.
     writeFileSync(
       join(outDir, "preflight.json"),
-      JSON.stringify({ outcome: "rejected", error_class: errorClass, blueprintSha256: sha }, null, 2),
+      JSON.stringify(
+        { outcome: "rejected", error_class: errorClass, blueprintSha256: sha, detail: safe },
+        null,
+        2,
+      ),
     );
     process.exit(0);
   };

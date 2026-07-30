@@ -9,11 +9,18 @@ inputs:
     description: "HTTPS URL of the blueprint JSON to verify"
     required: true
   playground-host:
-    description: "Playground deployment to boot against"
+    description: >-
+      Which Moodle Playground deployment to boot in. Defaults to David's
+      build, which tracks the current blueprint schema; the public
+      moodle-playground.com runs an older build that silently substitutes
+      its own starter blueprint for anything it cannot parse.
     required: false
-    default: "https://moodle-playground.com"
+    default: "https://daviducl.github.io/moodle-playground"
   timeout-seconds:
-    description: "Hard wall for the browser phase"
+    description: >-
+      How long to let the browser run before giving up, in seconds
+      (420 = 7 minutes). Running out is reported as infra_fail/timeout, not
+      as a problem with the blueprint.
     required: false
     default: "420"
   blueprint-hosts:

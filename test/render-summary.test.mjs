@@ -68,6 +68,41 @@ test("a newline-bearing value cannot inject a second output line", () => {
   assert.match(output, /^status=infra_fail$/m);
 });
 
+test("a rejected verdict names what was refused", () => {
+  // "blueprint_host_denied" with no indication of WHICH host leaves the
+  // operator nothing to act on; the detail comes from preflight.json so the
+  // verdict envelope stays closed.
+  const dir = mkdtempSync(join(tmpdir(), "bv-render-"));
+  const rejected = {
+    ...good,
+    status: "rejected",
+    error_class: "blueprint_host_denied",
+    assertions: [{ id: "preflight_blueprint_host_denied", ok: false }],
+  };
+  writeFileSync(join(dir, "verdict.json"), JSON.stringify(rejected));
+  writeFileSync(
+    join(dir, "preflight.json"),
+    JSON.stringify({
+      outcome: "rejected",
+      error_class: "blueprint_host_denied",
+      blueprintSha256: "",
+      detail: "host not in allowlist: github.com",
+    }),
+  );
+  const sumFile = join(dir, "gh-summary");
+  const outFile = join(dir, "gh-output");
+  writeFileSync(sumFile, "");
+  writeFileSync(outFile, "");
+  execFileSync(process.execPath, [join(ROOT, "scripts", "render-summary.mjs")], {
+    env: { ...process.env, OUT_DIR: dir, GITHUB_OUTPUT: outFile, GITHUB_STEP_SUMMARY: sumFile },
+    stdio: "pipe",
+  });
+  const summary = readFileSync(sumFile, "utf8");
+  assert.match(summary, /Refused because:.*github\.com/);
+  // ...and it still never leaves via an output variable.
+  assert.equal(readFileSync(outFile, "utf8").includes("github.com"), false);
+});
+
 test("no workflow commands are emitted into the summary", () => {
   const { summary } = run({ ...good, status: "verify_fail", error_class: "resolver_fallback" });
   assert.equal(summary.includes("::"), false);

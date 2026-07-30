@@ -4,18 +4,57 @@ on:
   workflow_dispatch:
     inputs:
       blueprint-url:
-        description: "HTTPS URL of the blueprint JSON (must be on an allowlisted host)"
+        description: >-
+          RAW blueprint URL, e.g.
+          https://raw.githubusercontent.com/OWNER/REPO/REF/blueprints/x.json
+          — NOT the github.com page URL (use the file's "Raw" button). Only
+          raw.githubusercontent.com is allowed by default. Prefilled with a
+          known-good blueprint, so running this unchanged is a smoke test of
+          the action itself.
         required: true
+        default: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json"
         type: string
       playground-host:
-        description: "Playground deployment to boot against"
+        description: >-
+          Which playground to boot in. The default tracks the current
+          blueprint schema; moodle-playground.com runs an older build that
+          silently substitutes its own starter blueprint for anything it
+          cannot parse (you get verify_fail / resolver_fallback).
         required: false
-        default: "https://moodle-playground.com"
+        default: "https://daviducl.github.io/moodle-playground"
         type: string
       timeout-seconds:
-        description: "Hard wall for the browser phase"
+        description: >-
+          How long to let the browser run before giving up, in seconds
+          (420 = 7 minutes). Running out is reported as a timeout, not as a
+          fault in the blueprint.
         required: false
         default: "420"
+        type: string
+      blueprint-hosts:
+        description: >-
+          Which hosts the blueprint URL itself may come from, comma
+          separated. Widen this to verify a blueprint hosted somewhere other
+          than raw.githubusercontent.com.
+        required: false
+        default: "raw.githubusercontent.com"
+        type: string
+      data-hosts:
+        description: >-
+          Which hosts the URLs INSIDE the blueprint may point at (plugin
+          ZIPs, database snapshots), comma separated. A blueprint pulling
+          from anywhere else is refused before the browser starts.
+        required: false
+        default: "raw.githubusercontent.com"
+        type: string
+      accepted-origins:
+        description: >-
+          Extra origins the boot may legitimately finish on, comma separated.
+          Only needed when the playground host redirects elsewhere — e.g.
+          moodle-playground.com lands on ateeducacion.github.io. The
+          playground host's own origin is always accepted.
+        required: false
+        default: "https://ateeducacion.github.io"
         type: string
   # Phase 2 (design §8): uncomment to run automatically on same-repo PRs.
   #
@@ -55,10 +94,13 @@ jobs:
           blueprint-url: ${{ inputs.blueprint-url }}
           playground-host: ${{ inputs.playground-host }}
           timeout-seconds: ${{ inputs.timeout-seconds }}
+          blueprint-hosts: ${{ inputs.blueprint-hosts }}
+          data-hosts: ${{ inputs.data-hosts }}
+          accepted-origins: ${{ inputs.accepted-origins }}
 
       - name: Upload evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: boot-verify-evidence
           path: boot-verify-out/

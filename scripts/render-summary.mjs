@@ -64,9 +64,27 @@ function main() {
   setOutput("error-class", verdict.error_class);
   setOutput("verdict-path", verdictPath);
 
+  // A `rejected` verdict says WHAT was refused but not WHICH url/step, which
+  // leaves the operator with nothing actionable. The detail is read from
+  // preflight.json rather than the verdict, so the verdict envelope stays
+  // closed; preflight has already sanitised and capped it.
+  let rejectionDetail = "";
+  if (verdict.status === "rejected") {
+    try {
+      const pf = JSON.parse(readFileSync(join(outDir, "preflight.json"), "utf8"));
+      rejectionDetail = String(pf.detail || "")
+        .replace(/[\r\n]+/g, " ")
+        .replaceAll("|", "\\|")
+        .slice(0, 300);
+    } catch {
+      /* detail is a nicety, never a requirement */
+    }
+  }
+
   const lines = [
     `## Boot verify: ${STATUS_LABEL[verdict.status]}`,
     "",
+    ...(rejectionDetail ? [`**Refused because:** ${rejectionDetail}`, ""] : []),
     "| field | value |",
     "|---|---|",
     `| status | \`${verdict.status}\` |`,
