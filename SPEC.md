@@ -12,7 +12,7 @@ Inputs (all cross into scripts via `env:`, never `${{ }}` in `run:`):
 |---|---|---|---|
 | `blueprint-url` | yes | — | HTTPS URL of the blueprint JSON to verify |
 | `playground-host` | no | `https://moodle-playground.com` | playground deployment to boot against |
-| `timeout-seconds` | no | `420` | hard wall for the browser phase; expiry → `infra_fail`/`timeout` |
+| `timeout-seconds` | no | `420` | how long the browser may run before the attempt is abandoned; expiry → `infra_fail`/`timeout`. Measured boot on a GitHub runner: 84 s for a 7-step blueprint with 3 plugins (26 s on a dev laptop), whole job 2m24s — size this off the runner figure, not a local one |
 | `blueprint-hosts` | no | `raw.githubusercontent.com` | comma-separated allowlist for `blueprint-url` host |
 | `data-hosts` | no | `raw.githubusercontent.com` | comma-separated allowlist for `restoreDatabase`/ZIP URL hosts inside the blueprint |
 | `accepted-origins` | no | `https://ateeducacion.github.io` | extra origins the boot may legitimately finish on; the `playground-host` origin is always accepted. Needed because production `moodle-playground.com` redirects to its Pages origin — a custom deployment that redirects elsewhere must list it here or every run is `infra_fail/nav_fail` |
