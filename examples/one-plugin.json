@@ -1,0 +1,16 @@
+{
+  "preferredVersions": {
+    "php": "8.3",
+    "moodle": "MOODLE_500_STABLE"
+  },
+  "steps": [
+    { "step": "installMoodle" },
+    { "step": "login", "username": "admin" },
+    {
+      "step": "installMoodlePlugin",
+      "url": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/plugins/moodle-mod_attendance-moodle_500_stable-8b217b1807bc.zip",
+      "pluginType": "mod",
+      "pluginName": "attendance"
+    }
+  ]
+}
