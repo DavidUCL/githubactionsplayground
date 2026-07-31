@@ -1,0 +1,103 @@
+{
+  "preferredVersions": {
+    "php": "8.3",
+    "moodle": "MOODLE_500_STABLE"
+  },
+  "landingPage": "/admin/localplugins.php",
+  "steps": [
+    {
+      "step": "installMoodle"
+    },
+    {
+      "step": "login",
+      "username": "admin"
+    },
+    {
+      "step": "setConfigs",
+      "configs": [
+        {
+          "name": "debug",
+          "value": "32767"
+        },
+        {
+          "name": "debugdisplay",
+          "value": "1"
+        },
+        {
+          "name": "noemailever",
+          "value": "1"
+        },
+        {
+          "name": "sendcoursewelcomemessage",
+          "value": "0",
+          "plugin": "enrol_manual"
+        }
+      ]
+    },
+    {
+      "step": "installMoodlePlugin",
+      "url": "https://github.com/DavidUCL/local_myplugin/archive/d0638b39df1c28fd93c27778ae2cbada7cc1660f.zip",
+      "pluginType": "local",
+      "pluginName": "myplugin",
+      "critical": true
+    },
+    {
+      "step": "createCategory",
+      "name": "Review",
+      "critical": true
+    },
+    {
+      "step": "createCourse",
+      "fullname": "d0638b3 · local_myplugin",
+      "shortname": "REVIEW",
+      "critical": true,
+      "category": "Review",
+      "numsections": 3
+    },
+    {
+      "step": "createUsers",
+      "critical": true,
+      "users": [
+        {
+          "username": "teacher",
+          "firstname": "Teacher",
+          "lastname": "Review"
+        },
+        {
+          "username": "student1",
+          "firstname": "Student",
+          "lastname": "One"
+        }
+      ]
+    },
+    {
+      "step": "enrolUsers",
+      "critical": true,
+      "enrolments": [
+        {
+          "username": "teacher",
+          "course": "REVIEW",
+          "role": "editingteacher"
+        },
+        {
+          "username": "student1",
+          "course": "REVIEW",
+          "role": "student"
+        }
+      ]
+    },
+    {
+      "step": "addModule",
+      "critical": true,
+      "module": "label",
+      "course": "REVIEW",
+      "section": 0,
+      "name": "Review brief",
+      "intro": "<p><strong>d0638b3 · local_myplugin</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
+    },
+    {
+      "step": "setLandingPage",
+      "path": "/admin/localplugins.php"
+    }
+  ]
+}

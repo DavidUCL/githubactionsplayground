@@ -1,0 +1,73 @@
+# Proof of life for `preview/action.yml`.
+#
+# The URL builder is covered by unit tests, snapshots and the mutation harness,
+# but until this existed NOTHING had ever asked GitHub to parse the action
+# itself. A typo in its `outputs:` mapping or a bad composite-step key would
+# have failed for the first adopter, on their pull request, in public.
+#
+# Runs on every push and on demand. It asserts on the action's OUTPUT, not on
+# the run merely succeeding — a step that produced an empty URL would otherwise
+# look green.
+
+name: preview action self-test
+
+on:
+  push:
+    paths:
+      - "preview/**"
+      - "scripts/build-preview.mjs"
+      - ".github/workflows/preview-selftest.yml"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: preview
+        uses: ./preview
+        with:
+          # A real repo and a real commit, so the link is one a human could open.
+          head-repo: danmarsden/moodle-mod_attendance
+          head-sha: 8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c
+          pr-number: "1"
+
+      - name: Check the action produced a usable link
+        env:
+          URL: ${{ steps.preview.outputs.preview-url }}
+          TYPE: ${{ steps.preview.outputs.plugin-type }}
+          NAME: ${{ steps.preview.outputs.plugin-name }}
+          SHA_OUT: ${{ steps.preview.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+          echo "url length: ${#URL}"
+          case "$URL" in
+            https://moodle-playground.com/?blueprint=*) ;;
+            *) echo "::error::unexpected preview URL: ${URL:0:80}"; exit 1 ;;
+          esac
+          # Every declared output must actually arrive: an outputs mapping that
+          # silently yields empty strings is the failure this job exists for.
+          [ "$TYPE" = "mod" ] || { echo "::error::plugin-type was '$TYPE'"; exit 1; }
+          [ "$NAME" = "attendance" ] || { echo "::error::plugin-name was '$NAME'"; exit 1; }
+          [ "$SHA_OUT" = "8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c" ] \
+            || { echo "::error::head-sha was '$SHA_OUT'"; exit 1; }
+          # The blueprint must survive the round trip the reviewer's browser makes.
+          node -e '
+            const u = new URL(process.env.URL);
+            const b64 = u.searchParams.get("blueprint");
+            const bytes = Buffer.from(b64.replace(/-/g,"+").replace(/_/g,"/"), "base64");
+            const bp = JSON.parse(require("node:zlib").gunzipSync(bytes).toString("utf8"));
+            const install = bp.steps.find(s => s.step === "installMoodlePlugin");
+            if (!install.url.endsWith("8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c.zip")) {
+              throw new Error("plugin URL is not pinned to the head commit: " + install.url);
+            }
+            if ([...u.searchParams.keys()].join() !== "blueprint") {
+              throw new Error("link carries params beyond the blueprint");
+            }
+            console.log("decoded ok:", bp.steps.length, "steps,", install.pluginType + "_" + install.pluginName);
+          '

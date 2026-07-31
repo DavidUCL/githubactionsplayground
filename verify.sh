@@ -51,8 +51,16 @@ for name in ('preflight.mjs', 'boot-capture.mjs', 'assert.mjs',
              'render-summary.mjs', 'validate-verdict.mjs', 'sanitise.mjs'):
     used |= set(re.findall(r'process\.env\.([A-Z][A-Z0-9_]*)',
                            (root / 'scripts' / name).read_text()))
-runner_provided = {'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY', 'GITHUB_EVENT_NAME', 'GITHUB_SHA'}
-missing = used - declared - runner_provided
+# The preview action is a second action.yml with its own script; without this
+# a renamed PLAYGROUND_HOST would silently revert every link to the default.
+preview_declared = set(re.findall(r'^\s{6,}([A-Z][A-Z0-9_]*):\s',
+                                  (root / 'preview' / 'action.yml').read_text(), re.M))
+preview_used = set(re.findall(r'process\.env\.([A-Z][A-Z0-9_]*)',
+                              (root / 'scripts' / 'build-preview.mjs').read_text()))
+declared |= preview_declared
+runner_provided = {'GITHUB_OUTPUT', 'GITHUB_STEP_SUMMARY', 'GITHUB_EVENT_NAME',
+                   'GITHUB_SHA', 'GITHUB_EVENT_PATH'}
+missing = (used | preview_used) - declared - runner_provided
 if missing:
     print('env vars read by scripts but never set in action.yml:', sorted(missing))
     sys.exit(1)
@@ -77,6 +85,50 @@ if pw != '1.61.1':
     sys.exit(1)
 PY
 check $? 1d "lockfile contains only the pinned playwright tree"
+
+# The preview link relies on moodle-playground.com redirecting to the Pages
+# site WITH the query string intact — the whole blueprint rides in it. A silent
+# CDN rule change would drop the payload and every preview would boot a vanilla
+# Moodle. Verified live because nothing else would notice.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    RAW=$(curl -sS -o /dev/null -D - --max-time 20 \
+          "https://moodle-playground.com/?blueprint=REDIRECTPROBE123" 2>/dev/null)
+    if [[ $? -ne 0 ]]; then
+        # Offline or DNS-blocked: report it, do not fail. A gate that goes red
+        # on a train is a gate people start skipping.
+        echo "CHECK 1f SKIP: no network (redirect behaviour UNCHECKED in this run)"
+    else
+        LOC=$(printf '%s' "$RAW" | tr -d '\r' | awk 'tolower($1)=="location:"{print $2}')
+        [[ "$LOC" == https://ateeducacion.github.io/* && "$LOC" == *"blueprint=REDIRECTPROBE123"* ]]
+        check $? 1f "moodle-playground.com redirect keeps the blueprint param AND lands on the expected origin (got: ${LOC:-none})"
+    fi
+else
+    echo "CHECK 1f SKIP: SKIP_NET set"
+fi
+
+# Every action/workflow file must parse, and every output the preview script
+# sets must be DECLARED by the action — an undeclared output silently arrives
+# as an empty string in the caller's comment. (The action itself is only truly
+# exercised by .github/workflows/preview-selftest.yml, which needs a runner.)
+python3 - <<'PY_YAML'
+import sys, re, pathlib
+try:
+    import yaml
+except ImportError:
+    print('pyyaml unavailable — skipping YAML contract check'); sys.exit(0)
+root = pathlib.Path('.')
+for f in list(root.glob('.github/workflows/*.yml')) + [root/'action.yml', root/'preview'/'action.yml']:
+    yaml.safe_load(f.read_text())
+declared = set(yaml.safe_load((root/'preview'/'action.yml').read_text())['outputs'])
+emitted = set(re.findall(r'setOutput\("([a-z-]+)"',
+                         (root/'scripts'/'build-preview.mjs').read_text()))
+missing = emitted - declared
+if missing:
+    print('outputs set by build-preview.mjs but not declared in preview/action.yml:', sorted(missing))
+    sys.exit(1)
+PY_YAML
+check $? 1g "every action/workflow parses and declares the outputs it emits"
+
 
 # The plugin-directory map is a hand copy of playground source; the test that
 # compares them can only run with a checkout to compare against. Never let a

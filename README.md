@@ -1,10 +1,18 @@
 # action-moodle-playground-verify
 
-Boot-verify a [moodle-playground](https://github.com/ateeducacion/moodle-playground)
-blueprint headlessly and emit a closed-schema verdict. Built for Moodle
-plugin PR CI: phase 1 is manual (`workflow_dispatch`); the commented
-`pull_request` trigger is phase 2. Design: `docs/design.md`,
-contract: `SPEC.md`.
+**Put a link on a Moodle plugin pull request that boots that PR's code in a
+throwaway Moodle, in the reviewer's browser.** That is `preview/` — the part
+a colleague actually sees. Copy `examples/pr-preview-workflow.yml` into a
+plugin repo and every PR gets a link.
+
+The repo also holds a **boot-verify** action at the root: it boots a blueprint
+headlessly in CI and emits a closed-schema verdict. Be clear about what that
+is today — it takes a `blueprint-url`, so it is a MANUAL (`workflow_dispatch`)
+check for published blueprints, not something a plugin repo runs on its PRs.
+It earns its place as infrastructure: the preview builder imports its blueprint
+gate and plugin-directory map, and both share the mutation harness.
+
+Design: `docs/design.md`, contract: `SPEC.md`.
 
 ## What a PASS means
 
@@ -53,6 +61,52 @@ anchor present. The identity assertions (`a3_resolver_line`,
 That is why `playground-host` defaults to the up-to-date deployment: point
 it at a stale one and you get `resolver_fallback` for every blueprint it
 cannot parse.
+
+## The preview link (`preview/`)
+
+The other half, and the one a reviewer sees. `preview/action.yml` builds a
+playground URL that boots a pull request's plugin code, and outputs it; the
+caller posts it. It needs no token and no write permission.
+
+```
+scripts/build-preview.mjs   plugin identity (repo convention or explicit)
+                            → blueprint: install Moodle, DEVELOPER debugging,
+                              install the plugin from the head COMMIT, a review
+                              course named for the PR + commit, a teacher and a
+                              student, and a landing page per plugin type
+                            → gzip + base64url into ?blueprint= (~1.1 KB)
+```
+
+Everything in it exists to stop the link lying about which code it opens:
+
+- **Pinned to the head commit.** A branch ref shows later commits and 404s
+  once the branch is deleted.
+- **No `{{REPO}}`/`{{REF}}` placeholders, and no `repo`/`ref` params on the
+  finished URL.** The playground resolver gives those parameters the highest
+  precedence and substitutes them into plugin URLs, so a link can otherwise
+  boot different code while looking correct — and while hashing identically.
+- **The blueprint travels inside the link**, so it cannot rot or be swapped
+  after posting, and it survives a playground redeploy.
+- **The review course is named `PR #42 · <sha> · <plugin>`**, so the
+  reviewer's own screen confirms the commit rather than the comment doing it.
+
+Why the public playground is the default host: a preview runs unreviewed PHP
+in the visitor's browser, and the playground renders the site in an
+unsandboxed iframe with a service worker that outlives the tab. Browser
+storage is origin-scoped, so previews must not share an origin with anything
+you host.
+
+**Every preview goes through a third party.** The playground proxies
+`github.com` and `codeload.github.com` ZIP fetches through
+`github-proxy.exelearning.dev` (a courtesy service, no SLA). That party sees
+every repo and commit previewed, and could serve arbitrary bytes as the PHP a
+reviewer's browser then executes. Vendoring the ZIP to
+`raw.githubusercontent.com` would avoid it, but costs a write-scoped token in
+a workflow that runs PR-authored code, and a permanent storage obligation —
+judged the worse trade. Accepted, not overlooked. If it goes down, previews
+boot a Moodle with no plugin (see "absence is quiet" above).
+
+A copy-paste consumer workflow is in `examples/pr-preview-workflow.yml`.
 
 ## Statuses
 

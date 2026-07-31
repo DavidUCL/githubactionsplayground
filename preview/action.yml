@@ -1,0 +1,99 @@
+name: "Moodle Playground preview link"
+description: >-
+  Build a playground URL that boots this pull request's plugin code. Outputs
+  the URL; posting it is the caller's job, so this action needs no token and
+  no write permission.
+inputs:
+  head-repo:
+    description: "owner/repo the PR's code lives in (use github.event.pull_request.head.repo.full_name — NOT github.repository, which is wrong for forks)"
+    required: true
+  head-sha:
+    description: "Full 40-character commit SHA to preview (use github.event.pull_request.head.sha — github.sha is the MERGE commit and appears in no commit list)"
+    required: true
+  pr-number:
+    description: "PR number, shown in the review course name so the reviewer can confirm what they are looking at"
+    required: false
+    default: ""
+  plugin-type:
+    description: "Moodle plugin type (mod, block, theme, …). Inferred from a moodle-TYPE_NAME repo name when omitted."
+    required: false
+    default: ""
+  plugin-name:
+    description: "Plugin name without the type prefix. Inferred from a moodle-TYPE_NAME repo name when omitted."
+    required: false
+    default: ""
+  playground-host:
+    description: >-
+      Playground to open. Defaults to the public deployment deliberately:
+      previews run unreviewed PHP in the visitor's browser, and the playground
+      renders the site in an unsandboxed iframe with a persistent service
+      worker, so they must not share an origin with anything you host.
+    required: false
+    default: "https://moodle-playground.com"
+outputs:
+  preview-url:
+    description: "The URL to put on the pull request"
+    value: ${{ steps.build.outputs.preview-url }}
+  plugin-type:
+    description: "Resolved plugin type"
+    value: ${{ steps.build.outputs.plugin-type }}
+  plugin-name:
+    description: "Resolved plugin name"
+    value: ${{ steps.build.outputs.plugin-name }}
+  head-sha:
+    description: "The commit the link previews (echoed back for the caller's comment)"
+    value: ${{ steps.build.outputs.head-sha }}
+  comment-body:
+    description: >-
+      Ready-to-post markdown for the pull request. Rendered here rather than in
+      the caller's workflow so a wording or safety fix reaches every adopter on
+      a version bump, instead of forking once per repo.
+    value: ${{ steps.comment.outputs.comment-body }}
+runs:
+  using: "composite"
+  steps:
+    - name: Refuse pull_request_target
+      shell: bash
+      run: |
+        if [ "${GITHUB_EVENT_NAME:-}" = "pull_request_target" ]; then
+          echo "::error::never run this on pull_request_target"
+          exit 1
+        fi
+
+    - name: Build preview URL
+      id: build
+      shell: bash
+      env:
+        HEAD_REPO: ${{ inputs.head-repo }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        PLUGIN_TYPE: ${{ inputs.plugin-type }}
+        PLUGIN_NAME: ${{ inputs.plugin-name }}
+        PLAYGROUND_HOST: ${{ inputs.playground-host }}
+        OUT_DIR: ${{ runner.temp }}/preview-out
+      run: |
+        # ubuntu-latest has node on PATH; self-hosted runners often do not
+        # (the runner bundles its own under externals/ without exporting it).
+        command -v node >/dev/null || { echo "::error::node >= 18 must be on PATH"; exit 1; }
+        # `preview/` is not standalone: it runs a script from the repo root.
+        # Fail loudly rather than executing whatever happens to sit at `..`
+        # if someone vendors this directory on its own.
+        root="$GITHUB_ACTION_PATH/.."
+        if [ ! -f "$root/scripts/preflight.mjs" ]; then
+          echo "::error::preview/ must be used from its own repo (owner/repo/preview@sha), not vendored alone"
+          exit 1
+        fi
+        node "$root/scripts/build-preview.mjs"
+
+    - name: Render the comment body
+      id: comment
+      # always(): a failed build still needs a body, so the caller can replace
+      # a stale link rather than leave an older commit's preview looking current.
+      if: always()
+      shell: bash
+      env:
+        PREVIEW_URL: ${{ steps.build.outputs.preview-url }}
+        PLUGIN: ${{ steps.build.outputs.plugin-type }}_${{ steps.build.outputs.plugin-name }}
+        HEAD_SHA: ${{ inputs.head-sha }}
+        RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"

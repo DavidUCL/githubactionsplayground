@@ -1,0 +1,100 @@
+# Copy this into a Moodle plugin repo as .github/workflows/playground-preview.yml
+#
+# It puts a link on every pull request that boots that PR's code in a Moodle
+# Playground. Replace <COMMIT-SHA> with a commit of the action repo — pinning
+# to a SHA is not ceremony: `uses: ./`-style floating refs would let the pull
+# request supply the code that builds its own preview link.
+#
+# NEVER change the trigger to pull_request_target. The action hard-fails on it.
+
+name: Playground preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    # A README-only change does not need a Moodle. Do not add lang/, db/ or
+    # tests/ here — they all affect whether the plugin installs.
+    paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  # Cancels superseded runs, but note this is NOT a guarantee: a cancelled run
+  # gets a grace period and can still finish its comment AFTER the newer one.
+  # The head-SHA re-check in the posting step is what actually prevents a
+  # comment describing an older commit.
+  group: playground-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # NO FORK PREVIEWS, BY DESIGN. Fork PRs get a read-only token, so posting
+    # would 403. The tempting fixes are both worse: pull_request_target hands a
+    # write token to a job running PR-controlled code, and workflow_run is also
+    # privileged and equally easy to get wrong. If fork coverage is ever
+    # needed, do it deliberately with an artifact + workflow_run split that
+    # re-checks the PR head SHA via the API before posting.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - id: preview
+        uses: DavidUCL/githubactionsplayground/preview@<COMMIT-SHA>
+        with:
+          # head.repo/head.sha, not github.repository/github.sha: the latter
+          # are the base repo and the merge commit.
+          head-repo: ${{ github.event.pull_request.head.repo.full_name }}
+          head-sha: ${{ github.event.pull_request.head.sha }}
+          pr-number: ${{ github.event.pull_request.number }}
+          # Set these if the repo is not named moodle-TYPE_NAME:
+          # plugin-type: mod
+          # plugin-name: attendance
+
+      - name: Comment the preview link
+        # always(): if the build failed, the previous comment would otherwise
+        # survive advertising an older commit as this PR's preview.
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          # The body is rendered by the action, so a wording or safety fix
+          # arrives with a version bump instead of needing an edit here.
+          BODY: ${{ steps.preview.outputs.comment-body }}
+        run: |
+          set -o pipefail
+
+          # A superseded run can still reach this point: cancel-in-progress is
+          # not a guarantee, only a request. Writing now would leave the PR
+          # advertising an older commit's code as its preview.
+          head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR" --jq .head.sha)
+          if [ "$head" != "$SHA" ]; then
+            echo "::notice::head moved to ${head:0:7}; not overwriting"
+            exit 0
+          fi
+
+          # One comment per PR, rewritten in place: creating notifies everyone,
+          # editing does not. Restricted to OUR OWN comments — anyone can post
+          # one carrying the marker, and without this filter every run would
+          # edit THEIR comment instead, under their avatar.
+          #
+          # NB the filter assumes the default GITHUB_TOKEN (author
+          # `github-actions[bot]`). If you swap in a PAT or App token, change
+          # the login here to match, or every push posts a new comment.
+          found=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments?per_page=100" \
+            --jq '.[] | select(.user.login == "github-actions[bot]")
+                      | select((.body // "") | contains("<!-- moodle-playground-preview -->")) | .id')
+          id=${found%%$'\n'*}
+
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$BODY" >/dev/null
+          else
+            gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -f body="$BODY" >/dev/null
+          fi
+
+      # NOT DONE, deliberately: nothing rewrites the comment when the PR is
+      # closed or merged, so it keeps a present-tense heading. Fixing it means
+      # a `types: [closed]` trigger and a branch that skips the build — worth
+      # it once this is in daily use, noise in a template until then.
