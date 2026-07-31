@@ -1,9 +1,9 @@
 # Copy this into a Moodle plugin repo as .github/workflows/playground-preview.yml
 #
 # It puts a link on every pull request that boots that PR's code in a Moodle
-# Playground. Replace <COMMIT-SHA> with a commit of the action repo — pinning
-# to a SHA is not ceremony: `uses: ./`-style floating refs would let the pull
-# request supply the code that builds its own preview link.
+# Playground. Pin to a commit of the action repo and update it deliberately —
+# a floating ref would let the pull request supply the code that builds its
+# own preview link.
 #
 # NEVER change the trigger to pull_request_target. The action hard-fails on it.
 
@@ -41,7 +41,7 @@ jobs:
     if: github.event.pull_request.head.repo.full_name == github.repository
     steps:
       - id: preview
-        uses: DavidUCL/githubactionsplayground/preview@<COMMIT-SHA>
+        uses: DavidUCL/githubactionsplayground/preview@54ca9618ee7789b0995cedeba08a5273a4f0dbc9
         with:
           # head.repo/head.sha, not github.repository/github.sha: the latter
           # are the base repo and the merge commit.
