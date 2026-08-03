@@ -1,0 +1,141 @@
+# Dogfood: this repo previews its OWN pushed commits.
+#
+# It exists because the posting steps are the only components that fork into
+# every adopting repo, and they had never run on a push event: the commit
+# status, the branch-deletion guard, the commits/<sha>/pulls lookup and the
+# bot-author filter. They run here first.
+#
+# This is `examples/commit-preview-workflow.yml` with two differences:
+#   - `uses: ./preview` instead of a pinned reference, because the action and
+#     the workflow ship together here;
+#   - it previews a fixed third-party plugin, since this repo is not a Moodle
+#     plugin and has no version.php of its own.
+#
+# It puts a link on EVERY PUSHED COMMIT that boots that commit's code in a
+# Moodle Playground — not just commits that happen to be in a pull request.
+# The link appears in two places:
+#
+#   - a commit status, so it shows next to the checks on the commit itself
+#     AND on any pull request whose head is that commit (a PR's checks box is
+#     just the statuses of its head commit);
+#   - a sticky comment on any open pull request containing the commit, which
+#     is where there is room for the credentials and the caveats.
+#
+# Pin `uses:` to a commit of the action repo and update it deliberately — a
+# floating ref would let a pushed commit supply the code that builds its own
+# preview link.
+#
+# WHY `push` AND NOT `pull_request`: on a pull_request event, `github.sha` is
+# the synthetic MERGE commit, which appears in no commit list and which
+# `actions/checkout` checks out by default — so the plugin ZIP and any file
+# read from the workspace can come from different trees. On push, `github.sha`
+# is exactly the commit that was pushed.
+#
+# NEVER change the trigger to pull_request_target. The action hard-fails on it.
+
+name: Playground preview (dogfood)
+
+on:
+  push:
+    # Tags are not previewable: the action needs a branch commit to build a
+    # ZIP URL from, and a tag push repeats a commit that already ran.
+    tags-ignore: ["**"]
+    # A README-only change does not need a Moodle. Do NOT add lang/, db/ or
+    # tests/ here — they all affect whether the plugin installs.
+    paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
+
+permissions:
+  contents: read
+  # Writes the commit status. This is the smallest scope that puts a clickable
+  # link on both the commit and the pull request.
+  statuses: write
+  # Only needed for the sticky pull-request comment. Drop it, and the two
+  # comment steps, if the commit status alone is enough for your team.
+  pull-requests: write
+
+concurrency:
+  # One preview per branch. Cancellation is a request, not a guarantee — a
+  # cancelled run gets a grace period and can still finish after a newer one,
+  # which is why the comment step re-checks the PR head before writing.
+  group: playground-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A branch DELETION is a push event with no commit to preview. Without
+    # this the run fails on an all-zero SHA and reads like a broken action.
+    if: github.event.deleted != true
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: preview
+        uses: ./preview
+        with:
+          # This repo holds no Moodle plugin, so preview a real one at a fixed
+          # commit. A plugin repo would pass its own repository and SHA, and
+          # would leave plugin-root at "." so version.php is read.
+          head-repo: danmarsden/moodle-mod_attendance
+          head-sha: 8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c
+
+      # The link, on the commit and on every PR that contains it. `always()`
+      # so a failed build still reports, rather than leaving the previous
+      # commit's green status looking current.
+      - name: Publish the preview as a commit status
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ steps.preview.outputs.preview-url }}
+          USER_NAME: ${{ steps.preview.outputs.preview-user }}
+        run: |
+          set -euo pipefail
+          if [ -n "$URL" ]; then
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              -f state=success \
+              -f context="Moodle Playground preview" \
+              -f description="Opens this commit in a browser Moodle as $USER_NAME" \
+              -f target_url="$URL" >/dev/null
+          else
+            # No link. Say so on the commit rather than staying silent, but do
+            # not fail the commit: this is a preview, not a test.
+            gh api -X POST "repos/$GITHUB_REPOSITORY/statuses/$GITHUB_SHA" \
+              -f state=success \
+              -f context="Moodle Playground preview" \
+              -f description="No preview — this commit cannot boot in the playground" \
+              >/dev/null
+          fi
+
+      # Optional: the fuller message, where there is a conversation to put it
+      # in. A commit status has no room for credentials or caveats.
+      - name: Comment on any open pull request for this commit
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BODY: ${{ steps.preview.outputs.comment-body }}
+        run: |
+          set -euo pipefail
+          # A commit can belong to more than one open PR.
+          prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
+                  --jq '.[] | select(.state == "open") | .number' || true)
+          [ -n "$prs" ] || { echo "::notice::no open PR contains this commit"; exit 0; }
+          for pr in $prs; do
+            # Re-check the head: a newer push may have landed while this ran,
+            # and its comment must not be overwritten by this older one.
+            head=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" --jq .head.sha)
+            if [ "$head" != "$GITHUB_SHA" ]; then
+              echo "::notice::PR #$pr head moved to ${head:0:7}; leaving its comment alone"
+              continue
+            fi
+            # Match on the marker AND on the author being a bot: hardcoding
+            # `github-actions[bot]` breaks the moment a PAT or App posts these.
+            found=$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr/comments?per_page=100" \
+              --jq '.[] | select(.user.type == "Bot")
+                        | select((.body // "") | contains("<!-- moodle-playground-preview -->")) | .id')
+            id=${found%%$'\n'*}
+            if [ -n "$id" ]; then
+              gh api -X PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -f body="$BODY" >/dev/null
+            else
+              gh api -X POST "repos/$GITHUB_REPOSITORY/issues/$pr/comments" -f body="$BODY" >/dev/null
+            fi
+          done

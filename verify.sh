@@ -168,6 +168,22 @@ missing = emitted - declared
 if missing:
     print('outputs set by build-preview.mjs but not declared in preview/action.yml:', sorted(missing))
     sys.exit(1)
+
+# The other direction: a workflow that reads steps.<id>.outputs.<name> for a
+# name the action does not declare gets an EMPTY STRING, not an error. That is
+# how a status ends up reading "... as " with nothing after it, or a comment
+# step posts an empty body. Catch the typo here rather than on a real commit.
+bad = []
+for f in list(root.glob('.github/workflows/*.yml')) + list(root.glob('examples/*.yml')):
+    text = f.read_text()
+    for name in set(re.findall(r'steps\.preview\.outputs\.([A-Za-z0-9_-]+)', text)):
+        if name not in declared:
+            bad.append(f'{f}: steps.preview.outputs.{name}')
+if bad:
+    print('workflows read outputs preview/action.yml does not declare:')
+    for b in sorted(bad):
+        print('   ', b)
+    sys.exit(1)
 PY_YAML
 check $? 1g "every action/workflow parses and declares the outputs it emits"
 

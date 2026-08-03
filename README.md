@@ -1,9 +1,11 @@
 # action-moodle-playground-verify
 
-**Put a link on a Moodle plugin pull request that boots that PR's code in a
+**Put a link on a Moodle plugin commit that boots that commit's code in a
 throwaway Moodle, in the reviewer's browser.** That is `preview/` — the part
-a colleague actually sees. Copy `examples/pr-preview-workflow.yml` into a
-plugin repo and every PR gets a link.
+a colleague actually sees. Copy `examples/commit-preview-workflow.yml` into a
+plugin repo and every pushed commit gets a link: a commit status (which also
+shows on any pull request containing the commit) plus a sticky PR comment
+where there is room for the credentials and caveats.
 
 The repo also holds a **boot-verify** action at the root: it boots a blueprint
 headlessly in CI and emits a closed-schema verdict. Be clear about what that
@@ -106,7 +108,24 @@ a workflow that runs PR-authored code, and a permanent storage obligation —
 judged the worse trade. Accepted, not overlooked. If it goes down, previews
 boot a Moodle with no plugin (see "absence is quiet" above).
 
-A copy-paste consumer workflow is in `examples/pr-preview-workflow.yml`.
+## Consumer workflows
+
+Two copy-paste workflows, both pinned to a commit of this repo:
+
+- **`examples/commit-preview-workflow.yml`** — runs on `push`, so every commit
+  gets a link. Preferred. On a `pull_request` event `github.sha` is the
+  synthetic MERGE commit, which appears in no commit list and which
+  `actions/checkout` checks out by default, so the plugin ZIP and anything
+  read from the workspace can come from different trees. On `push` they cannot.
+  Needs `statuses: write` for the commit status and `pull-requests: write`
+  only if you also want the comment.
+- **`examples/pr-preview-workflow.yml`** — runs on `pull_request` and posts
+  only the comment. Use it if you would rather not have a run per commit;
+  note the merge-commit caveat above.
+
+Neither previews fork pull requests: a fork gets a read-only token, so posting
+would 403. `pull_request_target` and `workflow_run` both fix that by handing a
+write token to a job adjacent to untrusted code, which is a worse trade.
 
 ## Statuses
 
