@@ -106,6 +106,48 @@ else
     echo "CHECK 1f SKIP: SKIP_NET set"
 fi
 
+# The Moodle-version table in plugin-version.mjs is a snapshot of core's own
+# $version per branch. Core only ever increases it, so a stale entry can only
+# cause a FALSE REFUSAL of a valid plugin — annoying, and invisible until an
+# adopter reports it. Re-derive from moodle/moodle and say so out loud.
+# Same shape as check 1e: real source when reachable, loud waiver when not.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    DRIFT=$(node -e '
+import("./scripts/plugin-version.mjs").then(async (m) => {
+  const problems = [];
+  for (const [branch, recorded] of Object.entries(m.MOODLE_BRANCH_VERSIONS)) {
+    const url = `https://raw.githubusercontent.com/moodle/moodle/${branch}/version.php`;
+    let text;
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) { console.log(`SKIP ${branch}: HTTP ${res.status}`); continue; }
+      text = await res.text();
+    } catch (e) { console.log(`SKIP ${branch}: ${e.message}`); continue; }
+    const found = /\$version\s*=\s*([0-9]+)/.exec(text);
+    if (!found) { console.log(`SKIP ${branch}: no $version found`); continue; }
+    const actual = Number(found[1]);
+    if (actual !== recorded) {
+      problems.push(`${branch}: table says ${recorded}, core says ${actual}`);
+    }
+  }
+  if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
+  console.log("OK");
+});
+' 2>&1) || true
+    if [[ "$DRIFT" == *DRIFT* ]]; then
+        echo "CHECK 1h FAIL: Moodle version table is stale — $DRIFT"
+        echo "               Update MOODLE_BRANCH_VERSIONS in scripts/plugin-version.mjs."
+        FAILED+=("1h: Moodle version table is stale")
+    elif [[ "$DRIFT" == *"SKIP"* && "$DRIFT" != *"OK"* ]]; then
+        echo "CHECK 1h WAIVED: could not reach moodle/moodle — version table UNCHECKED"
+        echo "                 ($DRIFT)"
+    else
+        echo "CHECK 1h PASS: Moodle version table matches core"
+    fi
+else
+    echo "CHECK 1h SKIP: SKIP_NET set"
+fi
+
 # Every action/workflow file must parse, and every output the preview script
 # sets must be DECLARED by the action — an undeclared output silently arrives
 # as an empty string in the caller's comment. (The action itself is only truly

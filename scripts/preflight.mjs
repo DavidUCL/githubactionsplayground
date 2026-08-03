@@ -37,6 +37,25 @@ export const BANNED_STEPS = new Set([
   "deleteFiles", "mkdir", "rmdir", "setConfigFile", "setConfigFiles",
 ]);
 
+// Config names whose values Moodle renders as RAW HTML on every page
+// (PARAM_RAW, emitted by core_renderer). `setConfig` is allowlisted by NAME,
+// so without this the gate passes a blueprint that injects a <script> tag
+// into an unsandboxed iframe, same-origin with the playground — every URL
+// sweep misses it, because the payload need not look like a URL at all.
+// This is the "allowlist names, not capabilities" gap.
+export const RAW_HTML_CONFIGS = new Set([
+  "additionalhtmlhead",
+  "additionalhtmlfooter",
+  "additionalhtmltopofbody",
+]);
+
+/** Collect the {name, value} pairs a setConfig/setConfigs step would apply. */
+function configPairs(step) {
+  if (step?.step === "setConfig") return [{ name: step.name, value: step.value }];
+  if (step?.step === "setConfigs" && Array.isArray(step.configs)) return step.configs;
+  return [];
+}
+
 // Anything that could possibly be fetched. Deliberately far wider than
 // "starts with https://": the URL parser and fetch() both strip leading /
 // trailing / embedded C0 whitespace, so " https://evil/x" and
@@ -241,6 +260,15 @@ export function gateBlueprint(blueprint, dataHosts) {
     // matching the extraction path, which needs the type and name stated.
     // URL-derived detection happens inside the browser where we cannot see
     // it, so an unstated name makes a pass unfalsifiable.
+    for (const cfg of configPairs(step)) {
+      if (RAW_HTML_CONFIGS.has(String(cfg?.name ?? "").toLowerCase())) {
+        stepErrors.push(
+          `step[${i}] ${name}: refuses to set "${cfg.name}" — Moodle renders it ` +
+            `as raw HTML on every page, same-origin with the playground`,
+        );
+      }
+    }
+
     if (PLUGIN_STEPS.has(name)) {
       const type = name === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;
       if (!IDENTIFIER_RE.test(String(step.pluginName ?? ""))) {

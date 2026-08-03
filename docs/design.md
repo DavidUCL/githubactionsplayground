@@ -135,12 +135,27 @@ One boot-capture-assert core, two producers (Sandy):
   hitting one plugin page. This is the realistic "actually installed" bar;
   PHPUnit-in-WASM is ruled out for v1 (trimmed bundle, Sandy G5).
 
-**Provenance-gated step allowlist (Cass #3):** foreign blueprints (the
-manual `blueprint-url` input) are pre-flight-parsed and REJECTED if they
-contain `runPhpCode`, `runPhpScript`, `writeFile(s)`, `unzip`,
-`restoreDatabase`, `applyPrOverlay`, `request`, or proxy/host overrides —
-the step registry is a full RCE surface inside a runner-egress-bearing job.
-Action-constructed (base-provenance) blueprints may include the probe steps.
+**Step allowlist (Cass #3):** blueprints are pre-flight-parsed and REJECTED
+if they contain `runPhpCode`, `runPhpScript`, `writeFile(s)`, `unzip`,
+`applyPrOverlay`, `request`, `setConfigFile(s)`, the file-manipulation steps,
+or proxy/host overrides — the step registry is a full RCE surface inside a
+runner-egress-bearing job.
+
+CORRECTION (2026-08-03): this paragraph previously listed `restoreDatabase`
+as rejected for foreign blueprints, and described the allowlist as
+provenance-gated. Neither matches the code, and the code is right: the
+resolved day-0 decision was **`restoreDatabase` allowed under the data-host
+allowlist**, which `sweepUrls` enforces by requiring every URL in the
+blueprint — including the database's — to clear `dataHosts`. There is one
+allowlist, not two. The nightly canary blueprint uses `restoreDatabase` via
+`blueprint-url`, so a provenance split would have broken it.
+
+**Capability checks on allowlisted names:** an allowlisted step name can
+still carry a dangerous value. `setConfig`/`setConfigs` are refused for
+`additionalhtmlhead`, `additionalhtmlfooter` and `additionalhtmltopofbody`,
+which Moodle renders as raw HTML (PARAM_RAW) on every page, inside an
+unsandboxed iframe that is same-origin with the playground. The URL sweeps
+cannot catch this: the payload need not contain a URL at all.
 This composes with host allowlists on `blueprint-url`/`playground-host`/
 proxy params (default deny; https-only; no userinfo; redirect-pinned).
 

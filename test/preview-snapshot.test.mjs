@@ -88,11 +88,32 @@ test("a theme preview activates THAT theme, not some other one", () => {
   assert.equal(bp.steps.find((s) => s.step === "setTheme").name, "boost_union");
 });
 
-test("Moodle is installed and logged into before anything depends on it", () => {
+test("step order is load-bearing: install first, log in last", () => {
   const order = buildBlueprint(CASES.mod).steps.map((s) => s.step);
   assert.equal(order[0], "installMoodle");
-  assert.equal(order[1], "login");
-  assert.equal(order.indexOf("installMoodlePlugin") > order.indexOf("login"), true);
+  // phpLogin does a MUST_EXIST lookup on the username, so logging in before
+  // createUsers would abort the blueprint on any non-admin user.
+  assert.ok(order.indexOf("login") > order.indexOf("createUsers"),
+    "login must come after createUsers");
+  // The session must exist before the reviewer is sent to the landing page.
+  assert.ok(order.indexOf("login") < order.indexOf("setLandingPage"),
+    "login must come before setLandingPage");
+  assert.equal(order.at(-1), "setLandingPage");
+  // Provisioning still happens against an installed Moodle.
+  assert.ok(order.indexOf("installMoodlePlugin") > order.indexOf("installMoodle"));
+});
+
+test("the reviewer arrives as a teacher, not admin, wherever that is possible", () => {
+  // admin bypasses capability checks, so a capability-fix PR would preview
+  // identically fixed or broken. Only admin-page landings need an admin.
+  const login = (c) => buildBlueprint(c).steps.find((s) => s.step === "login");
+  assert.equal(login(CASES.mod).username, "teacher");
+  assert.equal(login(CASES.theme).username, "teacher");
+  assert.equal(login(CASES.unknown).username, "admin"); // lands on /admin/plugins.php
+});
+
+test("the login step is critical — a failed login must not land a stranger", () => {
+  assert.equal(buildBlueprint(CASES.mod).steps.find((s) => s.step === "login").critical, true);
 });
 
 test("the Moodle branch is pinned, so previews do not drift between reviewers", () => {
@@ -175,4 +196,10 @@ test("the reviewer gets a brief on the course page", () => {
   assert.match(label.intro, /d0638b3/);
   // Blueprint strings may not contain newlines — preflight rejects them.
   assert.equal(label.intro.includes("\n"), false);
+});
+
+test("a tiny subplugin lands on the TinyMCE settings page, not the plugin list", () => {
+  // Previously fell through to /admin/plugins.php, which proves registration
+  // and nothing else. The section is defined in lib/editor/tiny/settings.php.
+  assert.equal(landingPath("tiny", "myplug"), "/admin/settings.php?section=editorsettingstiny");
 });

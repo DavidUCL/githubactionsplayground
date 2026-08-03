@@ -9,10 +9,6 @@
       "step": "installMoodle"
     },
     {
-      "step": "login",
-      "username": "admin"
-    },
-    {
       "step": "setConfigs",
       "configs": [
         {
@@ -94,6 +90,11 @@
       "section": 0,
       "name": "Review brief",
       "intro": "<p><strong>d0638b3 · local_myplugin</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
+    },
+    {
+      "step": "login",
+      "username": "admin",
+      "critical": true
     },
     {
       "step": "setLandingPage",

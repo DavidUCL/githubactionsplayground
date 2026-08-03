@@ -23,6 +23,13 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
 import { gateBlueprint } from "./preflight.mjs";
+import {
+  readPluginVersion,
+  checkMoodleCompatibility,
+  checkComponent,
+  checkPluginTypeSupported,
+  DEFAULT_MOODLE_BRANCH,
+} from "./plugin-version.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 // Deliberately stricter than GitHub: a segment of `.` or `..` is folded away
@@ -44,7 +51,15 @@ const escapeHtml = (v) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
 // Params the playground resolver treats as overrides. None may appear.
-const FORBIDDEN_PARAMS = ["repo", "ref", "owner", "branch", "blueprint-url"];
+// `repo`/`ref`/`owner`/`branch` rewrite plugin URLs. `moodle`/`moodleBranch`/
+// `php`/`phpVersion` are resolved "URL params > blueprint > defaults"
+// (shell/main.js:575), so any of them overrides the blueprint's own
+// preferredVersions — booting a DIFFERENT Moodle from the one the
+// compatibility check was made against, while the link still looks right.
+export const FORBIDDEN_PARAMS = [
+  "repo", "ref", "owner", "branch", "blueprint-url",
+  "moodle", "moodleBranch", "php", "phpVersion",
+];
 // The preview half had no origin concept at all, while the verify half has
 // ACCEPTED_ORIGINS. A link is a capability; it must not point anywhere.
 export const DEFAULT_ORIGINS = [
@@ -68,6 +83,15 @@ const COURSE_ID = 2;
 export function derivePlugin(repoFullName, overrides = {}) {
   let type = overrides.type || "";
   let name = overrides.name || "";
+  // version.php's `component` is the plugin's own statement of identity and
+  // beats any inference from the repository name, which is only a convention.
+  if ((!type || !name) && overrides.component) {
+    const c = /^([a-z][a-z0-9]*)_([a-z][a-z0-9_]*)$/.exec(String(overrides.component));
+    if (c) {
+      type = type || c[1];
+      name = name || c[2];
+    }
+  }
   if (!type || !name) {
     // The `moodle-` prefix is a convention, not a rule: plenty of repos are
     // named plainly (`local_myplugin`), and requiring the prefix rejected them
@@ -137,12 +161,27 @@ export function landingPath(type, name) {
       return "/admin/settings.php?section=manageenrols";
     case "editor":
       return "/admin/settings.php?section=manageeditors";
+    case "tiny":
+      // TinyMCE subplugins have their own settings page, defined in
+      // lib/editor/tiny/settings.php (NOT admin/settings/plugins.php, which is
+      // why a grep of that file suggests the section does not exist).
+      return "/admin/settings.php?section=editorsettingstiny";
     default:
       // Proves registration, version and settings for everything else, and
       // shows absence loudly — better than a page that looks normal whether
       // or not the plugin arrived.
       return "/admin/plugins.php";
   }
+}
+
+/**
+ * Who the reviewer should arrive as. Admin pages need an admin; everything
+ * else is judged better as a teacher, because admin bypasses the capability
+ * checks a plugin's own code relies on. `editingteacher` is enrolled in the
+ * review course, so a teacher can still add and configure activities.
+ */
+export function previewUser(landing) {
+  return String(landing).startsWith("/admin/") ? "admin" : "teacher";
 }
 
 /** @returns {object} the blueprint the preview link carries */
@@ -163,7 +202,6 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name }) {
 
   const steps = [
     { step: "installMoodle" },
-    { step: "login", username: "admin" },
     {
       // Without DEVELOPER debugging, deprecations and notices are invisible and
       // a reviewer passes a plugin that is warning loudly on a real site.
@@ -267,7 +305,22 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name }) {
     throw new Error("internal: landing pages assume exactly one createCourse");
   }
   if (type === "theme") steps.push({ step: "setTheme", name });
-  steps.push({ step: "setLandingPage", path: landingPath(type, name) });
+  // Log in LAST, and as whoever can actually judge the landing page.
+  //
+  // The reviewer used to arrive as admin, and admin bypasses capability checks
+  // entirely. A pull request that FIXES a capability bug therefore previewed
+  // identically to one that did not — the single thing a preview most needs
+  // to show.
+  //
+  // Ordering is load-bearing twice over. phpLogin does a MUST_EXIST lookup on
+  // the username, so it cannot run before createUsers. And bootstrap.js:3088
+  // skips its own hardcoded admin auto-login whenever the blueprint contains a
+  // `login` step, so this REPLACES that session rather than adding one.
+  // Provisioning needs no session: the create/enrol helpers call core APIs
+  // directly and never read $USER.
+  const landing = landingPath(type, name);
+  steps.push({ step: "login", username: previewUser(landing), critical: true });
+  steps.push({ step: "setLandingPage", path: landing });
 
 
   const landingPage = landingPath(type, name);
@@ -355,11 +408,25 @@ export function buildPreviewUrl({ playgroundHost, blueprint, allowedOrigins = DE
   return url.toString();
 }
 
-function setOutput(name, value) {
+// Values here now include strings read from version.php — a file the pull
+// request under review controls. A newline in one would inject a second
+// `name=value` line into $GITHUB_OUTPUT, and the caller workflow posts
+// `comment-body` verbatim as the bot. Refuse anything outside the shape every
+// legitimate output already has. (render-summary.mjs has carried this guard
+// from the start; build-preview did not, because until version.php was read
+// every value here came from a regex-validated scalar.)
+const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+-]{0,4096}$/;
+
+export function setOutput(name, value) {
+  const str = String(value);
+  const safe = SAFE_OUTPUT_RE.test(str) ? str : "";
+  if (!safe && str) {
+    throw new Error(`refusing to emit unsafe output ${name}=${JSON.stringify(str.slice(0, 80))}`);
+  }
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${value}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${safe}\n`);
   } else {
-    console.log(`output ${name}=${value}`);
+    console.log(`output ${name}=${safe}`);
   }
 }
 
@@ -369,11 +436,48 @@ function main() {
   const prNumber = process.env.PR_NUMBER || "";
   const playgroundHost = process.env.PLAYGROUND_HOST || "https://moodle-playground.com";
   const outDir = process.env.OUT_DIR || "preview-out";
+  // Which Moodle the playground will boot. Not pinned in the link today (see
+  // README) — this states the assumption the compatibility check is made
+  // against, so a wrong assumption is visible rather than silent.
+  const moodleBranch = process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH;
+
+  // version.php is the plugin's own declaration of what it is and what it
+  // needs. When the plugin repo is the one checked out — the normal case for
+  // an adopting repo — it is on disk and authoritative. Prefer it over
+  // guessing identity from the repository name.
+  const declared = readPluginVersion(process.env.PLUGIN_ROOT || ".");
 
   const { type, name } = derivePlugin(headRepo, {
     type: process.env.PLUGIN_TYPE,
     name: process.env.PLUGIN_NAME,
+    component: declared?.component,
   });
+
+  // Independent of version.php: a plugin TYPE the bundled Moodle no longer has
+  // cannot install whatever the plugin declares.
+  const supported = checkPluginTypeSupported(type, moodleBranch);
+  if (!supported.ok) throw new Error(supported.reason);
+
+  if (declared) {
+    // A component that disagrees with the install path is a silent failure:
+    // upgrade_plugins skips a directory with no readable version.php without
+    // saying anything, and the reviewer gets a Moodle with no plugin.
+    const comp = checkComponent(declared.component, type, name);
+    if (!comp.ok) throw new Error(comp.reason);
+
+    const compat = checkMoodleCompatibility(declared, moodleBranch);
+    if (!compat.ok) throw new Error(compat.reason);
+    if (compat.reason) console.log(`note: ${compat.reason}`);
+  } else {
+    // Not fatal. This repo's own dogfood previews a third-party plugin that
+    // was never checked out, and that is a legitimate shape. Say plainly that
+    // the strongest check was skipped rather than implying it passed.
+    console.log(
+      `note: no version.php under "${process.env.PLUGIN_ROOT || "."}" — ` +
+        `Moodle-version compatibility NOT checked`,
+    );
+  }
+
   const blueprint = buildBlueprint({ headRepo, headSha, prNumber, type, name });
   const url = buildPreviewUrl({ playgroundHost, blueprint });
 
@@ -385,6 +489,8 @@ function main() {
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
+  setOutput("plugin-component", declared?.component || `${type}_${name}`);
+  setOutput("preview-user", previewUser(landingPath(type, name)));
   console.log(`preview: ${type}_${name} @ ${headSha.slice(0, 7)} (${url.length} chars)`);
 }
 

@@ -195,6 +195,58 @@ const MUTATIONS = [
     "ERROR_CLASSES[v.error_class] !== v.status", "false"],
   ["schema: allow loose assertion objects", "scripts/validate-verdict.mjs",
     'if (keys !== "id,ok")', "if (false)"],
+
+  // plugin-version.mjs — the Moodle-compatibility refusal. Each mutant here
+  // corresponds to a preview that boots a clean Moodle with no plugin in it.
+  ["compat: accept a plugin needing a newer Moodle", "scripts/plugin-version.mjs",
+    "if (requires > coreVersion) {", "if (false) {"],
+  ["compat: off-by-one in the version comparison", "scripts/plugin-version.mjs",
+    "requires > coreVersion", "requires > coreVersion + 1"],
+  ["compat: silently pass an unknown branch with no note", "scripts/plugin-version.mjs",
+    'return { ok: true, reason: `unknown Moodle branch "${branch}" — compatibility not checked` };',
+    "return { ok: true };"],
+  ["parse: ignore $module-> style declarations", "scripts/plugin-version.mjs",
+    "`\\\\$(?:plugin|module)\\\\s*->\\\\s*${field}\\\\s*=\\\\s*'?([0-9]+)(?:\\\\.[0-9]+)?'?\\\\s*;`",
+    "`\\\\$plugin\\\\s*->\\\\s*${field}\\\\s*=\\\\s*([0-9]+);`"],
+  ["parse: drop the version.php size cap", "scripts/plugin-version.mjs",
+    'readFileSync(path, "utf8").slice(0, 262144)', 'readFileSync(path, "utf8")'],
+  ["component: stop cross-checking the declared component", "scripts/plugin-version.mjs",
+    "if (component !== expected) {", "if (false) {"],
+
+  // preflight.mjs — capability checks on allowlisted step NAMES
+  ["config: allow raw-HTML site settings through setConfig", "scripts/preflight.mjs",
+    'if (RAW_HTML_CONFIGS.has(String(cfg?.name ?? "").toLowerCase())) {', "if (false) {"],
+  ["config: make the raw-HTML check case-sensitive", "scripts/preflight.mjs",
+    'String(cfg?.name ?? "").toLowerCase()', 'String(cfg?.name ?? "")'],
+  ["config: only inspect setConfig, ignoring setConfigs arrays", "scripts/preflight.mjs",
+    'if (step?.step === "setConfigs" && Array.isArray(step.configs)) return step.configs;',
+    "return [];"],
+
+  // build-preview.mjs — who the reviewer arrives as, and what a link may carry
+  ["login: land the reviewer as admin everywhere (bypasses capability checks)",
+    "scripts/build-preview.mjs",
+    'return String(landing).startsWith("/admin/") ? "admin" : "teacher";',
+    'return "admin";'],
+  ["login: drop critical from the login step", "scripts/build-preview.mjs",
+    'steps.push({ step: "login", username: previewUser(landing), critical: true });',
+    'steps.push({ step: "login", username: previewUser(landing) });'],
+  ["url: allow runtime-override params to re-aim the Moodle version",
+    "scripts/build-preview.mjs",
+    '  "moodle", "moodleBranch", "php", "phpVersion",\n', ""],
+  ["type: preview a plugin type the bundled Moodle removed", "scripts/plugin-version.mjs",
+    "if (coreVersion == null || coreVersion < removed.removedAt) return { ok: true };",
+    "return { ok: true };"],
+  ["type: refuse a removed type even on Moodles that still have it",
+    "scripts/plugin-version.mjs",
+    "coreVersion < removed.removedAt", "false"],
+  ["landing: send tiny subplugins back to the generic plugin list",
+    "scripts/build-preview.mjs",
+    'return "/admin/settings.php?section=editorsettingstiny";',
+    'return "/admin/plugins.php";'],
+  ["identity: ignore version.php, trust the repository name", "scripts/build-preview.mjs",
+    "if ((!type || !name) && overrides.component) {", "if (false) {"],
+  ["output: drop the newline guard now a file feeds outputs", "scripts/build-preview.mjs",
+    'const safe = SAFE_OUTPUT_RE.test(str) ? str : "";', "const safe = str;"],
 ];
 
 const survivors = [];
@@ -220,7 +272,7 @@ for (const [label, file, find, replace] of MUTATIONS) {
         "test/validate-verdict.test.mjs", "test/render-summary.test.mjs",
         "test/pipeline.test.mjs", "test/contract.test.mjs",
         "test/build-preview.test.mjs", "test/preview-snapshot.test.mjs",
-        "test/render-comment.test.mjs"], {
+        "test/render-comment.test.mjs", "test/plugin-version.test.mjs"], {
         cwd: dir, stdio: "pipe",
       });
     } catch {

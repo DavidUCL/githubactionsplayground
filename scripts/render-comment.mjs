@@ -15,13 +15,15 @@ import { pathToFileURL } from "node:url";
 const MARKER = "<!-- moodle-playground-preview -->";
 const SHA_RE = /^[0-9a-f]{40}$/;
 const COMPONENT_RE = /^[a-z][a-z0-9_]*$/;
+const USER_RE = /^[a-z][a-z0-9_]*$/;
 const URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/\?blueprint=[A-Za-z0-9_-]+$/;
 
 /** @returns {string} markdown for the sticky comment */
-export function renderComment({ url, plugin, headSha, runUrl }) {
+export function renderComment({ url, plugin, headSha, runUrl, user = "admin" }) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
   if (!COMPONENT_RE.test(String(plugin))) throw new Error(`bad plugin: ${plugin}`);
+  if (!USER_RE.test(String(user))) throw new Error(`bad user: ${user}`);
 
   // No link means the build failed. Say so plainly rather than leaving an
   // older commit's link sitting there looking current.
@@ -44,8 +46,17 @@ export function renderComment({ url, plugin, headSha, runUrl }) {
     "your machine — but it **runs this pull request's PHP in your browser**, so",
     "treat it like checking the branch out.",
     "",
-    "Log in as **`admin`** / **`password`** (`teacher` and `student1` also",
-    "exist, same password).",
+    `You arrive already signed in as **\`${user}\`**. \`admin\`, \`teacher\` and`,
+    "`student1` all exist, password **`password`**, so you can switch to check",
+    "a different role.",
+    ...(user === "teacher"
+      ? [
+          "",
+          "**Deliberately not admin.** A site admin passes every capability",
+          "check regardless of what the code says, so a permissions fix would",
+          "look identical whether or not it worked.",
+        ]
+      : []),
     "",
     "<details><summary>First open, and what to do if the plugin isn't there</summary>",
     "",
@@ -73,6 +84,7 @@ function main() {
     plugin: process.env.PLUGIN || "",
     headSha: process.env.HEAD_SHA || "",
     runUrl: process.env.RUN_URL || "",
+    user: process.env.PREVIEW_USER || "admin",
   });
   if (process.env.GITHUB_OUTPUT) {
     // Multi-line outputs need a delimiter that cannot appear in the body.

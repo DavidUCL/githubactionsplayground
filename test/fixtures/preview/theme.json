@@ -9,10 +9,6 @@
       "step": "installMoodle"
     },
     {
-      "step": "login",
-      "username": "admin"
-    },
-    {
       "step": "setConfigs",
       "configs": [
         {
@@ -98,6 +94,11 @@
     {
       "step": "setTheme",
       "name": "boost_union"
+    },
+    {
+      "step": "login",
+      "username": "teacher",
+      "critical": true
     },
     {
       "step": "setLandingPage",

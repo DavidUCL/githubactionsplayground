@@ -22,6 +22,23 @@ inputs:
     description: "Plugin name without the type prefix. Inferred from a moodle-TYPE_NAME repo name when omitted."
     required: false
     default: ""
+  plugin-root:
+    description: >-
+      Directory holding the plugin's version.php, relative to the workspace.
+      When present it is the authority on the plugin's component and on which
+      Moodle it needs, and the action REFUSES to build a link for a plugin the
+      playground cannot run. Absent (e.g. previewing a plugin you did not check
+      out) the check is skipped and said so out loud. version.php is parsed,
+      never executed.
+    required: false
+    default: "."
+  moodle-branch:
+    description: >-
+      Which Moodle the playground will boot, used to check the plugin's
+      $plugin->requires. Must match the playground's own default, which is
+      MOODLE_500_STABLE. The link does not yet pin this (see README).
+    required: false
+    default: "MOODLE_500_STABLE"
   playground-host:
     description: >-
       Playground to open. Defaults to the public deployment deliberately:
@@ -34,6 +51,12 @@ outputs:
   preview-url:
     description: "The URL to put on the pull request"
     value: ${{ steps.build.outputs.preview-url }}
+  plugin-component:
+    description: "Frankenstyle component, from version.php when available"
+    value: ${{ steps.build.outputs.plugin-component }}
+  preview-user:
+    description: "Username the reviewer arrives signed in as"
+    value: ${{ steps.build.outputs.preview-user }}
   plugin-type:
     description: "Resolved plugin type"
     value: ${{ steps.build.outputs.plugin-type }}
@@ -70,6 +93,8 @@ runs:
         PLUGIN_TYPE: ${{ inputs.plugin-type }}
         PLUGIN_NAME: ${{ inputs.plugin-name }}
         PLAYGROUND_HOST: ${{ inputs.playground-host }}
+        PLUGIN_ROOT: ${{ inputs.plugin-root }}
+        MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out
       run: |
         # ubuntu-latest has node on PATH; self-hosted runners often do not
@@ -95,5 +120,6 @@ runs:
         PREVIEW_URL: ${{ steps.build.outputs.preview-url }}
         PLUGIN: ${{ steps.build.outputs.plugin-type }}_${{ steps.build.outputs.plugin-name }}
         HEAD_SHA: ${{ inputs.head-sha }}
+        PREVIEW_USER: ${{ steps.build.outputs.preview-user }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"

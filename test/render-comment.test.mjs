@@ -22,11 +22,12 @@ test("it names the commit the reviewer can cross-check", () => {
   assert.match(body, /If it does not say\n {2}`8b217b1`, you are not looking at this code/);
 });
 
-test("it gives credentials, and says the other two share the password", () => {
+test("it gives credentials for all three accounts, so a reviewer can switch role", () => {
   const body = renderComment(ok);
-  assert.match(body, /`admin`\*\* \/ \*\*`password`/);
-  assert.match(body, /`teacher` and `student1` also/);
-  assert.match(body, /same password/);
+  assert.match(body, /signed in as \*\*`admin`\*\*/);
+  assert.match(body, /`admin`, `teacher` and/);
+  assert.match(body, /`student1`/);
+  assert.match(body, /password \*\*`password`\*\*/);
 });
 
 test("it warns that absence is quiet and names the proxy as the cause", () => {
@@ -77,4 +78,24 @@ test("it refuses inputs that are not what they claim to be", () => {
 test("the marker is present in both shapes, so the sticky upsert can find it", () => {
   assert.match(renderComment(ok), /^<!-- moodle-playground-preview -->/);
   assert.match(renderComment({ ...ok, url: "" }), /^<!-- moodle-playground-preview -->/);
+});
+
+test("the comment names the user the reviewer actually arrives as", () => {
+  const body = renderComment({ url: URL, plugin: "mod_attendance", headSha: SHA, user: "teacher" });
+  assert.match(body, /signed in as \*\*`teacher`\*\*/);
+  // And explains why, because "why am I not admin?" is the first question.
+  assert.match(body, /Deliberately not admin/);
+});
+
+test("an admin landing does not carry the not-admin explanation", () => {
+  const body = renderComment({ url: URL, plugin: "local_myplugin", headSha: SHA, user: "admin" });
+  assert.match(body, /signed in as \*\*`admin`\*\*/);
+  assert.doesNotMatch(body, /Deliberately not admin/);
+});
+
+test("a malformed username is refused rather than rendered", () => {
+  assert.throws(
+    () => renderComment({ url: URL, plugin: "mod_attendance", headSha: SHA, user: "a`b</script>" }),
+    /bad user/,
+  );
 });

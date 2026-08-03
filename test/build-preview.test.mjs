@@ -12,6 +12,7 @@ import {
   buildPreviewUrl,
   encodeBlueprint,
   assertNoPlaceholders,
+  FORBIDDEN_PARAMS,
 } from "../scripts/build-preview.mjs";
 
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
@@ -256,4 +257,37 @@ test("every step name is one the playground actually registers", () => {
   for (const s of buildBlueprint(base).steps) {
     assert.equal(known.has(s.step), true, `unknown step: ${s.step}`);
   }
+});
+
+// Runtime versions resolve "URL params > blueprint > defaults"
+// (moodle-playground shell/main.js:575), so a version param overrides the
+// blueprint's own preferredVersions — the link would boot a different Moodle
+// from the one the plugin was checked against, and still look correct.
+for (const param of ["moodle", "moodleBranch", "php", "phpVersion"]) {
+  test(`a playground host carrying ?${param}= is refused`, () => {
+    const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+    assert.throws(
+      () => buildPreviewUrl({
+        playgroundHost: `https://moodle-playground.com/?${param}=MOODLE_501_STABLE`,
+        blueprint: bp,
+      }),
+      /must carry no query/,
+    );
+  });
+
+  test(`${param} is on the forbidden list, so a finished link can never carry it`, () => {
+    // The host guard above already rejects any query, making this belt and
+    // braces — but it is the belt that has to hold if a future change ever
+    // adds a parameter of its own.
+    assert.ok(FORBIDDEN_PARAMS.includes(param));
+  });
+}
+
+test("the emitted link carries the blueprint and nothing else", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  const url = new URL(buildPreviewUrl({
+    playgroundHost: "https://moodle-playground.com",
+    blueprint: bp,
+  }));
+  assert.deepEqual([...url.searchParams.keys()], ["blueprint"]);
 });
