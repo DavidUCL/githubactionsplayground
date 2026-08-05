@@ -187,6 +187,39 @@ if bad:
 PY_YAML
 check $? 1g "every action/workflow parses and declares the outputs it emits"
 
+# A push workflow that defines ONLY tags/tags-ignore never runs on a branch
+# push. GitHub: "If you define only tags/tags-ignore or only branches/
+# branches-ignore, the workflow won't run for events affecting the undefined
+# Git ref." There is no error and no run — the workflow is simply silent,
+# which is indistinguishable from "nothing changed". Shipped exactly that in
+# commit-preview.yml and only noticed because the dogfood produced no run.
+python3 - <<'PY_TRIG'
+import sys, pathlib
+try:
+    import yaml
+except ImportError:
+    print('pyyaml unavailable — skipping trigger check'); sys.exit(0)
+bad = []
+for f in list(pathlib.Path('.').glob('.github/workflows/*.yml')) + list(pathlib.Path('.').glob('examples/*.yml')):
+    doc = yaml.safe_load(f.read_text()) or {}
+    # `on:` parses as the boolean True in YAML 1.1.
+    on = doc.get('on', doc.get(True)) or {}
+    push = on.get('push') if isinstance(on, dict) else None
+    if not isinstance(push, dict):
+        continue
+    has_tags = any(k in push for k in ('tags', 'tags-ignore'))
+    has_branches = any(k in push for k in ('branches', 'branches-ignore'))
+    if has_tags and not has_branches:
+        bad.append(f'{f}: on.push defines {sorted(k for k in push if "tag" in k)} '
+                   f'but no branches filter — will NOT run on branch pushes')
+if bad:
+    print('workflows that silently never run on a branch push:')
+    for b in bad:
+        print('   ', b)
+    sys.exit(1)
+PY_TRIG
+check $? 1i "no push workflow disables itself with a tags-only filter"
+
 
 # The plugin-directory map is a hand copy of playground source; the test that
 # compares them can only run with a checkout to compare against. Never let a

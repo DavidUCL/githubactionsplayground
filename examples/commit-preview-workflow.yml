@@ -26,9 +26,17 @@ name: Playground preview
 
 on:
   push:
-    # Tags are not previewable: the action needs a branch commit to build a
-    # ZIP URL from, and a tag push repeats a commit that already ran.
-    tags-ignore: ["**"]
+    # `branches: ["**"]` means every branch, and — because a `branches` filter
+    # is defined — NO tags, which is what we want: a tag push just repeats a
+    # commit that already ran.
+    #
+    # It must be `branches`, not `tags-ignore`. GitHub: "If you define only
+    # tags/tags-ignore or only branches/branches-ignore, the workflow won't run
+    # for events affecting the undefined Git ref." So `tags-ignore: ["**"]`
+    # alone silently disables the workflow for every branch push — no run, no
+    # error, no clue. Shipped exactly that once; verify.sh check 1i now fails
+    # the gate on it.
+    branches: ["**"]
     # A README-only change does not need a Moodle. Do NOT add lang/, db/ or
     # tests/ here — they all affect whether the plugin installs.
     paths-ignore: ["**/*.md", "docs/**", "LICENSE"]
