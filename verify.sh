@@ -220,6 +220,67 @@ if bad:
 PY_TRIG
 check $? 1i "no push workflow disables itself with a tags-only filter"
 
+# The default playground host is written twice — preview/action.yml (what a
+# consumer gets) and build-preview.mjs (what a direct `node scripts/...` run
+# gets). If they drift, local testing and CI silently target different builds.
+python3 - <<'PY_HOST'
+import sys, re, pathlib
+try:
+    import yaml
+except ImportError:
+    print('pyyaml unavailable — skipping host default check'); sys.exit(0)
+action = yaml.safe_load(pathlib.Path('preview/action.yml').read_text())
+declared = action['inputs']['playground-host']['default']
+m = re.search(r'PLAYGROUND_HOST \|\| "([^"]+)"', pathlib.Path('scripts/build-preview.mjs').read_text())
+if not m:
+    print('could not find the PLAYGROUND_HOST fallback in build-preview.mjs'); sys.exit(1)
+if m.group(1) != declared:
+    print(f'default host drift: action.yml={declared!r} build-preview.mjs={m.group(1)!r}')
+    sys.exit(1)
+print(f'default host: {declared}')
+PY_HOST
+check $? 1j "the default playground host is the same in the action and the script"
+
+# The silent failure the default exists to avoid: a link built for a step the
+# TARGET host does not implement boots a Moodle without it, with no error.
+# Both deployments serve their schema as a plain file, so ask the host what it
+# supports. Fetched content is checked to BE a schema first — moodle-playground.com
+# 301s to another origin and STRIPS THE PATH, so a naive fetch gets the
+# homepage with HTTP 200 and every step looks unsupported.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    STEPCHECK=$(node -e '
+import("./scripts/build-preview.mjs").then(async (m) => {
+  const yamlish = (await import("node:fs")).readFileSync("preview/action.yml", "utf8");
+  const host = /default: "(https:\/\/[^"]+)"/.exec(yamlish)[1];
+  const bp = m.buildBlueprint({
+    headRepo: "o/moodle-mod_x", headSha: "d0638b39df1c28fd93c27778ae2cbada7cc1660f",
+    prNumber: "1", type: "mod", name: "x",
+  });
+  const emitted = [...new Set(bp.steps.map((s) => s.step))];
+  let text;
+  try {
+    const res = await fetch(new URL("src/blueprint/schema.js", host + "/"),
+                            { signal: AbortSignal.timeout(20000) });
+    if (!res.ok) { console.log("SKIP HTTP " + res.status); return; }
+    text = await res.text();
+  } catch (e) { console.log("SKIP " + e.message); return; }
+  if (!/KNOWN_STEP_NAMES/.test(text)) { console.log("SKIP not a schema (redirect?)"); return; }
+  const missing = emitted.filter((s) => !text.includes(`"${s}"`));
+  console.log(missing.length ? "MISSING " + missing.join(",") : "OK " + emitted.length + " steps");
+});
+' 2>&1) || true
+    if [[ "$STEPCHECK" == MISSING* ]]; then
+        echo "CHECK 1k FAIL: default host does not implement every emitted step — $STEPCHECK"
+        FAILED+=("1k: default host missing steps")
+    elif [[ "$STEPCHECK" == SKIP* ]]; then
+        echo "CHECK 1k WAIVED: could not read the host schema ($STEPCHECK)"
+    else
+        echo "CHECK 1k PASS: default host implements every step we emit ($STEPCHECK)"
+    fi
+else
+    echo "CHECK 1k SKIP: SKIP_NET set"
+fi
+
 
 # The plugin-directory map is a hand copy of playground source; the test that
 # compares them can only run with a checkout to compare against. Never let a

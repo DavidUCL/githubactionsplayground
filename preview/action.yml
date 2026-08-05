@@ -41,12 +41,23 @@ inputs:
     default: "MOODLE_500_STABLE"
   playground-host:
     description: >-
-      Playground to open. Defaults to the public deployment deliberately:
-      previews run unreviewed PHP in the visitor's browser, and the playground
-      renders the site in an unsandboxed iframe with a persistent service
-      worker, so they must not share an origin with anything you host.
+      Playground to open. Defaults to the fork we control, because
+      moodle-playground.com is a third party's deployment that can change
+      without notice and is missing restoreDatabase — a link built for a step
+      the target host lacks fails SILENTLY, booting a Moodle without it.
+
+      KNOWN TRADE-OFF, deliberate and temporary: a preview runs unreviewed
+      pull-request PHP in the visitor's browser, in an unsandboxed iframe with
+      a persistent service worker, and browser isolation is per-DOMAIN, not
+      per-path. So this default shares an origin with anything else published
+      under daviducl.github.io, including mchef-urls. Acceptable while the
+      people clicking are previewing their own plugins; NOT acceptable once
+      third-party pull requests run through it. The fix is a dedicated origin
+      (a separate free GitHub account or org — Pages project sites all share
+      one origin per account, so a second repo achieves nothing), scheduled
+      for immediately before go-live.
     required: false
-    default: "https://moodle-playground.com"
+    default: "https://daviducl.github.io/moodle-playground"
 outputs:
   preview-url:
     description: "The URL to put on the pull request"

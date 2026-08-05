@@ -434,7 +434,8 @@ function main() {
   const headRepo = process.env.HEAD_REPO || "";
   const headSha = process.env.HEAD_SHA || "";
   const prNumber = process.env.PR_NUMBER || "";
-  const playgroundHost = process.env.PLAYGROUND_HOST || "https://moodle-playground.com";
+  // Keep in step with preview/action.yml's default; check 1j fails if they drift.
+  const playgroundHost = process.env.PLAYGROUND_HOST || "https://daviducl.github.io/moodle-playground";
   const outDir = process.env.OUT_DIR || "preview-out";
   // Which Moodle the playground will boot. Not pinned in the link today (see
   // README) — this states the assumption the compatibility check is made
