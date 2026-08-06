@@ -11,15 +11,43 @@
 
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { DEFAULT_ORIGINS } from "./build-preview.mjs";
 
 const MARKER = "<!-- moodle-playground-preview -->";
 const SHA_RE = /^[0-9a-f]{40}$/;
 const COMPONENT_RE = /^[a-z][a-z0-9_]*$/;
 const USER_RE = /^[a-z][a-z0-9_]*$/;
-const URL_RE = /^https:\/\/[A-Za-z0-9.-]+\/\?blueprint=[A-Za-z0-9_-]+$/;
+const BLUEPRINT_RE = /^[A-Za-z0-9_-]+$/;
+
+/**
+ * Last gate before a link is posted under the bot's name.
+ *
+ * Was a single regex that assumed the blueprint param followed the HOST
+ * directly. That silently forbade any playground served from a subpath — so
+ * pointing the default at `daviducl.github.io/moodle-playground` made every
+ * run fail with "malformed preview URL". Parse it instead of matching it: the
+ * structure is what matters, and a parser cannot be fooled by a shape nobody
+ * anticipated.
+ */
+function isPostablePreviewUrl(value, allowedOrigins) {
+  let url;
+  try {
+    url = new URL(String(value));
+  } catch {
+    return false;
+  }
+  if (url.protocol !== "https:") return false;
+  // `https://good.example@evil.tld/` reads as the playground and is not.
+  if (url.username || url.password) return false;
+  if (url.hash) return false;
+  if (!allowedOrigins.includes(url.origin)) return false;
+  const keys = [...url.searchParams.keys()];
+  if (keys.length !== 1 || keys[0] !== "blueprint") return false;
+  return BLUEPRINT_RE.test(url.searchParams.get("blueprint") || "");
+}
 
 /** @returns {string} markdown for the sticky comment */
-export function renderComment({ url, plugin, headSha, runUrl, user = "admin" }) {
+export function renderComment({ url, plugin, headSha, runUrl, user = "admin", allowedOrigins = DEFAULT_ORIGINS }) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
   if (!COMPONENT_RE.test(String(plugin))) throw new Error(`bad plugin: ${plugin}`);
@@ -35,7 +63,9 @@ export function renderComment({ url, plugin, headSha, runUrl, user = "admin" }) 
       `The preview link could not be built for this commit${runUrl ? ` — see the [workflow run](${runUrl})` : ""}.`,
     ].join("\n");
   }
-  if (!URL_RE.test(url)) throw new Error(`refusing to post a malformed preview URL`);
+  if (!isPostablePreviewUrl(url, allowedOrigins)) {
+    throw new Error(`refusing to post a malformed preview URL`);
+  }
 
   return [
     MARKER,

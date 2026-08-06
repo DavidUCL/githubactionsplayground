@@ -123,6 +123,15 @@ jobs:
           BODY: ${{ steps.preview.outputs.comment-body }}
         run: |
           set -euo pipefail
+          # An empty body is a 422, not a no-op: GitHub rejects it and the step
+          # goes red for a reason that has nothing to do with the comment. It
+          # happens whenever the preview step failed AFTER writing preview-url
+          # but BEFORE writing comment-body — the status is already posted and
+          # correct, so there is nothing left to say here.
+          if [ -z "${BODY:-}" ]; then
+            echo "::notice::no comment body was produced; the commit status stands alone"
+            exit 0
+          fi
           # A commit can belong to more than one open PR.
           prs=$(gh api "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls" \
                   --jq '.[] | select(.state == "open") | .number' || true)

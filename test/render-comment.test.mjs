@@ -5,6 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { renderComment } from "../scripts/render-comment.mjs";
+import { buildBlueprint, buildPreviewUrl } from "../scripts/build-preview.mjs";
 
 const SHA = "8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c";
 const URL = "https://moodle-playground.com/?blueprint=H4sIAAAAAAAAA31T";
@@ -97,5 +98,54 @@ test("a malformed username is refused rather than rendered", () => {
   assert.throws(
     () => renderComment({ url: URL, plugin: "mod_attendance", headSha: SHA, user: "a`b</script>" }),
     /bad user/,
+  );
+});
+
+// THE SEAM THAT BROKE. Every test above hands renderComment a hand-written
+// URL, so none of them noticed that its validator required the blueprint
+// param to follow the HOST directly. The moment the default host gained a
+// path (daviducl.github.io/moodle-playground) every CI run failed with
+// "malformed preview URL" while the whole local gate stayed green.
+// Compose the real thing instead of describing it.
+test("a link built with the ACTION'S OWN DEFAULT host can be posted", async () => {
+  const yaml = await import("node:fs").then((fs) =>
+    fs.readFileSync(new global.URL("../preview/action.yml", import.meta.url), "utf8"));
+  const host = /default: "(https:\/\/[^"]+)"/.exec(yaml)[1];
+  const bp = buildBlueprint({
+    headRepo: "DavidUCL/moodle-mod_attendance",
+    headSha: SHA,
+    prNumber: "1",
+    type: "mod",
+    name: "attendance",
+  });
+  const built = buildPreviewUrl({ playgroundHost: host, blueprint: bp });
+  const body = renderComment({ url: built, plugin: "mod_attendance", headSha: SHA, user: "teacher" });
+  assert.ok(body.includes(built), "the built link must survive into the comment");
+});
+
+test("it refuses a link on an origin outside the allowlist", () => {
+  assert.throws(
+    () => renderComment({ url: "https://evil.tld/p?blueprint=abc", plugin: "mod_x", headSha: SHA }),
+    /malformed preview URL/,
+  );
+});
+
+test("it refuses a link carrying anything besides the blueprint", () => {
+  assert.throws(
+    () => renderComment({
+      url: "https://daviducl.github.io/moodle-playground?blueprint=abc&repo=evil%2Fx",
+      plugin: "mod_x", headSha: SHA,
+    }),
+    /malformed preview URL/,
+  );
+});
+
+test("it refuses userinfo that makes the host read as the playground", () => {
+  assert.throws(
+    () => renderComment({
+      url: "https://daviducl.github.io@evil.tld/x?blueprint=abc",
+      plugin: "mod_x", headSha: SHA,
+    }),
+    /malformed preview URL/,
   );
 });
