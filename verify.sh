@@ -237,6 +237,26 @@ if not m:
 if m.group(1) != declared:
     print(f'default host drift: action.yml={declared!r} build-preview.mjs={m.group(1)!r}')
     sys.exit(1)
+# Third place the host can hide: a workflow that hardcodes it. preview-selftest.yml
+# asserted a literal `https://moodle-playground.com/?blueprint=` and so began
+# failing the moment the default moved to a playground on a SUBPATH — invisible
+# to this gate, because a composite action only runs on a runner.
+root = pathlib.Path('.')
+bad = []
+for f in list(root.glob('.github/workflows/*.yml')) + list(root.glob('examples/*.yml')):
+    text = f.read_text()
+    for host in re.findall(r'https://[A-Za-z0-9.-]+(?:/[A-Za-z0-9._-]+)*(?=[/?"\s])', text):
+        if 'playground' not in host:
+            continue          # not a playground reference
+        if host.rstrip('/') == declared.rstrip('/'):
+            continue          # the current default, stated deliberately
+        bad.append(f'{f}: hardcodes {host}')
+if bad:
+    print('workflows hardcode a playground host that is not the default:')
+    for b in sorted(set(bad)):
+        print('   ', b)
+    print(f'    (default is {declared} — derive it from preview/action.yml instead)')
+    sys.exit(1)
 print(f'default host: {declared}')
 PY_HOST
 check $? 1j "the default playground host is the same in the action and the script"

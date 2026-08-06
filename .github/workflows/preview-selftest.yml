@@ -46,9 +46,16 @@ jobs:
         run: |
           set -euo pipefail
           echo "url length: ${#URL}"
+          # Derive the expected host from the action's own default instead of
+          # hardcoding it. A literal here silently became wrong the day the
+          # default moved to a playground served from a SUBPATH, and this is
+          # the only place that could catch it — the local gate cannot run a
+          # composite action.
+          HOST=$(sed -n 's/.*default: "\(https:\/\/[^"]*\)".*/\1/p' preview/action.yml | head -1)
+          echo "expected host: $HOST"
           case "$URL" in
-            https://moodle-playground.com/?blueprint=*) ;;
-            *) echo "::error::unexpected preview URL: ${URL:0:80}"; exit 1 ;;
+            "$HOST?blueprint="*|"$HOST/?blueprint="*) ;;
+            *) echo "::error::unexpected preview URL: ${URL:0:80} (expected host $HOST)"; exit 1 ;;
           esac
           # Every declared output must actually arrive: an outputs mapping that
           # silently yields empty strings is the failure this job exists for.
