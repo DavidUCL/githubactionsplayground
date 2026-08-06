@@ -19,13 +19,15 @@ test("the link is the first thing after the marker", () => {
 
 test("it names the commit the reviewer can cross-check", () => {
   const body = renderComment(ok);
+  // The "if it does not say <sha> you are not looking at this code" line was
+  // dropped deliberately: the review course heading shows the same SHA on
+  // screen, so the cross-check survives without a second copy in the comment.
   assert.match(body, /from commit `8b217b1`/);
-  assert.match(body, /If it does not say\n {2}`8b217b1`, you are not looking at this code/);
 });
 
 test("it gives credentials for all three accounts, so a reviewer can switch role", () => {
   const body = renderComment(ok);
-  assert.match(body, /signed in as \*\*`admin`\*\*/);
+  assert.match(body, /logs you in as \*\*`admin`\*\*/);
   assert.match(body, /`admin`, `teacher` and/);
   assert.match(body, /`student1`/);
   assert.match(body, /password \*\*`password`\*\*/);
@@ -37,10 +39,6 @@ test("it warns that absence is quiet and names the proxy as the cause", () => {
   const body = renderComment(ok);
   assert.match(body, /If the plugin seems missing, open the Logs panel/);
   assert.match(body, /third-party CORS proxy/);
-});
-
-test("it explains the yellow debug boxes", () => {
-  assert.match(renderComment(ok), /deprecation notices show\. They are not crashes/);
 });
 
 test("it never claims the PR is verified or working", () => {
@@ -83,14 +81,14 @@ test("the marker is present in both shapes, so the sticky upsert can find it", (
 
 test("the comment names the user the reviewer actually arrives as", () => {
   const body = renderComment({ url: URL, plugin: "mod_attendance", headSha: SHA, user: "teacher" });
-  assert.match(body, /signed in as \*\*`teacher`\*\*/);
+  assert.match(body, /logs you in as \*\*`teacher`\*\*/);
   // And explains why, because "why am I not admin?" is the first question.
   assert.match(body, /Deliberately not admin/);
 });
 
 test("an admin landing does not carry the not-admin explanation", () => {
   const body = renderComment({ url: URL, plugin: "local_myplugin", headSha: SHA, user: "admin" });
-  assert.match(body, /signed in as \*\*`admin`\*\*/);
+  assert.match(body, /logs you in as \*\*`admin`\*\*/);
   assert.doesNotMatch(body, /Deliberately not admin/);
 });
 

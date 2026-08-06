@@ -72,39 +72,31 @@ export function renderComment({ url, plugin, headSha, runUrl, user = "admin", al
     `### ▶ [Open this pull request in Moodle Playground](${url})`,
     "",
     `Boots a throwaway Moodle **in your browser tab**, with \`${plugin}\` built`,
-    `from commit \`${short}\`. Nothing is deployed and nothing is installed on`,
-    "your machine — but it **runs this pull request's PHP in your browser**, so",
-    "treat it like checking the branch out.",
+    `from commit \`${short}\`.`,
     "",
-    `You arrive already signed in as **\`${user}\`**. \`admin\`, \`teacher\` and`,
+    `The link logs you in as **\`${user}\`**. \`admin\`, \`teacher\` and`,
     "`student1` all exist, password **`password`**, so you can switch to check",
     "a different role.",
     ...(user === "teacher"
       ? [
           "",
-          "**Deliberately not admin.** A site admin passes every capability",
-          "check regardless of what the code says, so a permissions fix would",
-          "look identical whether or not it worked.",
+          "**Deliberately not admin.**",
         ]
       : []),
     "",
-    "<details><summary>First open, and what to do if the plugin isn't there</summary>",
+    // Kept deliberately, against the instinct to trim. A failed plugin
+    // download still boots a clean, working Moodle, and the log panel is
+    // `is-hidden` by default — so without this the reviewer sees a normal
+    // site, concludes the plugin does nothing, and never clicks again.
+    "**If the plugin seems missing, open the Logs panel.** The download goes",
+    "through a third-party CORS proxy; when it fails you get a Moodle without",
+    "your plugin. Reload to retry.",
     "",
-    "- First open downloads about 45 MB and takes 30–90 seconds, and keeps",
-    "  roughly 120 MB in browser storage afterwards. Opening it again in a new",
-    "  tab re-boots but reuses the download. Chromium or Edge recommended.",
-    `- The course heading names this PR and commit. **If it does not say`,
-    `  \`${short}\`, you are not looking at this code.**`,
-    "- Yellow debug boxes are deliberate — debugging is set to DEVELOPER so",
-    "  deprecation notices show. They are not crashes.",
-    "- **If the plugin seems missing, open the Logs panel.** The plugin",
-    "  download goes through a third-party CORS proxy; when it fails you get a",
-    "  Moodle without your plugin. Reload to retry.",
-    "",
-    "</details>",
-    "",
+    // The sentence that stops a green tick plus a working site reading as an
+    // endorsement. A test asserts this body never says verified / passed /
+    // works correctly / safe to merge.
     "Smoke test only: it shows whether the plugin installs and renders, not",
-    "whether it is correct. This comment is rewritten in place on every push.",
+    "whether it is correct. Rewritten in place on every push.",
   ].join("\n");
 }
 
