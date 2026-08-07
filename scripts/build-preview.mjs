@@ -275,6 +275,24 @@ const STUDENT_ORDINALS = [
   "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve",
 ];
 
+/**
+ * Read a count, and SAY when the value was not usable rather than coercing in
+ * silence. Returns the clamped number; the caller reports it, so what the
+ * summary prints is what the blueprint got.
+ */
+export function clampCount(raw, fallback, min, max) {
+  const s = String(raw ?? "").trim();
+  if (s === "") return fallback;
+  const n = Number(s);
+  if (!Number.isFinite(n)) {
+    console.log(`note: "${s}" is not a number — using ${fallback}`);
+    return fallback;
+  }
+  const clamped = Math.max(min, Math.min(max, Math.trunc(n)));
+  if (clamped !== n) console.log(`note: ${n} is outside ${min}-${max} — using ${clamped}`);
+  return clamped;
+}
+
 export function studentNames(n) {
   const count = Math.max(1, Math.min(20, Number(n) || 1));
   return Array.from({ length: count }, (_, i) => `student${i + 1}`);
@@ -735,6 +753,13 @@ async function main() {
   const supported = checkPluginTypeSupported(type, moodleBranch);
   if (!supported.ok) throw new Error(supported.reason);
 
+  // A parse we could not trust is a REFUSAL. It used to collapse to nulls, and
+  // nulls pass every check — so an unreadable version.php was indistinguishable
+  // from a permissive one.
+  if (declared && declared.ok === false) {
+    throw new Error(declared.reason || "version.php could not be read reliably");
+  }
+
   if (declared) {
     // A component that disagrees with the install path is a silent failure:
     // upgrade_plugins skips a directory with no readable version.php without
@@ -783,8 +808,11 @@ async function main() {
         `only accounts the blueprint creates. Got: ${JSON.stringify(loginAs)}`,
     );
   }
-  const students = Number(process.env.STUDENTS || 1) || 1;
-  const sections = Math.max(1, Math.min(20, Number(process.env.SECTIONS || 3) || 3));
+  // Clamped HERE, not inside studentNames(), so the summary reports the number
+  // actually created. It used to print the raw input: "-5 student(s)" while
+  // building 1, "999" while building 20.
+  const students = clampCount(process.env.STUDENTS, 1, 1, 20);
+  const sections = clampCount(process.env.SECTIONS, 3, 1, 20);
   // Asking to arrive as a student the blueprint never made is a refusal, not a
   // login failure at boot — phpLogin does MUST_EXIST and would abort there.
   if (loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {

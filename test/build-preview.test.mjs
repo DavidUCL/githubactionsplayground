@@ -531,3 +531,17 @@ test("preview-url is the LAST output written", async () => {
   assert.ok(names.length > 1, "expected several outputs");
   assert.equal(names.at(-1), "preview-url", `got order: ${names.join(", ")}`);
 });
+
+// The summary used to print the raw input while the blueprint got a clamped
+// one: "-5 student(s)" building 1, "999" building 20.
+test("a count is clamped once, where the summary can see it", async () => {
+  const { clampCount } = await import("../scripts/build-preview.mjs");
+  assert.equal(clampCount("3", 1, 1, 20), 3);
+  assert.equal(clampCount("999", 1, 1, 20), 20);
+  assert.equal(clampCount("-5", 1, 1, 20), 1);
+  assert.equal(clampCount("0", 1, 1, 20), 1);
+  assert.equal(clampCount("abc", 1, 1, 20), 1);
+  assert.equal(clampCount("", 7, 1, 20), 7);
+  assert.equal(clampCount(undefined, 7, 1, 20), 7);
+  assert.equal(clampCount("2.9", 1, 1, 20), 2);
+});

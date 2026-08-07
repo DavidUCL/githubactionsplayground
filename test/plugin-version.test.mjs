@@ -148,12 +148,6 @@ test("a junk component falls back to repo-name inference rather than throwing", 
   assert.equal(name, "quiz2");
 });
 
-test("an oversized version.php is truncated, not read whole", () => {
-  const dir = mkdtempSync(join(tmpdir(), "plugin-big-"));
-  // Field beyond the 256 KB cap must not be found — proves the cap applies.
-  writeFileSync(join(dir, "version.php"), "// " + "x".repeat(300000) + "\n$plugin->requires = 2025100600;");
-  assert.equal(readPluginVersion(dir).requires, null);
-});
 
 test("readPluginVersion tolerates a directory path with no trailing slash", () => {
   const parent = mkdtempSync(join(tmpdir(), "plugin-nested-"));
@@ -320,4 +314,85 @@ test("a missing file yields null rather than a fabricated result", async (t) => 
     await fetchPluginVersion("danmarsden/moodle-mod_attendance", "0".repeat(40)),
     null,
   );
+});
+
+// PHP executes top to bottom and the LAST assignment wins; comments do not
+// execute at all. Measured against 960 real version.php files run under PHP:
+// first-match-including-comments gave 9 false passes, and naive comment
+// stripping gave 12 — it deletes real assignments, and a deleted field is
+// null, and null passes every check.
+test("a commented-out decoy does not win over the real assignment", () => {
+  const r = parseVersionPhp(
+    "<?php\n// $plugin->component = 'mod_decoy';\n// $plugin->requires = 2024100700;\n" +
+      "$plugin->component = 'mod_real';\n$plugin->requires = 2025100600;\n",
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.component, "mod_real");
+  assert.equal(r.requires, 2025100600);
+});
+
+test("every PHP comment form is ignored", () => {
+  for (const decoy of [
+    "// $plugin->requires = 2024100700;",
+    "# $plugin->requires = 2024100700;",
+    "/* $plugin->requires = 2024100700; */",
+    "/*\n * $plugin->requires = 2024100700;\n */",
+  ]) {
+    const r = parseVersionPhp(`<?php\n${decoy}\n$plugin->requires = 2025100600;\n`);
+    assert.equal(r.requires, 2025100600, decoy);
+  }
+});
+
+test("a URL inside a string is not mistaken for a comment", () => {
+  const r = parseVersionPhp(
+    "<?php\n$url = 'http://example.com/x';\n$plugin->requires = 2025031100;\n",
+  );
+  assert.equal(r.ok, true);
+  assert.equal(r.requires, 2025031100);
+});
+
+test("the last assignment wins, as PHP would", () => {
+  const r = parseVersionPhp("<?php\n$plugin->requires = 2024100700;\n$plugin->requires = 2025100600;\n");
+  assert.equal(r.requires, 2025100600);
+});
+
+test("a value we cannot read is a refusal, not an absence", () => {
+  // The dangerous case: absent passes every check, so "assigned but
+  // unreadable" must not look like absent.
+  for (const src of [
+    "<?php\n$plugin->requires = SOME_CONST;\n",
+    "<?php\n$plugin->component = 'mod_' . $suffix;\n",
+    "<?php\nif ($x) { $plugin->requires = FOO; }\n",
+  ]) {
+    const r = parseVersionPhp(src);
+    assert.equal(r.ok, false, src);
+    assert.match(r.reason, /Refusing rather than/);
+  }
+});
+
+test("a genuinely absent field is fine", () => {
+  const r = parseVersionPhp("<?php\n$plugin->component = 'mod_x';\n");
+  assert.equal(r.ok, true);
+  assert.equal(r.requires, null);
+});
+
+// lib/upgradelib.php:707-711 throws plugin_incompatible_exception when
+// $CFG->branch >= incompatible, in the same loop as requires. Five published
+// plugins declare incompatible = 500 with a passing requires.
+test("incompatible is read and enforced like Moodle enforces it", () => {
+  const plugin = { requires: 2024100700, incompatible: 500 };
+  assert.equal(checkMoodleCompatibility(plugin, "MOODLE_500_STABLE").ok, false);
+  assert.match(checkMoodleCompatibility(plugin, "MOODLE_500_STABLE").reason, /incompatible with Moodle 500/);
+  assert.equal(checkMoodleCompatibility(plugin, "MOODLE_405_STABLE").ok, true);
+  assert.equal(checkMoodleCompatibility({ requires: 2024100700 }, "MOODLE_500_STABLE").ok, true);
+});
+
+test("an oversized version.php is refused, not silently truncated", () => {
+  const dir = mkdtempSync(join(tmpdir(), "plugin-huge-"));
+  writeFileSync(join(dir, "version.php"), "// " + "x".repeat(300000) + "\n$plugin->requires = 2025100600;");
+  const r = readPluginVersion(dir);
+  // Used to return all-nulls, which is TRUTHY: every check passed vacuously
+  // AND the "not checked" note was suppressed.
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /refusing to guess/);
 });

@@ -58,38 +58,137 @@ export const REMOVED_PLUGIN_TYPES = {
 /** The playground's own default branch (version-resolver.js, `default: true`). */
 export const DEFAULT_MOODLE_BRANCH = "MOODLE_500_STABLE";
 
-// `$plugin->requires = 2025100600;` — also accept `$module->`, which very old
-// plugins still use, and tolerate any spacing. The trailing `.00` fractional
-// form that core itself uses is truncated to the integer part, because that is
-// the part `requires` is ever expressed in.
-const numberField = (src, field) => {
-  const m = new RegExp(
-    `\\$(?:plugin|module)\\s*->\\s*${field}\\s*=\\s*'?([0-9]+)(?:\\.[0-9]+)?'?\\s*;`,
-  ).exec(src);
-  return m ? Number(m[1]) : null;
-};
-
-const stringField = (src, field) => {
-  const m = new RegExp(
-    `\\$(?:plugin|module)\\s*->\\s*${field}\\s*=\\s*['"]([^'"]+)['"]\\s*;`,
-  ).exec(src);
-  return m ? m[1] : null;
-};
+/**
+ * Blank out PHP comments, preserving offsets and newlines.
+ *
+ * Needs to track STRINGS to do it: `'http://example.com'` contains `//` and is
+ * not a comment, and a naive strip deletes real assignments — measured at 12
+ * false passes against today's 9 on a corpus of 960 real version.php files
+ * checked against executed PHP. A deleted field parses as null, and null passes
+ * every check, so getting this wrong is worse than not doing it.
+ */
+function blankComments(src) {
+  const out = src.split("");
+  let i = 0;
+  const n = src.length;
+  const blank = (from, to) => {
+    for (let k = from; k < to && k < n; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  while (i < n) {
+    const c = src[i];
+    const next = src[i + 1];
+    if (c === "'" || c === '"') {
+      const quote = c;
+      i++;
+      while (i < n && src[i] !== quote) i += src[i] === "\\" ? 2 : 1;
+      i++;
+      continue;
+    }
+    if (c === "<" && src.startsWith("<<<", i)) {
+      // Heredoc / nowdoc: skip to the closing label at a line start.
+      const m = /^<<<\s*(['"]?)([A-Za-z_][A-Za-z0-9_]*)\1\r?\n/.exec(src.slice(i));
+      if (m) {
+        const label = m[2];
+        const close = new RegExp(`^[ \\t]*${label}\\b`, "m");
+        const rest = src.slice(i + m[0].length);
+        const found = close.exec(rest);
+        i = found ? i + m[0].length + found.index + found[0].length : n;
+        continue;
+      }
+    }
+    if (c === "/" && next === "*") {
+      const end = src.indexOf("*/", i + 2);
+      const to = end === -1 ? n : end + 2;
+      blank(i, to);
+      i = to;
+      continue;
+    }
+    if ((c === "/" && next === "/") || c === "#") {
+      let end = src.indexOf("\n", i);
+      if (end === -1) end = n;
+      blank(i, end);
+      i = end;
+      continue;
+    }
+    i++;
+  }
+  return out.join("");
+}
 
 /**
- * Parse the fields we care about out of a version.php source string.
+ * Parse the fields a preview depends on out of a version.php source string.
  *
- * @param {string} src
- * @returns {{component: string|null, version: number|null, requires: number|null}}
+ * Returns a STATE, not just values. Every parse failure used to collapse to
+ * `null`, and `null` means "no requirement", which passes every check — so an
+ * unreadable file was indistinguishable from a permissive one. `ok: false`
+ * means "do not trust this", and the caller must refuse rather than continue.
+ *
+ * PARSED, never executed: it is a file from the commit under review.
+ *
+ * @returns {{ok: boolean, reason?: string, component: string|null,
+ *            version: number|null, requires: number|null,
+ *            incompatible: number|null}}
  */
 export function parseVersionPhp(src) {
   const text = String(src);
-  return {
-    component: stringField(text, "component"),
-    version: numberField(text, "version"),
-    requires: numberField(text, "requires"),
+  const code = blankComments(text);
+  const out = {
+    ok: true,
+    component: lastString(code, "component"),
+    version: lastNumber(code, "version"),
+    requires: lastNumber(code, "requires"),
+    // Moodle enforces this in the same loop as `requires`
+    // (lib/upgradelib.php:707-711, plugin_incompatible_exception): a plugin
+    // with `incompatible = 500` is REFUSED on Moodle 5.x however low its
+    // `requires` is. Five published plugins do exactly that, so a preview that
+    // ignores it builds a link Moodle then refuses to install.
+    incompatible: lastNumber(code, "incompatible"),
   };
+
+  // A field that IS assigned but whose value we could not read is the
+  // dangerous case: a constant, a concatenation, a conditional. Silently
+  // treating that as "absent" is how an unreadable file passes.
+  for (const [field, value] of [
+    ["component", out.component],
+    ["version", out.version],
+    ["requires", out.requires],
+    ["incompatible", out.incompatible],
+  ]) {
+    if (value === null && assignmentsOf(code, field).length > 0) {
+      out.ok = false;
+      out.reason =
+        `version.php assigns $plugin->${field} in a form this cannot read ` +
+        `(a constant, a concatenation, or a conditional). Refusing rather than ` +
+        `treating it as absent, because absent passes every check.`;
+      break;
+    }
+  }
+  return out;
 }
+
+const assignmentsOf = (code, field) => [
+  ...code.matchAll(new RegExp(`\\$(?:plugin|module)\\s*->\\s*${field}\\s*=`, "g")),
+];
+
+/** LAST literal assignment, because PHP executes top to bottom and the last one wins. */
+const lastNumber = (code, field) => {
+  const all = [
+    ...code.matchAll(
+      new RegExp(`\\$(?:plugin|module)\\s*->\\s*${field}\\s*=\\s*'?([0-9]+)(?:\\.[0-9]+)?'?\\s*;`, "g"),
+    ),
+  ];
+  return all.length ? Number(all[all.length - 1][1]) : null;
+};
+
+const lastString = (code, field) => {
+  const all = [
+    ...code.matchAll(
+      new RegExp(`\\$(?:plugin|module)\\s*->\\s*${field}\\s*=\\s*['"]([^'"]+)['"]\\s*;`, "g"),
+    ),
+  ];
+  return all.length ? all[all.length - 1][1] : null;
+};
+
 
 /**
  * Read version.php from a checked-out plugin, if it is there.
@@ -101,12 +200,27 @@ export function parseVersionPhp(src) {
  * @param {string} pluginRoot
  * @returns {{component: string|null, version: number|null, requires: number|null, path: string}|null}
  */
+export const MAX_VERSION_PHP_BYTES = 262144;
+
 export function readPluginVersion(pluginRoot) {
   const path = join(pluginRoot || ".", "version.php");
   if (!existsSync(path)) return null;
-  // 256 KB is far beyond any real version.php; the cap stops a pathological
-  // file in a pull request from being read into memory in full.
-  const src = readFileSync(path, "utf8").slice(0, 262144);
+  const src = readFileSync(path, "utf8");
+  // TRUNCATION USED TO BE SILENT, and silence was the bug: slicing produced an
+  // all-null result, which is truthy, so the "compatibility NOT checked" note
+  // was suppressed AND every check passed vacuously. 256 KB is far beyond any
+  // real version.php, so a file over it is pathological — say so.
+  if (src.length > MAX_VERSION_PHP_BYTES) {
+    return {
+      ok: false,
+      reason: `version.php is ${src.length} bytes (limit ${MAX_VERSION_PHP_BYTES}) — refusing to guess at its contents`,
+      component: null,
+      version: null,
+      requires: null,
+      incompatible: null,
+      path,
+    };
+  }
   return { ...parseVersionPhp(src), path };
 }
 
@@ -174,6 +288,28 @@ export function checkMoodleCompatibility(plugin, moodleBranch = DEFAULT_MOODLE_B
     return { ok: true, reason: `unknown Moodle branch "${branch}" — compatibility not checked` };
   }
   const coreVersion = MOODLE_BRANCH_VERSIONS[branch];
+
+  // `incompatible` is a HARD refusal in Moodle, checked in the same loop as
+  // `requires` (lib/upgradelib.php:707-711). A plugin declaring
+  // `incompatible = 500` is refused on any 5.x however permissive its
+  // `requires` is — five published plugins do exactly that. Ignoring it built
+  // a link Moodle then refused to install, leaving a clean Moodle with no
+  // plugin: the failure this whole file exists to prevent.
+  const incompatible = plugin?.incompatible;
+  if (incompatible != null) {
+    const branchNumber = Number(String(branch).replace(/^MOODLE_(\d+)_STABLE$/, "$1"));
+    if (Number.isFinite(branchNumber) && branchNumber >= incompatible) {
+      return {
+        ok: false,
+        coreVersion,
+        reason:
+          `plugin declares it is incompatible with Moodle ${incompatible} and later, and ` +
+          `the playground bundles ${branch}. Moodle would refuse the install and the ` +
+          `preview would show a working Moodle without the plugin.`,
+      };
+    }
+  }
+
   const requires = plugin?.requires;
   if (requires == null) return { ok: true, coreVersion };
   if (requires > coreVersion) {
