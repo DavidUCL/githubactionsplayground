@@ -52,10 +52,56 @@ const IDENT_RE = /^[a-z][a-z0-9_]*$/;
 // Plain text for the review course name. Deliberately narrow: it is rendered
 // as FORMAT_HTML, and `·` is the separator the label already uses.
 const BUILT_BY_RE = /^[A-Za-z0-9 ._·-]{1,60}$/;
-// A landing override is a site-relative path, never an absolute URL — a link
-// that lands the reviewer on another origin is the whole failure this design
-// refuses. No scheme, no `//`, no backslash, no `..`.
-export const LANDING_RE = /^\/(?!\/)[A-Za-z0-9._~!$&'()*+,;=:@/-]*(\?[A-Za-z0-9._~!$&'()*+,;=:@/?-]*)?$/;
+// A landing override is a path INSIDE the previewed site. Anything that walks
+// out of it lands the reviewer somewhere else on the same origin — which on a
+// shared origin means another of our own sites.
+//
+// Character-matched twice, wrong twice: first `//evil.tld` (protocol-relative,
+// resolves to another origin), then `/../../../../mchef-urls/` (resolves to
+// `/mchef-urls/`, demonstrated live). A regex answers "does it look like a
+// path"; the question is "where does it END UP". So the charset stays a regex
+// and the traversal is decided structurally, on segments, after decoding.
+const LANDING_CHARS_RE =
+  /^\/[A-Za-z0-9._~!$&'()*+,;=:@%/-]*(\?[A-Za-z0-9._~!$&'()*+,;=:@%/?&-]*)?$/;
+
+/** Segments that walk up or stay put, in raw and percent-encoded forms. */
+const TRAVERSAL_SEGMENT = /^(\.|%2e|\.\.|%2e%2e|%2e\.|\.%2e)$/i;
+
+/**
+ * @returns {{ok: boolean, reason?: string}}
+ */
+export function checkLandingPath(value) {
+  const v = String(value);
+  if (!v.startsWith("/")) return { ok: false, reason: "must start with /" };
+  if (v.startsWith("//")) {
+    // `//host/x` is protocol-relative: a browser reads it as another origin.
+    return { ok: false, reason: "must not start with // (that is another origin)" };
+  }
+  if (!LANDING_CHARS_RE.test(v)) return { ok: false, reason: "contains characters a path may not" };
+  const path = v.split("?")[0];
+  for (const seg of path.split("/")) {
+    if (TRAVERSAL_SEGMENT.test(seg)) {
+      return { ok: false, reason: `contains a "${seg}" segment, which walks out of the site` };
+    }
+  }
+  // Decode once and re-check: %2f can introduce a separator that hides a
+  // traversal segment from the split above.
+  let decoded;
+  try {
+    decoded = decodeURIComponent(path);
+  } catch {
+    return { ok: false, reason: "contains invalid percent-encoding" };
+  }
+  if (decoded !== path) {
+    for (const seg of decoded.split("/")) {
+      if (TRAVERSAL_SEGMENT.test(seg)) {
+        return { ok: false, reason: `decodes to a "${seg}" segment, which walks out of the site` };
+      }
+    }
+    if (decoded.startsWith("//")) return { ok: false, reason: "decodes to another origin" };
+  }
+  return { ok: true };
+}
 const PR_NUMBER_RE = /^\d+$/;
 
 /** Escape for the label's FORMAT_HTML intro, which renders as live HTML. */
@@ -566,27 +612,39 @@ export function buildPreviewUrl({
 // legitimate output already has. (render-summary.mjs has carried this guard
 // from the start; build-preview did not, because until version.php was read
 // every value here came from a regex-validated scalar.)
-// The comma is here because `risky-steps` is a comma-joined LIST, matching
-// `data-hosts` and GitHub's convention for list inputs. Widening a guard is
-// worth a moment's thought: what this defends against is a NEWLINE, which
-// would inject a second `name=value` line into $GITHUB_OUTPUT and let a
-// file-derived value forge `comment-body`. Newline stays excluded; a comma
-// cannot terminate a line. Omitting it made a two-element list THROW after
-// preview-url was already written, so the link still posted with the warning
-// stripped — the more risky steps a blueprint used, the less the reviewer was
-// told.
-const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+,-]{0,4096}$/;
+// What this defends against is a NEWLINE. A value carrying one injects a
+// second `name=value` line into $GITHUB_OUTPUT, letting a file-derived value
+// forge `comment-body` — which the caller posts verbatim as the bot.
+//
+// It is a DENY-LIST, deliberately, after an allow-list of punctuation was
+// wrong three times: no comma (a two-element `risky-steps` threw), then no `@`
+// (an `owner/repo@sha` coordinate threw). Each time the throw landed AFTER
+// `preview-url` was written, so the link still posted with the value stripped —
+// the failure direction inverted, hurting most when there was most to say.
+// An allow-list must be widened for every new value shape; the set of
+// characters that can actually break `$GITHUB_OUTPUT` does not grow.
+//
+// C0 controls, DEL, and the Unicode line terminators U+2028/U+2029 (which some
+// parsers treat as line breaks). Length is capped so a runaway value fails
+// here rather than at GitHub's own limit.
+const UNSAFE_OUTPUT_RE = /[\u0000-\u001f\u007f\u2028\u2029]/;
+const MAX_OUTPUT_CHARS = 4096;
 
 export function setOutput(name, value) {
   const str = String(value);
-  const safe = SAFE_OUTPUT_RE.test(str) ? str : "";
-  if (!safe && str) {
-    throw new Error(`refusing to emit unsafe output ${name}=${JSON.stringify(str.slice(0, 80))}`);
+  if (UNSAFE_OUTPUT_RE.test(str)) {
+    throw new Error(
+      `refusing to emit output ${name}: it contains a control character or line ` +
+        `terminator, which would inject a second line into $GITHUB_OUTPUT`,
+    );
+  }
+  if (str.length > MAX_OUTPUT_CHARS) {
+    throw new Error(`refusing to emit output ${name}: ${str.length} chars exceeds ${MAX_OUTPUT_CHARS}`);
   }
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${safe}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `${name}=${str}\n`);
   } else {
-    console.log(`output ${name}=${safe}`);
+    console.log(`output ${name}=${str}`);
   }
 }
 
@@ -702,11 +760,11 @@ async function main() {
   // as "somewhere else" to a browser, and schema.js accepts them (it does not
   // check), so the refusal has to be ours.
   const landingOverride = (process.env.LANDING_PATH || "").trim();
-  if (landingOverride && !LANDING_RE.test(landingOverride)) {
-    throw new Error(
-      `landing-path must be a site-relative path starting with "/" and no scheme or "//", got: ` +
-        JSON.stringify(landingOverride),
-    );
+  if (landingOverride) {
+    const ok = checkLandingPath(landingOverride);
+    if (!ok.ok) {
+      throw new Error(`landing-path ${ok.reason}: ${JSON.stringify(landingOverride)}`);
+    }
   }
   const builtBy = (process.env.BUILT_BY || "").trim();
 
@@ -767,17 +825,24 @@ async function main() {
   writeFileSync(join(outDir, "preview-blueprint.json"), JSON.stringify(blueprint, null, 2));
   writeFileSync(join(outDir, "preview-url.txt"), url + "\n");
 
-  setOutput("preview-url", url);
+  // ORDER IS LOAD-BEARING: `preview-url` is written LAST.
+  //
+  // Three separate incidents had the same shape — an output threw AFTER the
+  // link was already in $GITHUB_OUTPUT, so the caller's `if: always()` posting
+  // step published the link with the qualifying information stripped. The
+  // reviewer got a link and no warning. Emitting the link last means any
+  // failure above it leaves NO link to post, which is the safe direction.
+  const risky = assertGated(blueprint, {
+    dataHosts: hosts,
+    requireSelfUrl: pluginZipUrl(headRepo, headSha),
+  });
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
   setOutput("plugin-component", declared?.component || `${type}_${name}`);
   setOutput("preview-user", loginAs || previewUser(landingOverride || landingPath(type, name)));
-  const risky = assertGated(blueprint, {
-    dataHosts: hosts,
-    requireSelfUrl: pluginZipUrl(headRepo, headSha),
-  });
   setOutput("risky-steps", risky.join(","));
+  setOutput("preview-url", url);
   if (risky.length) {
     console.log(
       `note: this blueprint can rewrite Moodle after installing — ${risky.join(", ")}`,

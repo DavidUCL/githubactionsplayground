@@ -191,10 +191,42 @@ test("setOutput accepts a comma-joined list of any length", async () => {
   }
 });
 
-test("widening the guard did not admit a line break", async () => {
+test("the output guard refuses anything that could start a second line", async () => {
+  // A DENY-LIST after an allow-list of punctuation was wrong three times (no
+  // comma, then no `@`). These are the characters that can actually break
+  // $GITHUB_OUTPUT; the set does not grow as new value shapes appear.
   const { setOutput } = await import("../scripts/build-preview.mjs");
-  for (const v of ["a\nb", "a\r\nb", "ok\ncomment-body=pwned"]) {
-    assert.throws(() => setOutput("risky-steps", v), /refusing to emit unsafe output/);
+  for (const v of [
+    "a\nb",
+    "a\r\nb",
+    "ok\ncomment-body=pwned",
+    "a\u2028b", // Unicode line separator
+    "a\u2029b", // Unicode paragraph separator
+    "a\u0000b", // NUL
+    "a\u007fb", // DEL
+    "a\tb",
+  ]) {
+    assert.throws(
+      () => setOutput("risky-steps", v),
+      /control character or line terminator/,
+      JSON.stringify(v),
+    );
+  }
+  assert.throws(() => setOutput("risky-steps", "x".repeat(4097)), /exceeds 4096/);
+});
+
+test("the output guard admits every value shape the action actually emits", async () => {
+  // Each of these threw at some point under the old allow-list.
+  const { setOutput } = await import("../scripts/build-preview.mjs");
+  for (const v of [
+    "owner/repo@abc123",
+    "owner/repo@sha,other/repo@sha",
+    "mod_attendance",
+    "dispatch \u00b7 alice",
+    "https://daviducl.github.io/moodle-playground?blueprint=H4sIAAA_-x",
+    "",
+  ]) {
+    assert.doesNotThrow(() => setOutput("probe", v), JSON.stringify(v));
   }
 });
 
@@ -209,7 +241,7 @@ test("setOutput refuses a value carrying a newline", async () => {
     setOutput("plugin-component", "mod_attendance");
     assert.throws(
       () => setOutput("plugin-component", "safe\ncomment-body=pwned"),
-      /refusing to emit unsafe output/,
+      /control character or line terminator/,
     );
     const written = readFileSync(file, "utf8");
     assert.equal(written, "plugin-component=mod_attendance\n");

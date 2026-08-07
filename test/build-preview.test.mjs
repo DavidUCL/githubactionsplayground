@@ -15,7 +15,7 @@ import {
   FORBIDDEN_PARAMS,
   DEFAULT_DATA_HOSTS,
   pluginZipUrl,
-  LANDING_RE,
+  checkLandingPath,
   PHP_BY_BRANCH,
   checkPhpForBranch,
   studentNames,
@@ -420,13 +420,39 @@ test("a landing override replaces the per-type default everywhere", () => {
   assert.equal(bp.steps.find((s) => s.step === "login").username, "admin");
 });
 
-test("a landing override that leaves the origin is refused", () => {
-  for (const bad of ["//evil.tld/x", "https://evil.tld", "\\\\evil.tld", "no-leading-slash"]) {
-    assert.equal(LANDING_RE.test(bad), false, bad);
+test("a landing override that walks out of the site is refused", () => {
+  // Character-matched twice, wrong twice: `//evil.tld` (protocol-relative) and
+  // then `/../../../../mchef-urls/`, which was BOOTED and landed the reviewer
+  // on a neighbouring site on the same origin. The check is structural now:
+  // segments, after decoding, not a pattern.
+  for (const bad of [
+    "//evil.tld/x",
+    "https://evil.tld",
+    "no-leading-slash",
+    "/../../../../mchef-urls/",
+    "/a/../b",
+    "/./x",
+    "/%2e%2e/x",
+    "/..%2fx",
+    "/%2e%2e%2fx",
+  ]) {
+    assert.equal(checkLandingPath(bad).ok, false, bad);
   }
-  for (const good of ["/course/view.php?id=2", "/admin/plugins.php", "/"]) {
-    assert.equal(LANDING_RE.test(good), true, good);
+  for (const good of [
+    "/course/view.php?id=2",
+    "/admin/plugins.php",
+    "/",
+    "/a//b",
+    "/course/modedit.php?add=x&course=2&section=1",
+  ]) {
+    assert.equal(checkLandingPath(good).ok, true, `${good}: ${checkLandingPath(good).reason}`);
   }
+});
+
+test("the landing refusal says which segment was the problem", () => {
+  assert.match(checkLandingPath("/a/../b").reason, /".." segment/);
+  assert.match(checkLandingPath("//evil.tld").reason, /another origin/);
+  assert.match(checkLandingPath("relative").reason, /must start with/);
 });
 
 // The playground answers an invalid branch/PHP pair by silently substituting
@@ -477,4 +503,31 @@ test("the default blueprint is unchanged by any of this", () => {
     ["teacher", "student1"],
   );
   assert.equal(bp.steps.find((s) => s.step === "createCourse").numsections, 3);
+});
+
+// Three incidents had the same shape: an output threw AFTER preview-url was in
+// $GITHUB_OUTPUT, so the caller's `if: always()` step posted the link with the
+// qualifying information stripped. Writing the link last means a failure above
+// it leaves no link to post.
+test("preview-url is the LAST output written", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "order-"));
+  const out = join(dir, "gho.txt");
+  writeFileSync(out, "");
+  execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+    env: {
+      ...process.env,
+      GITHUB_OUTPUT: out,
+      HEAD_REPO: "DavidUCL/moodle-mod_attendance",
+      HEAD_SHA: SHA,
+      OUT_DIR: join(dir, "out"),
+    },
+    stdio: "pipe",
+  });
+  const names = readFileSync(out, "utf8").trim().split("\n").map((l) => l.split("=")[0]);
+  assert.ok(names.length > 1, "expected several outputs");
+  assert.equal(names.at(-1), "preview-url", `got order: ${names.join(", ")}`);
 });
