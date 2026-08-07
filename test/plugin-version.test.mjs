@@ -18,6 +18,7 @@ import {
   checkMoodleCompatibility,
   checkComponent,
   checkPluginTypeSupported,
+  fetchPluginVersion,
   MOODLE_BRANCH_VERSIONS,
   DEFAULT_MOODLE_BRANCH,
 } from "../scripts/plugin-version.mjs";
@@ -242,4 +243,49 @@ test("plugin types core still ships are untouched", () => {
 
 test("an unknown branch does not refuse a removed type on a guess", () => {
   assert.equal(checkPluginTypeSupported("atto", "MOODLE_999_STABLE").ok, true);
+});
+
+// When version.php is NOT on disk every strong check was skipped — which is
+// how a preview boots a clean Moodle with no plugin. The fallback fetches it.
+// Network-dependent, so these skip rather than fail when offline.
+const online = async () => {
+  try {
+    return (await fetch("https://raw.githubusercontent.com/", { signal: AbortSignal.timeout(4000) })).status < 500;
+  } catch { return false; }
+};
+
+test("fetches version.php for a commit when it is not checked out", async (t) => {
+  if (!(await online())) return t.skip("offline");
+  const got = await fetchPluginVersion(
+    "danmarsden/moodle-mod_attendance",
+    "8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c",
+  );
+  assert.equal(got.component, "mod_attendance");
+  assert.equal(got.requires, 2025031100);
+});
+
+test("an ABSOLUTE plugin-root maps to the repo root, not into the URL", async (t) => {
+  if (!(await online())) return t.skip("offline");
+  // plugin-root is a LOCAL path. Pasting it into the URL built a 404 and the
+  // fallback silently did nothing — how it first shipped.
+  const got = await fetchPluginVersion(
+    "danmarsden/moodle-mod_attendance",
+    "8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c",
+    "/runner/_work/whatever",
+  );
+  assert.equal(got.component, "mod_attendance");
+});
+
+test("a bad repo or SHA is refused without a request", async () => {
+  assert.equal(await fetchPluginVersion("not a repo", "a".repeat(40)), null);
+  assert.equal(await fetchPluginVersion("o/r", "short"), null);
+  assert.equal(await fetchPluginVersion("o/r", "../../etc/passwd"), null);
+});
+
+test("a missing file yields null rather than a fabricated result", async (t) => {
+  if (!(await online())) return t.skip("offline");
+  assert.equal(
+    await fetchPluginVersion("danmarsden/moodle-mod_attendance", "0".repeat(40)),
+    null,
+  );
 });

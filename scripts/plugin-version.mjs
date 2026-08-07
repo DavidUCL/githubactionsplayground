@@ -111,6 +111,54 @@ export function readPluginVersion(pluginRoot) {
 }
 
 /**
+ * Fetch version.php for a commit when it is NOT on disk.
+ *
+ * The strong checks — component identity, `$plugin->requires`, removed plugin
+ * types — all read version.php. When the plugin repo IS the checked-out repo
+ * (the normal case for an adopting workflow) it is on disk and this is never
+ * called. When it is not — previewing a third-party plugin, or any run where
+ * nothing was checked out — those checks were skipped entirely, and skipping
+ * them is how a preview boots a clean Moodle with no plugin in it.
+ *
+ * Deliberately narrow, because the action otherwise makes NO network calls and
+ * that is a property worth keeping: only raw.githubusercontent.com, only over
+ * https, 5s timeout, 256 KB cap, and a failure WARNS rather than refuses — a
+ * flaky network must not stop a preview being built.
+ *
+ * PARSED, never executed. It is a file from the commit under review.
+ *
+ * @returns {{component,version,requires,path}|null}
+ */
+export async function fetchPluginVersion(headRepo, headSha, pluginRoot = ".") {
+  if (!/^[\w.-]+\/[\w.-]+$/.test(String(headRepo)) || !/^[0-9a-f]{40}$/.test(String(headSha))) {
+    return null;
+  }
+  // pluginRoot is a LOCAL path. It maps to a repo subdirectory only when it is
+  // relative and not "." — an absolute path (a runner workspace, or another
+  // repo's checkout entirely) tells us nothing about layout inside headRepo,
+  // so fetch from its root. Getting this wrong builds a 404 URL and the
+  // fallback silently does nothing, which is how it first shipped.
+  const rel = String(pluginRoot || ".");
+  const sub =
+    rel === "." || rel === "" || rel.startsWith("/") || /^[A-Za-z]:/.test(rel)
+      ? ""
+      : `${rel.replace(/^\.\/+/, "").replace(/\/+$/, "")}/`;
+  const url = `https://raw.githubusercontent.com/${headRepo}/${headSha}/${sub}version.php`;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000), redirect: "error" });
+    if (!res.ok) return null;
+    const text = (await res.text()).slice(0, 262144);
+    // A 404 page or an HTML error would parse to all-nulls; require at least
+    // one field before claiming we read a version.php.
+    const parsed = parseVersionPhp(text);
+    if (parsed.component == null && parsed.version == null && parsed.requires == null) return null;
+    return { ...parsed, path: url };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Decide whether a plugin can run on the bundled Moodle.
  *
  * @param {{requires: number|null}} plugin

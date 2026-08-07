@@ -19,6 +19,7 @@
 
 import { gzipSync } from "node:zlib";
 import { writeFileSync, mkdirSync, appendFileSync } from "node:fs";
+import { sanitiseForLog } from "./sanitise.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
@@ -32,6 +33,7 @@ import {
   checkMoodleCompatibility,
   checkComponent,
   checkPluginTypeSupported,
+  fetchPluginVersion,
   DEFAULT_MOODLE_BRANCH,
 } from "./plugin-version.mjs";
 
@@ -485,7 +487,53 @@ export function setOutput(name, value) {
   }
 }
 
-function main() {
+/**
+ * Write the run's own account of itself to the job summary.
+ *
+ * The preview half wrote NOTHING here. A refusal surfaced as a red X and an
+ * empty summary, with the reason — which is good text, carefully worded —
+ * buried in a collapsed log nobody expands. Unread, not unwritten.
+ *
+ * Everything interpolated is either a value this script derived and validated,
+ * or is passed through sanitiseForLog. The blueprint is not echoed: it can
+ * contain strings from a plugin repo, and a job summary renders markdown.
+ */
+function writeSummary(lines) {
+  const body = lines.join("\n") + "\n";
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY, body);
+  } else {
+    process.stdout.write(body);
+  }
+}
+
+function summariseRefusal(reason, facts) {
+  writeSummary([
+    "## 🚫 No preview link for this commit",
+    "",
+    `**${sanitiseForLog(String(reason))}**`,
+    "",
+    "No link was built, so nothing was posted. This is a refusal, not a crash:",
+    "the check below decided the preview would have been misleading.",
+    "",
+    "| | |",
+    "|---|---|",
+    ...factRows(facts),
+    "",
+    "A preview that boots a Moodle without your plugin in it looks like a",
+    "working site, so the reviewer concludes the plugin does nothing. Refusing",
+    "is the loud version of that.",
+  ]);
+}
+
+/** Rows for the fact table, skipping anything we could not determine. */
+function factRows(facts) {
+  return Object.entries(facts)
+    .filter(([, v]) => v !== undefined && v !== null && v !== "")
+    .map(([k, v]) => `| ${k} | \`${sanitiseForLog(String(v))}\` |`);
+}
+
+async function main() {
   const headRepo = process.env.HEAD_REPO || "";
   const headSha = process.env.HEAD_SHA || "";
   const prNumber = process.env.PR_NUMBER || "";
@@ -501,7 +549,16 @@ function main() {
   // needs. When the plugin repo is the one checked out — the normal case for
   // an adopting repo — it is on disk and authoritative. Prefer it over
   // guessing identity from the repository name.
-  const declared = readPluginVersion(process.env.PLUGIN_ROOT || ".");
+  const pluginRoot = process.env.PLUGIN_ROOT || ".";
+  let declared = readPluginVersion(pluginRoot);
+  // Not on disk — nothing was checked out, or the plugin lives in another
+  // repo. Fetch it rather than skipping every strong check. Costs one request
+  // and only on this path; the normal adopting-repo case never gets here, so
+  // the action still makes no network calls in the case that matters.
+  if (!declared) {
+    declared = await fetchPluginVersion(headRepo, headSha, pluginRoot);
+    if (declared) console.log(`note: read version.php over https (${declared.path})`);
+  }
 
   const { type, name } = derivePlugin(headRepo, {
     type: process.env.PLUGIN_TYPE,
@@ -529,8 +586,8 @@ function main() {
     // was never checked out, and that is a legitimate shape. Say plainly that
     // the strongest check was skipped rather than implying it passed.
     console.log(
-      `note: no version.php under "${process.env.PLUGIN_ROOT || "."}" — ` +
-        `Moodle-version compatibility NOT checked`,
+      `note: no version.php on disk under "${pluginRoot}" and none fetched for ` +
+        `${headSha.slice(0, 7)} — Moodle-version compatibility NOT checked`,
     );
   }
 
@@ -570,8 +627,54 @@ function main() {
     );
   }
   console.log(`preview: ${type}_${name} @ ${headSha.slice(0, 7)} (${url.length} chars)`);
+
+  writeSummary([
+    "## ▶ Playground preview",
+    "",
+    `### [Open ${sanitiseForLog(`${type}_${name}`)} at ${headSha.slice(0, 7)}](${url})`,
+    "",
+    "| | |",
+    "|---|---|",
+    ...factRows({
+      plugin: declared?.component || `${type}_${name}`,
+      commit: headSha,
+      repository: headRepo,
+      Moodle: moodleBranch,
+      "signed in as": previewUser(landingPath(type, name)),
+      "landing page": landingPath(type, name),
+      "version.php": declared ? declared.path : "not checked out — compatibility NOT checked",
+    }),
+    "",
+    ...(risky.length
+      ? [
+          `> **This blueprint can rewrite Moodle after installing:** ${risky
+            .map((r) => `\`${r}\``)
+            .join(", ")}.`,
+          "> Code that installs for real can be overwritten afterwards without",
+          "> touching the database, the boot log, or any assertion.",
+          "",
+        ]
+      : []),
+    "Smoke test only: this shows whether the plugin installs and renders, not",
+    "whether it is correct. Nothing here booted it — the link boots in your",
+    "browser when you open it.",
+  ]);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+  try {
+    await main();
+  } catch (err) {
+    // A refusal is the designed outcome of several checks, and its wording is
+    // the whole point. Put it where a human will see it, then still fail —
+    // the caller decides what to do with a red step.
+    summariseRefusal(err?.message ?? String(err), {
+      repository: process.env.HEAD_REPO,
+      commit: process.env.HEAD_SHA,
+      Moodle: process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH,
+      "plugin root": process.env.PLUGIN_ROOT || ".",
+    });
+    console.error(err?.stack ?? String(err));
+    process.exit(1);
+  }
 }
