@@ -222,6 +222,18 @@ export function landingPath(type, name) {
  * checks a plugin's own code relies on. `editingteacher` is enrolled in the
  * review course, so a teacher can still add and configure activities.
  */
+/** student1..studentN, clamped: the URL is size-bound and 20 is already more
+ * than any review needs. */
+const STUDENT_ORDINALS = [
+  "One", "Two", "Three", "Four", "Five", "Six",
+  "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve",
+];
+
+export function studentNames(n) {
+  const count = Math.max(1, Math.min(20, Number(n) || 1));
+  return Array.from({ length: count }, (_, i) => `student${i + 1}`);
+}
+
 export function previewUser(landing) {
   return String(landing).startsWith("/admin/") ? "admin" : "teacher";
 }
@@ -238,7 +250,41 @@ export const PHP_FOR_BRANCH = {
   MOODLE_405_STABLE: "8.3",
   MOODLE_500_STABLE: "8.3",
 };
+
+/**
+ * PHP versions each branch actually accepts, from the playground's own
+ * `version-resolver.js` `phpVersions`. They DIFFER — 4.x takes 8.1-8.3, 5.x
+ * takes 8.2-8.4 — and the playground answers an invalid pair by silently
+ * substituting 8.3 (`version-resolver.js:199-208`). So an unchecked php input
+ * would let someone chase a PHP 8.1 bug on Moodle 5.0 and test 8.3 without
+ * being told. Refuse the pair instead; gate check 1n fails if this drifts.
+ */
+export const PHP_BY_BRANCH = {
+  MOODLE_404_STABLE: ["8.1", "8.2", "8.3"],
+  MOODLE_405_STABLE: ["8.1", "8.2", "8.3"],
+  MOODLE_500_STABLE: ["8.2", "8.3", "8.4"],
+};
+
 export const phpForBranch = (branch) => PHP_FOR_BRANCH[branch] ?? "8.3";
+
+/** @returns {{ok: boolean, reason?: string}} */
+export function checkPhpForBranch(php, branch) {
+  if (!php) return { ok: true };
+  const allowed = PHP_BY_BRANCH[branch];
+  if (!allowed) {
+    return { ok: true, reason: `unknown Moodle branch "${branch}" — PHP pairing not checked` };
+  }
+  if (!allowed.includes(php)) {
+    return {
+      ok: false,
+      reason:
+        `PHP ${php} is not available on ${branch} (it takes ${allowed.join(", ")}). ` +
+        `The playground would silently substitute 8.3 and the preview would not ` +
+        `be testing the PHP you asked for.`,
+    };
+  }
+  return { ok: true };
+}
 
 /** @returns {object} the blueprint the preview link carries */
 export function buildBlueprint({
@@ -250,6 +296,12 @@ export function buildBlueprint({
   moodleBranch = DEFAULT_MOODLE_BRANCH,
   landingOverride = "",
   builtBy = "",
+  phpOverride = "",
+  loginAs = "",
+  // Defaults MUST match preview/action.yml and main(): one student, three
+  // sections — the shape every preview had before these became adjustable.
+  students = 1,
+  sections = 3,
 }) {
   if (!isRepo(headRepo)) throw new Error(`bad repo: ${headRepo}`);
   if (!SHA_RE.test(String(headSha))) {
@@ -342,14 +394,25 @@ export function buildBlueprint({
       // A format plugin is only visible if the review course actually uses it
       // — the exact analogue of setTheme for themes.
       ...(type === "format" ? { format: name } : {}),
-      numsections: 3,
+      numsections: sections,
     },
     {
       step: "createUsers",
       critical: true,
       users: [
         { username: "teacher", firstname: "Teacher", lastname: "Review" },
-        { username: "student1", firstname: "Student", lastname: "One" },
+        // student1..studentN. One is enough to see a plugin as a learner;
+        // more matter for anything that lists, groups or grades people —
+        // measured at ~280ms for 20, so the cost is not the reason to keep
+        // the default small.
+        ...studentNames(students).map((u, i) => ({
+          username: u,
+          firstname: "Student",
+          // "One", "Two", … so a reviewer reading the participants list sees
+          // names rather than indices. Beyond the list, fall back to the
+          // number — nobody reviews with twelve students.
+          lastname: STUDENT_ORDINALS[i] ?? `Number ${i + 1}`,
+        })),
       ],
     },
     {
@@ -357,7 +420,11 @@ export function buildBlueprint({
       critical: true,
       enrolments: [
         { username: "teacher", course: COURSE_SHORTNAME, role: "editingteacher" },
-        { username: "student1", course: COURSE_SHORTNAME, role: "student" },
+        ...studentNames(students).map((u) => ({
+          username: u,
+          course: COURSE_SHORTNAME,
+          role: "student",
+        })),
       ],
     },
   ];
@@ -400,7 +467,11 @@ export function buildBlueprint({
   // Provisioning needs no session: the create/enrol helpers call core APIs
   // directly and never read $USER.
   const landing = landingOverride || landingPath(type, name);
-  steps.push({ step: "login", username: previewUser(landing), critical: true });
+  // `login-as` overrides the derived default. Derivation is a good default —
+  // admin for admin pages, teacher elsewhere — but it cannot know you want to
+  // see the plugin as a learner, and nothing else lets you.
+  const loginUser = loginAs || previewUser(landing);
+  steps.push({ step: "login", username: loginUser, critical: true });
   steps.push({ step: "setLandingPage", path: landing });
 
 
@@ -417,7 +488,7 @@ export function buildBlueprint({
     // playground answers an invalid pair by silently substituting 8.3
     // (version-resolver.js:199-208) — so a wrong literal here would be
     // invisible.
-    preferredVersions: { php: phpForBranch(moodleBranch), moodle: moodleBranch },
+    preferredVersions: { php: phpOverride || phpForBranch(moodleBranch), moodle: moodleBranch },
     // Both: the top-level value aims the FIRST navigation at the target, and
     // the step keeps working if a build ignores the top-level field.
     landingPage,
@@ -639,6 +710,31 @@ async function main() {
   }
   const builtBy = (process.env.BUILT_BY || "").trim();
 
+  // PHP is refused rather than substituted. The playground answers an invalid
+  // branch/PHP pair by quietly using 8.3, so an unchecked value here would
+  // produce a preview that is not testing what the summary says it is.
+  const phpOverride = (process.env.PHP_VERSION || "").trim();
+  const phpOk = checkPhpForBranch(phpOverride, moodleBranch);
+  if (!phpOk.ok) throw new Error(phpOk.reason);
+  if (phpOk.reason) console.log(`note: ${phpOk.reason}`);
+
+  const loginAs = (process.env.LOGIN_AS || "").trim();
+  if (loginAs && !studentNames(20).concat("admin", "teacher").includes(loginAs)) {
+    throw new Error(
+      `login-as must be admin, teacher or student1..student20 — those are the ` +
+        `only accounts the blueprint creates. Got: ${JSON.stringify(loginAs)}`,
+    );
+  }
+  const students = Number(process.env.STUDENTS || 1) || 1;
+  const sections = Math.max(1, Math.min(20, Number(process.env.SECTIONS || 3) || 3));
+  // Asking to arrive as a student the blueprint never made is a refusal, not a
+  // login failure at boot — phpLogin does MUST_EXIST and would abort there.
+  if (loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
+    throw new Error(
+      `login-as ${loginAs} but only ${students} student account(s) are created — raise the student count`,
+    );
+  }
+
   const blueprint = buildBlueprint({
     headRepo,
     headSha,
@@ -648,6 +744,10 @@ async function main() {
     moodleBranch,
     landingOverride,
     builtBy,
+    phpOverride,
+    loginAs,
+    students,
+    sections,
   });
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
@@ -672,7 +772,7 @@ async function main() {
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
   setOutput("plugin-component", declared?.component || `${type}_${name}`);
-  setOutput("preview-user", previewUser(landingOverride || landingPath(type, name)));
+  setOutput("preview-user", loginAs || previewUser(landingOverride || landingPath(type, name)));
   const risky = assertGated(blueprint, {
     dataHosts: hosts,
     requireSelfUrl: pluginZipUrl(headRepo, headSha),
@@ -697,7 +797,9 @@ async function main() {
       commit: headSha,
       repository: headRepo,
       Moodle: moodleBranch,
-      "signed in as": previewUser(landingOverride || landingPath(type, name)),
+      "signed in as": loginAs || previewUser(landingOverride || landingPath(type, name)),
+      PHP: phpOverride || phpForBranch(moodleBranch),
+      "course": `${students} student(s), ${sections} section(s)`,
       "landing page": landingOverride || landingPath(type, name),
       "version.php": declared ? declared.path : "not checked out — compatibility NOT checked",
     }),

@@ -16,6 +16,9 @@ import {
   DEFAULT_DATA_HOSTS,
   pluginZipUrl,
   LANDING_RE,
+  PHP_BY_BRANCH,
+  checkPhpForBranch,
+  studentNames,
 } from "../scripts/build-preview.mjs";
 
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
@@ -424,4 +427,54 @@ test("a landing override that leaves the origin is refused", () => {
   for (const good of ["/course/view.php?id=2", "/admin/plugins.php", "/"]) {
     assert.equal(LANDING_RE.test(good), true, good);
   }
+});
+
+// The playground answers an invalid branch/PHP pair by silently substituting
+// 8.3 (version-resolver.js:199-208), so an unvalidated php input would build a
+// preview that is not testing the PHP the summary claims. Refuse instead.
+test("PHP is refused when the chosen Moodle does not accept it", () => {
+  assert.equal(checkPhpForBranch("8.1", "MOODLE_500_STABLE").ok, false);
+  assert.equal(checkPhpForBranch("8.4", "MOODLE_404_STABLE").ok, false);
+  assert.match(checkPhpForBranch("8.1", "MOODLE_500_STABLE").reason, /8\.2, 8\.3, 8\.4/);
+});
+
+test("PHP each branch really accepts is allowed", () => {
+  for (const [branch, versions] of Object.entries(PHP_BY_BRANCH)) {
+    for (const v of versions) assert.equal(checkPhpForBranch(v, branch).ok, true, `${v} on ${branch}`);
+  }
+});
+
+test("a php override reaches the blueprint's version pin", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance", phpOverride: "8.2" });
+  assert.equal(bp.preferredVersions.php, "8.2");
+});
+
+test("student and section counts drive the course, and are clamped", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance", students: 5, sections: 6 });
+  assert.equal(bp.steps.find((s) => s.step === "createUsers").users.length, 6); // teacher + 5
+  assert.equal(bp.steps.find((s) => s.step === "enrolUsers").enrolments.length, 6);
+  assert.equal(bp.steps.find((s) => s.step === "createCourse").numsections, 6);
+  // Every student is enrolled as a student, and named readably.
+  const users = bp.steps.find((s) => s.step === "createUsers").users;
+  assert.deepEqual(users.slice(1).map((u) => u.lastname), ["One", "Two", "Three", "Four", "Five"]);
+  assert.deepEqual(studentNames(99).length, 20);
+  assert.deepEqual(studentNames(0), ["student1"]);
+});
+
+test("login-as overrides the derived user", () => {
+  const derived = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  assert.equal(derived.steps.find((s) => s.step === "login").username, "teacher");
+  const forced = buildBlueprint({ ...base, type: "mod", name: "attendance", loginAs: "student1" });
+  assert.equal(forced.steps.find((s) => s.step === "login").username, "student1");
+});
+
+test("the default blueprint is unchanged by any of this", () => {
+  // The counts became adjustable; the shape every existing preview had must
+  // not move. One student, three sections, teacher login.
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  assert.deepEqual(
+    bp.steps.find((s) => s.step === "createUsers").users.map((u) => u.username),
+    ["teacher", "student1"],
+  );
+  assert.equal(bp.steps.find((s) => s.step === "createCourse").numsections, 3);
 });

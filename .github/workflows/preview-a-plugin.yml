@@ -8,11 +8,13 @@
 # single form with a "source" selector would show eight irrelevant boxes. The
 # Actions sidebar is the selector, for free.
 #
-# FIVE FIELDS, deliberately. A review panel cut this from twelve: `php-version`
-# was silently substituted by the playground on an invalid branch/PHP pair,
-# `login-as` is already derived from where you land, and the numeric fields
-# changed nothing a reviewer could see. Every control is a failure surface, and
-# blueprint failure is invisible in this runtime.
+# NINE FIELDS. A review panel cut an earlier draft to five; David restored
+# `login-as`, the counts, and `php-version` — the last one restricted to the
+# versions each Moodle branch actually accepts, and REFUSED rather than
+# silently substituted when the pair is invalid, which is what the playground
+# would otherwise do. Every control is still a failure surface: blueprint
+# failure is invisible in this runtime, so each one is validated before a link
+# is built rather than discovered in the reviewer's browser.
 
 name: Preview a plugin
 
@@ -47,9 +49,48 @@ on:
         required: false
         type: string
         default: ""
+      php-version:
+        description: "PHP to boot. Must be one the chosen Moodle accepts — 4.x takes 8.1-8.3, 5.x takes 8.2-8.4. An invalid pair is refused, not substituted."
+        required: false
+        type: choice
+        default: default for the branch
+        options:
+          - default for the branch
+          - "8.1"
+          - "8.2"
+          - "8.3"
+          - "8.4"
+      login-as:
+        description: "Who you arrive as. Blank derives it from the landing page; pick a student to see the plugin as a learner."
+        required: false
+        type: choice
+        default: derive from landing page
+        options:
+          - derive from landing page
+          - admin
+          - teacher
+          - student1
+          - student2
+          - student3
+      students:
+        description: "Student accounts in the review course. Raise it for anything that lists, groups or grades people."
+        required: false
+        type: choice
+        default: "1"
+        options: ["1", "2", "3", "5", "10", "20"]
+      sections:
+        description: "Sections in the review course."
+        required: false
+        type: choice
+        default: "3"
+        options: ["1", "3", "5", "10"]
 
-# Reads a public repo and writes nothing. The token needs no scopes.
-permissions: {}
+# `contents: read`, not `{}`. The ref lookup calls `gh api` against a public
+# repo, and with no scopes at all that call fails — proven by dispatching this
+# workflow twice and watching both runs die before building anything. Nothing
+# here writes.
+permissions:
+  contents: read
 
 jobs:
   preview:
@@ -80,10 +121,13 @@ jobs:
           fi
           # A full SHA resolves to itself; anything else is looked up.
           sha=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
-          case "$sha" in
-            [0-9a-f]??????????????????????????????????????) : ;;
-            *) echo "::error::could not resolve '$REF' in $REPO to a commit"; exit 1 ;;
-          esac
+          # A counted glob of `?` is unreadable and was one short — 39 where 40
+          # are needed — so it rejected every real SHA and the workflow could
+          # never build a link. State the length instead of counting it.
+          if ! printf '%s' "$sha" | grep -qE '^[0-9a-f]{40}$'; then
+            echo "::error::could not resolve '$REF' in $REPO to a commit (got: ${sha:0:60})"
+            exit 1
+          fi
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "::notice::$REPO@$REF -> $sha"
 
@@ -95,6 +139,13 @@ jobs:
           moodle-branch: ${{ inputs.moodle-branch }}
           landing-path: ${{ inputs.landing-path }}
           plugin-component: ${{ inputs.plugin-component }}
+          # The two sentinel options mean "leave it to the action", which is
+          # not the same as an empty string a user typed — a `choice` has no
+          # unset state, so the sentinel is how "unset" is expressed.
+          php-version: ${{ inputs.php-version == 'default for the branch' && '' || inputs.php-version }}
+          login-as: ${{ inputs.login-as == 'derive from landing page' && '' || inputs.login-as }}
+          students: ${{ inputs.students }}
+          sections: ${{ inputs.sections }}
           # The only provenance a pasted link carries. Without it, a link built
           # here is shape-identical to one born from a push — and nothing here
           # booted anything.

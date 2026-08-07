@@ -45,6 +45,33 @@ inputs:
       shape-identical to one born from a push, and nothing booted it.
     required: false
     default: ""
+  php-version:
+    description: >-
+      PHP to boot, e.g. 8.2. Must be one the chosen moodle-branch accepts
+      (4.x takes 8.1-8.3, 5.x takes 8.2-8.4) — an invalid pair is REFUSED
+      rather than silently substituted, which is what the playground would
+      otherwise do. Blank = the default for the branch.
+    required: false
+    default: ""
+  login-as:
+    description: >-
+      Account the reviewer arrives as: admin, teacher, or student1..studentN.
+      Blank derives it from the landing page (admin for admin pages, teacher
+      elsewhere), which is right for most reviews but cannot know you want to
+      see the plugin as a learner.
+    required: false
+    default: ""
+  students:
+    description: >-
+      How many student accounts the review course gets (1-20, default 1).
+      More matter for anything that lists, groups or grades people. Measured
+      at roughly 280ms for 20.
+    required: false
+    default: "1"
+  sections:
+    description: "How many sections the review course has (1-20, default 3)."
+    required: false
+    default: "3"
   plugin-root:
     description: >-
       Directory holding the plugin's version.php, relative to the workspace.
@@ -151,6 +178,10 @@ runs:
         PLUGIN_COMPONENT: ${{ inputs.plugin-component }}
         LANDING_PATH: ${{ inputs.landing-path }}
         BUILT_BY: ${{ inputs.built-by }}
+        PHP_VERSION: ${{ inputs.php-version }}
+        LOGIN_AS: ${{ inputs.login-as }}
+        STUDENTS: ${{ inputs.students }}
+        SECTIONS: ${{ inputs.sections }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out
