@@ -12,6 +12,7 @@
 //   node -e "…buildBlueprint…" > test/fixtures/preview/<case>.json
 // and review the diff as carefully as you would review the link itself.
 
+import { RISKY_STEPS } from "../scripts/preflight.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -202,4 +203,13 @@ test("a tiny subplugin lands on the TinyMCE settings page, not the plugin list",
   // Previously fell through to /admin/plugins.php, which proves registration
   // and nothing else. The section is defined in lib/editor/tiny/settings.php.
   assert.equal(landingPath("tiny", "myplug"), "/admin/settings.php?section=editorsettingstiny");
+});
+
+test("the action's own blueprint uses no risky steps", () => {
+  // If this ever fails, the preview started doing something that makes its own
+  // result unprovable — worth noticing deliberately rather than in passing.
+  for (const c of Object.values(CASES)) {
+    const risky = buildBlueprint(c).steps.map((s) => s.step).filter((s) => RISKY_STEPS.has(s));
+    assert.deepEqual(risky, []);
+  }
 });

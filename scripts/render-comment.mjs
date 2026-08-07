@@ -47,7 +47,7 @@ function isPostablePreviewUrl(value, allowedOrigins) {
 }
 
 /** @returns {string} markdown for the sticky comment */
-export function renderComment({ url, plugin, headSha, runUrl, user = "admin", allowedOrigins = DEFAULT_ORIGINS }) {
+export function renderComment({ url, plugin, headSha, runUrl, user = "admin", allowedOrigins = DEFAULT_ORIGINS, riskySteps = [] }) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
   if (!COMPONENT_RE.test(String(plugin))) throw new Error(`bad plugin: ${plugin}`);
@@ -95,6 +95,15 @@ export function renderComment({ url, plugin, headSha, runUrl, user = "admin", al
     // The sentence that stops a green tick plus a working site reading as an
     // endorsement. A test asserts this body never says verified / passed /
     // works correctly / safe to merge.
+    // Only when present. A reviewer looking at a site that was rewritten after
+    // the install should be told, because nothing on screen reveals it.
+    ...(riskySteps.length
+      ? [
+          `**This preview modifies Moodle itself** (\`${riskySteps.join("`, `")}\`), so`,
+          "what you see may not be the plugin alone.",
+          "",
+        ]
+      : []),
     "Smoke test only: it shows whether the plugin installs and renders, not",
     "whether it is correct. Rewritten in place on every push.",
   ].join("\n");
@@ -107,6 +116,7 @@ function main() {
     headSha: process.env.HEAD_SHA || "",
     runUrl: process.env.RUN_URL || "",
     user: process.env.PREVIEW_USER || "admin",
+    riskySteps: (process.env.RISKY_STEPS || "").split(",").map((r) => r.trim()).filter(Boolean),
   });
   if (process.env.GITHUB_OUTPUT) {
     // Multi-line outputs need a delimiter that cannot appear in the body.

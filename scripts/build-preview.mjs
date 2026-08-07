@@ -62,6 +62,20 @@ export const FORBIDDEN_PARAMS = [
 ];
 // The preview half had no origin concept at all, while the verify half has
 // ACCEPTED_ORIGINS. A link is a capability; it must not point anywhere.
+/**
+ * Hosts a blueprint's URLs may point at. Widen it with the `data-hosts` input
+ * when a blueprint installs plugins from elsewhere — a dependency on GitLab, a
+ * university host, the Moodle plugins directory. The commit under review is
+ * bound separately (see requireSelfUrl), so widening this does NOT let a link
+ * quietly swap out the plugin it claims to preview.
+ */
+export const DEFAULT_DATA_HOSTS = ["github.com", "raw.githubusercontent.com"];
+
+/** Where this commit's own plugin ZIP lives. One definition, so the builder
+ * and the gate that checks it can never disagree. */
+export const pluginZipUrl = (headRepo, headSha) =>
+  `https://github.com/${headRepo}/archive/${headSha}.zip`;
+
 export const DEFAULT_ORIGINS = [
   "https://moodle-playground.com",
   "https://ateeducacion.github.io",
@@ -225,7 +239,7 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name }) {
     },
     {
       step: "installMoodlePlugin",
-      url: `https://github.com/${headRepo}/archive/${headSha}.zip`,
+      url: pluginZipUrl(headRepo, headSha),
       pluginType: type,
       pluginName: name,
       // NOT redundant — verified against the DEPLOYED executor, which says:
@@ -339,15 +353,17 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name }) {
  * (which the inline path never validates, so it would fail at runtime in the
  * reviewer's browser), a banned step, and any URL outside the allowed hosts.
  */
-export function assertGated(blueprint) {
-  const { stepErrors, urlErrors, unsafeStrings, bindErrors } = gateBlueprint(
+export function assertGated(blueprint, { dataHosts = DEFAULT_DATA_HOSTS, requireSelfUrl } = {}) {
+  const { stepErrors, urlErrors, unsafeStrings, bindErrors, riskySteps } = gateBlueprint(
     blueprint,
-    ["github.com", "raw.githubusercontent.com"],
+    dataHosts,
+    requireSelfUrl ? { requireSelfUrl } : {},
   );
   const problems = [...stepErrors, ...unsafeStrings, ...urlErrors, ...bindErrors];
   if (problems.length) {
     throw new Error(`refusing to build a link from a blueprint our own gate rejects: ${problems.join("; ")}`);
   }
+  return riskySteps || [];
 }
 
 /** Refuse any blueprint whose strings could be rewritten after posting. */
@@ -381,9 +397,15 @@ export function encodeBlueprint(blueprint) {
 }
 
 /** @returns {string} the URL to put on the PR */
-export function buildPreviewUrl({ playgroundHost, blueprint, allowedOrigins = DEFAULT_ORIGINS }) {
+export function buildPreviewUrl({
+  playgroundHost,
+  blueprint,
+  allowedOrigins = DEFAULT_ORIGINS,
+  dataHosts = DEFAULT_DATA_HOSTS,
+  requireSelfUrl,
+}) {
   assertNoPlaceholders(blueprint);
-  assertGated(blueprint);
+  assertGated(blueprint, { dataHosts, requireSelfUrl });
   const url = new URL(String(playgroundHost));
   if (url.protocol !== "https:") throw new Error(`playground host must be https: ${playgroundHost}`);
   // `https://moodle-playground.com@evil.tld/` parses to host evil.tld while
@@ -480,7 +502,19 @@ function main() {
   }
 
   const blueprint = buildBlueprint({ headRepo, headSha, prNumber, type, name });
-  const url = buildPreviewUrl({ playgroundHost, blueprint });
+  // Hosts other plugins may come from. Comma separated, trimmed, empties
+  // dropped so a trailing comma is not a silent empty-string host.
+  const dataHosts = (process.env.DATA_HOSTS || "")
+    .split(",")
+    .map((h) => h.trim())
+    .filter(Boolean);
+  const hosts = dataHosts.length ? dataHosts : DEFAULT_DATA_HOSTS;
+  const url = buildPreviewUrl({
+    playgroundHost,
+    blueprint,
+    dataHosts: hosts,
+    requireSelfUrl: pluginZipUrl(headRepo, headSha),
+  });
 
   mkdirSync(outDir, { recursive: true });
   writeFileSync(join(outDir, "preview-blueprint.json"), JSON.stringify(blueprint, null, 2));
@@ -492,6 +526,16 @@ function main() {
   setOutput("head-sha", headSha);
   setOutput("plugin-component", declared?.component || `${type}_${name}`);
   setOutput("preview-user", previewUser(landingPath(type, name)));
+  const risky = assertGated(blueprint, {
+    dataHosts: hosts,
+    requireSelfUrl: pluginZipUrl(headRepo, headSha),
+  });
+  setOutput("risky-steps", risky.join(","));
+  if (risky.length) {
+    console.log(
+      `note: this blueprint can rewrite Moodle after installing — ${risky.join(", ")}`,
+    );
+  }
   console.log(`preview: ${type}_${name} @ ${headSha.slice(0, 7)} (${url.length} chars)`);
 }
 

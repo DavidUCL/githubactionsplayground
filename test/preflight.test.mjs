@@ -8,7 +8,7 @@ import {
   looksFetchable,
   gateBlueprint,
   ALLOWED_STEPS,
-  BANNED_STEPS,
+  RISKY_STEPS,
 } from "../scripts/preflight.mjs";
 import { validateVerdict, ERROR_CLASSES } from "../scripts/validate-verdict.mjs";
 import { rejectedVerdict } from "../scripts/assert.mjs";
@@ -35,11 +35,12 @@ test("real vendored blueprint passes the gate with derived expectations", () => 
   assert.equal(expectations.pluginSteps[1].pluginName, "attendance");
 });
 
-test("banned step rejected", () => {
+test("a risky step is allowed through the gate", () => {
   const b = bp();
   b.steps.push({ step: "runPhpCode", code: "<?php echo 1;" });
-  const { stepErrors } = gateBlueprint(b, HOSTS);
-  assert.match(stepErrors.join(";"), /runPhpCode: banned/);
+  const { stepErrors, riskySteps } = gateBlueprint(b, HOSTS);
+  assert.deepEqual(stepErrors, []);
+  assert.ok(riskySteps.includes("runPhpCode"));
 });
 
 test("unknown step rejected (default deny)", () => {
@@ -63,8 +64,32 @@ test("proxy override key anywhere rejected", () => {
   assert.match(urlErrors.join(";"), /proxy override/);
 });
 
-test("allow/ban partition covers the full 2026-07-29 step registry disjointly", () => {
-  for (const s of ALLOWED_STEPS) assert.equal(BANNED_STEPS.has(s), false, s);
+test("every risky step is ALLOWED — they are reported, not refused", () => {
+  // The 15 used to be banned outright. Blocking them also blocked legitimate
+  // uses (installing a dependency, preparing fixtures), so they now run and
+  // are reported instead. Unknown names are still refused; see below.
+  for (const s of RISKY_STEPS) assert.equal(ALLOWED_STEPS.has(s), true, s);
+  assert.equal(ALLOWED_STEPS.size, 47);
+  assert.equal(RISKY_STEPS.size, 15);
+});
+
+test("a risky step is reported by name, and does not block the blueprint", () => {
+  const b = bp();
+  b.steps.push({ step: "writeFile", path: "/www/moodle/x.php", data: "x" });
+  b.steps.push({ step: "runPhpCode", code: "<?php echo 1;" });
+  const { stepErrors, riskySteps } = gateBlueprint(b, HOSTS);
+  assert.deepEqual(stepErrors, []);
+  assert.deepEqual(riskySteps, ["runPhpCode", "writeFile"]);
+});
+
+test("an ordinary blueprint reports no risky steps", () => {
+  assert.deepEqual(gateBlueprint(bp(), HOSTS).riskySteps, []);
+});
+
+test("an UNKNOWN step name is still refused — a typo boots a plugin-free Moodle", () => {
+  const b = bp();
+  b.steps.push({ step: "instalMoodlePlugin", url: "https://raw.githubusercontent.com/a/b/c.zip" });
+  assert.match(gateBlueprint(b, HOSTS).stepErrors.join(";"), /unknown step \(default deny\)/);
 });
 
 // --- URL screening regressions --------------------------------------------
@@ -160,11 +185,13 @@ test("query strings and fragments rejected (credentials in artifacts)", () => {
   assert.notEqual(checkUrl("https://raw.githubusercontent.com/a/b.zip#f", HOSTS), null);
 });
 
-test("banned step name nested under a step is rejected", () => {
+test("an unknown step name nested under a step is still rejected", () => {
+  // The nested sweep exists because the loop above only reads `step.step`; a
+  // future step gaining a sub-step list would otherwise sail past it.
   const b = bp();
-  b.steps[1].onFailure = { step: "runPhpCode", code: "<?php system($_GET[0]);" };
+  b.steps[1].onFailure = { step: "notARealStep", code: "x" };
   const { stepErrors } = gateBlueprint(b, HOSTS);
-  assert.match(stepErrors.join(";"), /nested step 'runPhpCode' not allowed/);
+  assert.match(stepErrors.join(";"), /nested step 'notARealStep' not allowed/);
 });
 
 test("nested allowlisted step name is fine", () => {

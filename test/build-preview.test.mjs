@@ -13,6 +13,8 @@ import {
   encodeBlueprint,
   assertNoPlaceholders,
   FORBIDDEN_PARAMS,
+  DEFAULT_DATA_HOSTS,
+  pluginZipUrl,
 } from "../scripts/build-preview.mjs";
 
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
@@ -108,8 +110,12 @@ test("a blueprint our own step-gate would reject is never turned into a link", (
   // We built preflight's gate and were not using it here. A typo'd or banned
   // step is not caught by the inline path at runtime — the playground silently
   // falls back to its starter blueprint, so the reviewer gets a clean Moodle.
+  // A risky step (runPhpCode, writeFile) no longer blocks — those are reported
+  // instead. An UNKNOWN name still does, and that is the case that matters
+  // here: the inline path never validates, so a typo silently boots the
+  // playground's own starter blueprint and the reviewer gets a clean Moodle.
   const banned = buildBlueprint(base);
-  banned.steps.push({ step: "runPhpCode", code: "<?php echo 1;" });
+  banned.steps.push({ step: "instalMoodle", code: "typo" });
   assert.throws(
     () => buildPreviewUrl({ playgroundHost: "https://moodle-playground.com", blueprint: banned }),
     /our own gate rejects/,
@@ -290,4 +296,73 @@ test("the emitted link carries the blueprint and nothing else", () => {
     blueprint: bp,
   }));
   assert.deepEqual([...url.searchParams.keys()], ["blueprint"]);
+});
+
+// The commit under review must be INSTALLED, not merely named. A blueprint may
+// install any number of other plugins — dependencies, third-party plugins the
+// reviewer needs — but omitting your own is what makes the link a lie: the
+// course heading still reads "PR #42 · <sha> · mod_x" because we build that
+// from the event, so the page would actively confirm the wrong thing.
+test("a blueprint that installs OTHER plugins alongside this one is accepted", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  bp.steps.splice(3, 0, {
+    step: "installMoodlePlugin",
+    url: "https://github.com/someone/moodle-local_dependency/archive/" + "a".repeat(40) + ".zip",
+    pluginType: "local",
+    pluginName: "dependency",
+  });
+  assert.doesNotThrow(() =>
+    buildPreviewUrl({
+      playgroundHost: "https://moodle-playground.com",
+      blueprint: bp,
+      requireSelfUrl: pluginZipUrl(base.headRepo, base.headSha),
+    }),
+  );
+});
+
+test("a blueprint that omits this commit's plugin is refused", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  const install = bp.steps.find((s) => s.step === "installMoodlePlugin");
+  install.url = "https://github.com/someone-else/moodle-mod_other/archive/" + "b".repeat(40) + ".zip";
+  assert.throws(
+    () =>
+      buildPreviewUrl({
+        playgroundHost: "https://moodle-playground.com",
+        blueprint: bp,
+        requireSelfUrl: pluginZipUrl(base.headRepo, base.headSha),
+      }),
+    /no plugin step installs the commit under review/,
+  );
+});
+
+test("a dependency on a host outside the allowlist is refused", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  bp.steps.splice(3, 0, {
+    step: "installMoodlePlugin",
+    url: "https://gitlab.example/group/plugin/-/archive/x/plugin.zip",
+    pluginType: "local",
+    pluginName: "dep",
+  });
+  assert.throws(
+    () => buildPreviewUrl({ playgroundHost: "https://moodle-playground.com", blueprint: bp }),
+    /gate rejects/,
+  );
+});
+
+test("...and accepted once that host is added to data-hosts", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
+  bp.steps.splice(3, 0, {
+    step: "installMoodlePlugin",
+    url: "https://gitlab.example/group/plugin/-/archive/x/plugin.zip",
+    pluginType: "local",
+    pluginName: "dep",
+  });
+  assert.doesNotThrow(() =>
+    buildPreviewUrl({
+      playgroundHost: "https://moodle-playground.com",
+      blueprint: bp,
+      dataHosts: [...DEFAULT_DATA_HOSTS, "gitlab.example"],
+      requireSelfUrl: pluginZipUrl(base.headRepo, base.headSha),
+    }),
+  );
 });

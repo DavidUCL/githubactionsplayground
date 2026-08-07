@@ -29,9 +29,29 @@ export const ALLOWED_STEPS = new Set([
   "createCohort", "createCohorts", "enrolUser", "enrolUsers", "addModule",
   "importRoles", "importRolePreset", "setConfig", "setConfigs",
   "purgeMoodleCaches",
+  // Risky but permitted; see RISKY_STEPS. Unknown names are still refused,
+  // because a typo'd step is skipped in silence and boots a plugin-free Moodle.
+  "runPhpCode", "runPhpScript", "writeFile", "writeFiles", "unzip",
+  "applyPrOverlay", "request", "copyFile", "moveFile", "deleteFile",
+  "deleteFiles", "mkdir", "rmdir", "setConfigFile", "setConfigFiles",
 ]);
 
-export const BANNED_STEPS = new Set([
+/**
+ * Steps that can change Moodle ITSELF after the plugin is installed — arbitrary
+ * PHP, filesystem writes, core overlays. They are ALLOWED, and reported.
+ *
+ * They are worth reporting because they change what a result means rather than
+ * whether it succeeds. `writeFile` can create
+ * `/www/moodle/mod/x/version.php` with nothing behind it, so the structural
+ * check "the plugin installed" passes without a plugin. A boot that used one
+ * of these is still a real boot; it is just no longer self-proving, and
+ * whoever reads the verdict should be told which.
+ *
+ * Previously these were refused outright. Blocking them also blocked
+ * legitimate uses — installing a dependency, preparing fixture files — so the
+ * gate now reports instead of refusing.
+ */
+export const RISKY_STEPS = new Set([
   "runPhpCode", "runPhpScript", "writeFile", "writeFiles", "unzip",
   "applyPrOverlay", "request", "copyFile", "moveFile", "deleteFile",
   "deleteFiles", "mkdir", "rmdir", "setConfigFile", "setConfigFiles",
@@ -231,12 +251,24 @@ const IDENTIFIER_RE = /^[a-z][a-z0-9_]*$/;
  * @returns {{stepErrors: string[], urlErrors: string[], unsafeStrings: string[],
  *            bindErrors: string[], expectations: object|null}}
  */
-export function gateBlueprint(blueprint, dataHosts) {
+/**
+ * @param {object} blueprint
+ * @param {string[]} dataHosts — hosts any URL in the blueprint may point at.
+ * @param {{requireSelfUrl?: string}} [opts] — when given, at least ONE plugin
+ *   install step must fetch exactly this URL. The blueprint may install any
+ *   number of OTHER plugins (dependencies, third-party plugins the reviewer
+ *   needs); what it may not do is omit the commit under review. Without this
+ *   the host allowlist alone would accept any GitHub archive as "the PR's
+ *   plugin", while the review course heading still names your SHA — a page
+ *   that actively confirms the wrong thing.
+ */
+export function gateBlueprint(blueprint, dataHosts, opts = {}) {
   const stepErrors = [];
   const urlErrors = [];
   const unsafeStrings = [];
   const bindErrors = [];
-  const empty = { stepErrors, urlErrors, unsafeStrings, bindErrors, expectations: null };
+  const riskySteps = [];
+  const empty = { stepErrors, urlErrors, unsafeStrings, bindErrors, riskySteps, expectations: null };
   const steps = blueprint?.steps;
   if (!Array.isArray(steps) || steps.length === 0) {
     stepErrors.push("blueprint has no steps array");
@@ -246,14 +278,13 @@ export function gateBlueprint(blueprint, dataHosts) {
     const name = step?.step;
     if (typeof name !== "string") {
       stepErrors.push(`step[${i}] has no step name`);
-    } else if (BANNED_STEPS.has(name)) {
-      stepErrors.push(`step[${i}] ${name}: banned step`);
     } else if (!ALLOWED_STEPS.has(name)) {
       stepErrors.push(`step[${i}] ${name}: unknown step (default deny)`);
     }
     // A banned name nested anywhere under a step (a future step gaining a
     // sub-step list, an aliased `steps:` array) would sail past the loop
     // above, which only reads `step.step`.
+    if (RISKY_STEPS.has(name)) riskySteps.push(name);
     sweepNestedStepNames(step, stepErrors, `step[${i}]`);
 
     // Binding requirement: CI can only prove "this plugin installed" by
@@ -282,11 +313,27 @@ export function gateBlueprint(blueprint, dataHosts) {
       }
     }
   }
+  // The commit under review must actually be installed. Checked across ALL
+  // plugin steps, not just the first: dependencies and other people's plugins
+  // are legitimate, missing your own is not.
+  if (opts.requireSelfUrl) {
+    const installed = steps
+      .filter((s) => PLUGIN_STEPS.has(s?.step))
+      .map((s) => s?.url);
+    if (!installed.includes(opts.requireSelfUrl)) {
+      bindErrors.push(
+        `no plugin step installs the commit under review (${opts.requireSelfUrl}); ` +
+          `got ${installed.length ? installed.join(", ") : "no plugin steps at all"}`,
+      );
+    }
+  }
+
   sweepUrls(blueprint, dataHosts, urlErrors);
   sweepUnsafeStrings(blueprint, unsafeStrings);
   if (stepErrors.length || urlErrors.length || unsafeStrings.length || bindErrors.length) {
     return empty;
   }
+  const risky = [...new Set(riskySteps)].sort();
 
   const pluginSteps = steps
     .filter((s) => PLUGIN_STEPS.has(s.step))
@@ -300,6 +347,7 @@ export function gateBlueprint(blueprint, dataHosts) {
     urlErrors,
     unsafeStrings,
     bindErrors,
+    riskySteps: risky,
     expectations: {
       stepCount: steps.length,
       stepNames: steps.map((s) => s.step),
@@ -385,7 +433,7 @@ async function main() {
     reject("blueprint_fetch_failed", `not JSON: ${err.message}`, sha256);
   }
 
-  const { stepErrors, urlErrors, unsafeStrings, bindErrors, expectations } =
+  const { stepErrors, urlErrors, unsafeStrings, bindErrors, riskySteps, expectations } =
     gateBlueprint(blueprint, dataHosts);
   if (stepErrors.length) {
     reject("blueprint_step_banned", stepErrors.join("; "), sha256);
@@ -400,11 +448,15 @@ async function main() {
   writeFileSync(join(outDir, "blueprint.json"), bytes);
   writeFileSync(
     join(outDir, "expectations.json"),
-    JSON.stringify({ blueprintUrl, blueprintSha256: sha256, ...expectations }, null, 2),
+    JSON.stringify({ blueprintUrl, blueprintSha256: sha256, riskySteps, ...expectations }, null, 2),
   );
   writeFileSync(
     join(outDir, "preflight.json"),
-    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha256 }, null, 2),
+    JSON.stringify(
+      { outcome: "ok", error_class: "none", blueprintSha256: sha256, riskySteps },
+      null,
+      2,
+    ),
   );
   console.log(
     `preflight OK: ${expectations.stepCount} steps ` +

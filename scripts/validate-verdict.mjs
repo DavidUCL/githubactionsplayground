@@ -7,6 +7,7 @@
 
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
+import { RISKY_STEPS } from "./preflight.mjs";
 
 export const STATUSES = ["pass", "verify_fail", "infra_fail", "rejected"];
 
@@ -46,6 +47,11 @@ const TOP_KEYS = [
   "steps_ok",
   "steps_failed",
   "assertions",
+  // Steps in the blueprint that can rewrite Moodle after the install (see
+  // RISKY_STEPS). Their presence does not make the boot invalid — it makes the
+  // STRUCTURAL assertions unprovable, because a filesystem write can satisfy
+  // them without a plugin behind it. Empty on an ordinary blueprint.
+  "risky_steps",
 ];
 
 const SHA1_RE = /^([0-9a-f]{40})?$/;
@@ -68,6 +74,16 @@ export function validateVerdict(v) {
     if (!(key in v)) problems.push(`missing key: ${key}`);
   }
   if (v.schema !== 1) problems.push(`schema must be 1, got ${v.schema}`);
+  // Closed like every other field: an array of known step names, nothing else.
+  if (!Array.isArray(v.risky_steps)) {
+    problems.push("risky_steps must be an array");
+  } else {
+    for (const r of v.risky_steps) {
+      if (typeof r !== "string" || !RISKY_STEPS.has(r)) {
+        problems.push(`risky_steps contains an unknown step: ${JSON.stringify(r)}`);
+      }
+    }
+  }
   if (!STATUSES.includes(v.status)) problems.push(`invalid status: ${v.status}`);
   // Object.hasOwn, not `in`: `"toString" in ERROR_CLASSES` is true.
   if (!Object.hasOwn(ERROR_CLASSES, v.error_class)) {

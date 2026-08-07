@@ -39,6 +39,7 @@ const good = {
   steps_ok: 6,
   steps_failed: 0,
   assertions: [{ id: "a0_loopback_binding", ok: true }],
+  risky_steps: [],
 };
 
 test("valid verdict yields exactly the three expected outputs", () => {

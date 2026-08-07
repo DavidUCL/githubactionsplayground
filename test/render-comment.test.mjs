@@ -147,3 +147,15 @@ test("it refuses userinfo that makes the host read as the playground", () => {
     /malformed preview URL/,
   );
 });
+
+// A reviewer looking at a site that was rewritten after the install has no way
+// to tell from the screen. These steps are allowed — they are reported.
+test("the comment says so when the blueprint modifies Moodle itself", () => {
+  const body = renderComment({ ...ok, riskySteps: ["runPhpCode", "writeFile"] });
+  assert.match(body, /modifies Moodle itself/);
+  assert.match(body, /`runPhpCode`, `writeFile`/);
+});
+
+test("an ordinary preview carries no such warning", () => {
+  assert.doesNotMatch(renderComment(ok), /modifies Moodle itself/);
+});

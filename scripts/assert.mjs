@@ -256,6 +256,10 @@ export function assess({ expectations, meta, bootLog, consoleLog, headSha = "", 
     steps_ok: parsed.failLines > 0 ? Math.max(0, contiguous - 1) : contiguous,
     steps_failed: parsed.failLines,
     assertions,
+    // Carried through from pre-flight so the verdict is honest about its own
+    // limits: with any of these present, "the plugin installed" is no longer
+    // self-proving — a filesystem write can satisfy the structural checks.
+    risky_steps: Array.isArray(exp.riskySteps) ? exp.riskySteps : [],
   };
 }
 
@@ -275,6 +279,8 @@ export function rejectedVerdict(errorClass, blueprintSha256, headSha) {
     steps_ok: 0,
     steps_failed: 0,
     assertions: [{ id: `preflight_${errorClass}`, ok: false }],
+    // Nothing booted, so nothing risky ran.
+    risky_steps: [],
   };
 }
 

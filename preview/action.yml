@@ -39,6 +39,20 @@ inputs:
       MOODLE_500_STABLE. The link does not yet pin this (see README).
     required: false
     default: "MOODLE_500_STABLE"
+  data-hosts:
+    description: >-
+      Comma-separated hosts that URLs inside the blueprint may point at —
+      plugin ZIPs, and anything else it fetches. Defaults to
+      "github.com,raw.githubusercontent.com". Widen it when the preview
+      installs plugins from elsewhere: a dependency on GitLab, a university
+      host, the Moodle plugins directory.
+
+      Widening this is safe with respect to the central claim: the commit
+      under review is bound separately and must appear among the installed
+      plugins whatever this is set to. What it controls is where the OTHER
+      plugins may come from.
+    required: false
+    default: "github.com,raw.githubusercontent.com"
   playground-host:
     description: >-
       Playground to open. Defaults to the fork we control, because
@@ -68,6 +82,9 @@ outputs:
   preview-user:
     description: "Username the reviewer arrives signed in as"
     value: ${{ steps.build.outputs.preview-user }}
+  risky-steps:
+    description: "Comma-separated steps in the blueprint that can rewrite Moodle after installing (empty for an ordinary preview)"
+    value: ${{ steps.build.outputs.risky-steps }}
   plugin-type:
     description: "Resolved plugin type"
     value: ${{ steps.build.outputs.plugin-type }}
@@ -105,6 +122,7 @@ runs:
         PLUGIN_NAME: ${{ inputs.plugin-name }}
         PLAYGROUND_HOST: ${{ inputs.playground-host }}
         PLUGIN_ROOT: ${{ inputs.plugin-root }}
+        DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out
       run: |
@@ -132,5 +150,6 @@ runs:
         PLUGIN: ${{ steps.build.outputs.plugin-type }}_${{ steps.build.outputs.plugin-name }}
         HEAD_SHA: ${{ inputs.head-sha }}
         PREVIEW_USER: ${{ steps.build.outputs.preview-user }}
+        RISKY_STEPS: ${{ steps.build.outputs.risky-steps }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"

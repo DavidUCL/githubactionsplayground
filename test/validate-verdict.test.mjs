@@ -12,6 +12,7 @@ const good = () => ({
   steps_ok: 6,
   steps_failed: 0,
   assertions: [{ id: "a1_nav", ok: true }],
+  risky_steps: [],
 });
 
 test("valid verdict has no problems", () => {

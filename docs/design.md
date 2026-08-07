@@ -135,11 +135,25 @@ One boot-capture-assert core, two producers (Sandy):
   hitting one plugin page. This is the realistic "actually installed" bar;
   PHPUnit-in-WASM is ruled out for v1 (trimmed bundle, Sandy G5).
 
-**Step allowlist (Cass #3):** blueprints are pre-flight-parsed and REJECTED
-if they contain `runPhpCode`, `runPhpScript`, `writeFile(s)`, `unzip`,
-`applyPrOverlay`, `request`, `setConfigFile(s)`, the file-manipulation steps,
-or proxy/host overrides — the step registry is a full RCE surface inside a
-runner-egress-bearing job.
+**Step allowlist:** blueprints are pre-flight-parsed. Only UNKNOWN step names
+are rejected (default deny) — a typo is skipped in silence by the executor and
+boots a plugin-free Moodle, which is the failure this catches.
+
+SUPERSEDED 2026-08-07: 15 steps that can rewrite Moodle after the install
+(`runPhpCode`, `runPhpScript`, `writeFile(s)`, `unzip`, `applyPrOverlay`,
+`request`, `setConfigFile(s)`, and the file-manipulation steps) were previously
+REJECTED. They are now ALLOWED and REPORTED — `RISKY_STEPS` in `preflight.mjs`,
+surfaced as `risky_steps` in `verdict.json`, in the job summary, and in the
+pull-request comment. The ban blocked legitimate uses (installing a dependency,
+preparing fixture files) and the sandbox already contains the blast radius: the
+blueprint runs in PHP-WASM in the visitor's browser and cannot reach their
+filesystem or network.
+
+What is lost is stated rather than hidden. With any of those steps present the
+STRUCTURAL assertions stop being self-proving — `writeFile` can create
+`/www/moodle/mod/x/version.php` with nothing behind it, satisfying "the plugin
+installed" without a plugin. So the verdict carries the list and the summary
+says the assertions describe the end state, not what produced it.
 
 CORRECTION (2026-08-03): this paragraph previously listed `restoreDatabase`
 as rejected for foreign blueprints, and described the allowlist as

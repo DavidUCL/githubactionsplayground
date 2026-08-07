@@ -94,6 +94,19 @@ function main() {
     `| blueprint sha256 | \`${verdict.blueprint_sha256 || "(none)"}\` |`,
     `| head sha | \`${verdict.head_sha || "(none)"}\` |`,
     "",
+    // Only when present, so an ordinary run stays uncluttered. This is the
+    // one thing in the summary that qualifies the verdict rather than
+    // reporting it: with these steps in play the structural assertions below
+    // could be satisfied by a filesystem write with no plugin behind it.
+    ...(Array.isArray(verdict.risky_steps) && verdict.risky_steps.length
+      ? [
+          `> **This blueprint can rewrite Moodle after installing:** ` +
+            verdict.risky_steps.map((r) => `\`${r}\``).join(", ") + ".",
+          "> The assertions below are therefore not self-proving — they say what",
+          "> the site looked like at the end, not that the plugin put it there.",
+          "",
+        ]
+      : []),
     "### Assertions",
     "",
     "| assertion | result |",
