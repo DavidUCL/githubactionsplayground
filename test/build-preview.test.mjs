@@ -269,7 +269,14 @@ test("every step name is one the playground actually registers", () => {
 // (moodle-playground shell/main.js:575), so a version param overrides the
 // blueprint's own preferredVersions — the link would boot a different Moodle
 // from the one the plugin was checked against, and still look correct.
-for (const param of ["moodle", "moodleBranch", "php", "phpVersion"]) {
+// The proxy params decide who the preview's network traffic goes THROUGH:
+// phpCorsProxyUrl reaches the PHP runtime's tcpOverFetch tunnel, addonProxyUrl
+// decides who serves the plugin ZIP. Either would let a link route traffic via
+// someone else's server while still reading as the playground.
+for (const param of [
+  "moodle", "moodleBranch", "php", "phpVersion",
+  "addonProxyUrl", "phpCorsProxyUrl",
+]) {
   test(`a playground host carrying ?${param}= is refused`, () => {
     const bp = buildBlueprint({ ...base, type: "mod", name: "attendance" });
     assert.throws(
@@ -365,4 +372,16 @@ test("...and accepted once that host is added to data-hosts", () => {
       requireSelfUrl: pluginZipUrl(base.headRepo, base.headSha),
     }),
   );
+});
+
+test("every URL param the playground reads is forbidden in a link", () => {
+  // version-resolver.js reads exactly these from the URL. `debug` and
+  // `profile` are deliberately absent: they change logging verbosity, not what
+  // code runs or where it comes from.
+  const READ_BY_PLAYGROUND = [
+    "php", "phpVersion", "moodle", "moodleBranch",
+    "addonProxyUrl", "phpCorsProxyUrl", "debug", "profile",
+  ];
+  const unguarded = READ_BY_PLAYGROUND.filter((p) => !FORBIDDEN_PARAMS.includes(p));
+  assert.deepEqual(unguarded, ["debug", "profile"]);
 });

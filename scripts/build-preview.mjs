@@ -56,9 +56,21 @@ const escapeHtml = (v) =>
 // (shell/main.js:575), so any of them overrides the blueprint's own
 // preferredVersions — booting a DIFFERENT Moodle from the one the
 // compatibility check was made against, while the link still looks right.
-export const FORBIDDEN_PARAMS = [
+export // `addonProxyUrl` decides who serves the plugin ZIP; `phpCorsProxyUrl` decides
+// where PHP's own outbound traffic goes — it reaches the runtime via
+// resolveCorsProxyUrl -> getTcpOverFetchOptions -> corsProxyUrl
+// (php-loader.js:27,40,56). A link carrying either would route the preview's
+// network through someone else's server while still reading as the playground
+// and booting the right code. Names are camelCase to match the playground's
+// parser (version-resolver.js), and the comparison is case-sensitive.
+//
+// This bounds who the traffic goes THROUGH, not whether there is any: PHP has
+// network access regardless, because tcpOverFetch is enabled unconditionally.
+// What bounds that is the dedicated preview origin.
+const FORBIDDEN_PARAMS = [
   "repo", "ref", "owner", "branch", "blueprint-url",
   "moodle", "moodleBranch", "php", "phpVersion",
+  "addonProxyUrl", "phpCorsProxyUrl",
 ];
 // The preview half had no origin concept at all, while the verify half has
 // ACCEPTED_ORIGINS. A link is a capability; it must not point anywhere.

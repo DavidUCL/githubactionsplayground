@@ -305,6 +305,42 @@ fi
 # The plugin-directory map is a hand copy of playground source; the test that
 # compares them can only run with a checkout to compare against. Never let a
 # waived drift check read as a pass.
+# A URL param the playground READS is a param that can override the blueprint —
+# versions, proxies, refs. Every one of them must either be forbidden in an
+# emitted link or be a deliberate exception. If the playground gains a new one,
+# notice it here rather than when a link starts behaving differently.
+RESOLVER_SRC="${RESOLVER_SRC:-$SCRIPT_DIR/../moodle-playground/src/shared/version-resolver.js}"
+if [[ -f "$RESOLVER_SRC" ]]; then
+    RESOLVER_SRC="$RESOLVER_SRC" node -e '
+import("./scripts/build-preview.mjs").then(async (m) => {
+  const { readFileSync } = await import("node:fs");
+  const src = readFileSync(process.env.RESOLVER_SRC, "utf8");
+  const read = [...new Set([...src.matchAll(/params\.get\("([^"]+)"\)/g)].map((x) => x[1]))];
+  // Deliberate exceptions: these change logging verbosity, not what code runs
+  // or where it is fetched from.
+  const BENIGN = new Set(["debug", "profile"]);
+  const unguarded = read.filter((p) => !m.FORBIDDEN_PARAMS.includes(p) && !BENIGN.has(p));
+  if (unguarded.length) {
+    console.log("UNGUARDED " + unguarded.join(","));
+    process.exit(1);
+  }
+  console.log("OK " + read.length + " params read, all guarded or deliberately benign");
+});
+' >/tmp/bv-verify-params.log 2>&1
+    if grep -q UNGUARDED /tmp/bv-verify-params.log; then
+        echo "CHECK 1l FAIL: the playground reads URL params our links do not forbid —"
+        sed 's/^/               /' /tmp/bv-verify-params.log
+        echo "               Add them to FORBIDDEN_PARAMS, or to BENIGN in verify.sh if"
+        echo "               they cannot change what code runs or where it comes from."
+        FAILED+=("1l: unguarded playground URL params")
+    else
+        echo "CHECK 1l PASS: $(cat /tmp/bv-verify-params.log)"
+    fi
+else
+    echo "CHECK 1l WAIVED: no playground source at $RESOLVER_SRC —"
+    echo "                 URL-param drift is UNCHECKED in this run."
+fi
+
 PLAYGROUND_SRC="${PLAYGROUND_SRC:-$SCRIPT_DIR/../moodle-playground/src/blueprint/steps/moodle-plugins.js}"
 if [[ -f "$PLAYGROUND_SRC" ]]; then
     export PLAYGROUND_SRC
