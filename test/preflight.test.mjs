@@ -7,6 +7,7 @@ import {
   checkUrl,
   looksFetchable,
   gateBlueprint,
+  fetchBlueprint,
   ALLOWED_STEPS,
   RISKY_STEPS,
 } from "../scripts/preflight.mjs";
@@ -409,4 +410,47 @@ test("a placeholder hidden in an object KEY is refused", () => {
 
 test("an ordinary blueprint has no placeholder complaints", () => {
   assert.deepEqual(gateBlueprint(bp(), HOSTS).unsafeStrings, []);
+});
+
+// Extracted so the second caller (build-blueprint-preview.mjs) cannot
+// reimplement it and quietly drop the post-redirect re-check. Network tests
+// skip rather than fail when offline.
+const netUp = async () => {
+  try {
+    return (await fetch("https://raw.githubusercontent.com/", { signal: AbortSignal.timeout(4000) })).status < 500;
+  } catch { return false; }
+};
+
+test("fetchBlueprint refuses a host outside the allowlist before requesting", async () => {
+  await assert.rejects(
+    () => fetchBlueprint("https://evil.tld/x.json", ["raw.githubusercontent.com"]),
+    (e) => e.errorClass === "blueprint_host_denied",
+  );
+});
+
+test("fetchBlueprint refuses a URL that REDIRECTS off the allowlist", async (t) => {
+  if (!(await netUp())) return t.skip("offline");
+  // moodle-playground.com 301s across origins AND strips the path — the exact
+  // shape the post-redirect check exists for.
+  await assert.rejects(
+    () => fetchBlueprint("https://moodle-playground.com/", ["moodle-playground.com"]),
+    (e) => e.errorClass === "blueprint_host_denied" && /after redirect/.test(e.message),
+  );
+});
+
+test("fetchBlueprint refuses non-https and userinfo", async () => {
+  for (const u of ["http://raw.githubusercontent.com/x", "https://a@raw.githubusercontent.com/x"]) {
+    await assert.rejects(() => fetchBlueprint(u, ["raw.githubusercontent.com"]));
+  }
+});
+
+test("fetchBlueprint returns bytes and the final URL for a good fetch", async (t) => {
+  if (!(await netUp())) return t.skip("offline");
+  const { bytes, finalUrl } = await fetchBlueprint(
+    "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json",
+    ["raw.githubusercontent.com"],
+  );
+  assert.ok(bytes.length > 0);
+  assert.match(finalUrl, /^https:\/\/raw\.githubusercontent\.com\//);
+  assert.ok(JSON.parse(bytes.toString("utf8")).steps.length > 0);
 });

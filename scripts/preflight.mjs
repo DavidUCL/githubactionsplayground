@@ -458,6 +458,42 @@ export function gateBlueprint(blueprint, dataHosts, opts = {}) {
 }
 
 
+/**
+ * Fetch a blueprint from a URL, enforcing the host allowlist BEFORE and AFTER
+ * redirects and capping the body.
+ *
+ * Extracted so the second caller cannot reimplement it and quietly drop the
+ * post-redirect re-check — the check that stops an allowlisted URL redirecting
+ * somewhere that is not. `moodle-playground.com` 301s across origins and
+ * strips the path, so this is not hypothetical here.
+ *
+ * @returns {{bytes: Buffer, finalUrl: string}}
+ * @throws {Error} with `.errorClass` set to a verdict error_class
+ */
+export async function fetchBlueprint(blueprintUrl, blueprintHosts) {
+  const fail = (errorClass, message) => {
+    const e = new Error(message);
+    e.errorClass = errorClass;
+    throw e;
+  };
+  const problem = checkUrl(blueprintUrl, blueprintHosts);
+  if (problem) fail("blueprint_host_denied", problem);
+  let res;
+  try {
+    res = await fetch(blueprintUrl, { redirect: "follow", signal: AbortSignal.timeout(30_000) });
+  } catch (err) {
+    fail("blueprint_fetch_failed", err.message);
+  }
+  if (!res.ok) fail("blueprint_fetch_failed", `HTTP ${res.status}`);
+  const finalProblem = checkUrl(res.url, blueprintHosts);
+  if (finalProblem) fail("blueprint_host_denied", `after redirect: ${finalProblem}`);
+  try {
+    return { bytes: await readCapped(res, MAX_BLUEPRINT_BYTES), finalUrl: res.url };
+  } catch (err) {
+    return fail("blueprint_fetch_failed", err.message);
+  }
+}
+
 async function main() {
   const blueprintUrl = process.env.BLUEPRINT_URL;
   const outDir = process.env.OUT_DIR || "boot-verify-out";
@@ -511,19 +547,10 @@ async function main() {
 
   let bytes;
   try {
-    const res = await fetch(blueprintUrl, {
-      redirect: "follow",
-      signal: AbortSignal.timeout(30_000),
-    });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    // Redirect pinning: the FINAL url must also satisfy the allowlist.
-    const finalProblem = checkUrl(res.url, blueprintHosts);
-    if (finalProblem) reject("blueprint_host_denied", `after redirect: ${finalProblem}`);
-    // Stream with a hard cap: any public repo can host a multi-GB file, and
-    // buffering the whole body would OOM the runner.
-    bytes = await readCapped(res, MAX_BLUEPRINT_BYTES);
+    const fetched = await fetchBlueprint(blueprintUrl, blueprintHosts);
+    bytes = fetched.bytes;
   } catch (err) {
-    reject("blueprint_fetch_failed", err.message);
+    reject(err.errorClass || "blueprint_fetch_failed", err.message);
   }
   const sha256 = createHash("sha256").update(bytes).digest("hex");
 

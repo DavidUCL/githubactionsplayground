@@ -1,0 +1,54 @@
+# Build a preview link from a blueprint someone else wrote.
+#
+# Actions -> "Preview a blueprint" -> Run workflow. The link appears in the run
+# summary. Nothing is pushed, nothing is commented, nothing is booted.
+#
+# The sibling of "Preview a plugin". Two workflows rather than one form with a
+# source selector, because a dispatch form has no conditional visibility: a
+# combined form would show every field whatever you picked. The Actions sidebar
+# is the selector.
+#
+# NO INLINE JSON FIELD, deliberately. Pasting a blueprint into a dispatch input
+# means a single-line box with no validation until the run — GitHub has had a
+# multiline input request open since 2022 and the documented workaround is
+# editing the page's DOM. Put the blueprint in a file, in a repo, and give the
+# raw URL: you get an editor, a diff and a history for free.
+
+name: Preview a blueprint
+
+on:
+  workflow_dispatch:
+    inputs:
+      blueprint-url:
+        description: "RAW blueprint URL (the file's Raw button), e.g. https://raw.githubusercontent.com/OWNER/REPO/SHA/blueprint.json"
+        required: true
+        type: string
+      blueprint-hosts:
+        description: "Hosts the blueprint URL itself may come from, comma separated."
+        required: false
+        type: string
+        default: "raw.githubusercontent.com"
+      data-hosts:
+        description: "Hosts the URLs INSIDE the blueprint may point at — plugin ZIPs, database snapshots."
+        required: false
+        type: string
+        default: "github.com,raw.githubusercontent.com"
+
+# Fetches one public URL and writes nothing.
+permissions: {}
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build the link
+        env:
+          BLUEPRINT_URL: ${{ inputs.blueprint-url }}
+          BLUEPRINT_HOSTS: ${{ inputs.blueprint-hosts }}
+          DATA_HOSTS: ${{ inputs.data-hosts }}
+        run: |
+          command -v node >/dev/null || { echo "::error::node >= 18 must be on PATH"; exit 1; }
+          node scripts/build-blueprint-preview.mjs

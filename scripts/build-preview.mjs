@@ -49,6 +49,13 @@ const isRepo = (v) => {
   );
 };
 const IDENT_RE = /^[a-z][a-z0-9_]*$/;
+// Plain text for the review course name. Deliberately narrow: it is rendered
+// as FORMAT_HTML, and `·` is the separator the label already uses.
+const BUILT_BY_RE = /^[A-Za-z0-9 ._·-]{1,60}$/;
+// A landing override is a site-relative path, never an absolute URL — a link
+// that lands the reviewer on another origin is the whole failure this design
+// refuses. No scheme, no `//`, no backslash, no `..`.
+export const LANDING_RE = /^\/(?!\/)[A-Za-z0-9._~!$&'()*+,;=:@/-]*(\?[A-Za-z0-9._~!$&'()*+,;=:@/?-]*)?$/;
 const PR_NUMBER_RE = /^\d+$/;
 
 /** Escape for the label's FORMAT_HTML intro, which renders as live HTML. */
@@ -234,7 +241,16 @@ export const PHP_FOR_BRANCH = {
 export const phpForBranch = (branch) => PHP_FOR_BRANCH[branch] ?? "8.3";
 
 /** @returns {object} the blueprint the preview link carries */
-export function buildBlueprint({ headRepo, headSha, prNumber, type, name, moodleBranch = DEFAULT_MOODLE_BRANCH }) {
+export function buildBlueprint({
+  headRepo,
+  headSha,
+  prNumber,
+  type,
+  name,
+  moodleBranch = DEFAULT_MOODLE_BRANCH,
+  landingOverride = "",
+  builtBy = "",
+}) {
   if (!isRepo(headRepo)) throw new Error(`bad repo: ${headRepo}`);
   if (!SHA_RE.test(String(headSha))) {
     throw new Error(`head SHA must be a full 40-hex commit, got: ${headSha}`);
@@ -245,9 +261,25 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name, moodle
     throw new Error(`pr-number must be digits, got: ${JSON.stringify(prNumber)}`);
   }
   const shortSha = headSha.slice(0, 7);
-  const label = prNumber
-    ? `PR #${prNumber} · ${shortSha} · ${type}_${name}`
-    : `${shortSha} · ${type}_${name}`;
+  // The course name is the reviewer's cross-check, and — for a link built by
+  // hand and pasted to a colleague — its ONLY provenance. A dispatch-built
+  // link is otherwise shape-identical to one born from a push, so it would
+  // read as a verified preview when nothing booted it. Netlify puts the PR in
+  // the hostname, Vercel puts branch+SHA on the page; this is the same idea in
+  // the only surface we control.
+  if (builtBy && !BUILT_BY_RE.test(builtBy)) {
+    // It reaches a FORMAT_HTML label. Escaped below regardless, but a closed
+    // charset means an odd value is a refusal rather than a rendering puzzle.
+    throw new Error(`built-by must be plain text (letters, digits, space . _ - ·), got: ${JSON.stringify(builtBy)}`);
+  }
+  const label = [
+    builtBy || null,
+    prNumber ? `PR #${prNumber}` : null,
+    shortSha,
+    `${type}_${name}`,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   const steps = [
     { step: "installMoodle" },
@@ -367,12 +399,12 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name, moodle
   // `login` step, so this REPLACES that session rather than adding one.
   // Provisioning needs no session: the create/enrol helpers call core APIs
   // directly and never read $USER.
-  const landing = landingPath(type, name);
+  const landing = landingOverride || landingPath(type, name);
   steps.push({ step: "login", username: previewUser(landing), critical: true });
   steps.push({ step: "setLandingPage", path: landing });
 
 
-  const landingPage = landingPath(type, name);
+  const landingPage = landing;
   return {
     // The branch here MUST be the one the compatibility checks ran against.
     // It used to be the literal "MOODLE_500_STABLE" while `moodle-branch` fed
@@ -560,10 +592,13 @@ async function main() {
     if (declared) console.log(`note: read version.php over https (${declared.path})`);
   }
 
+  // An explicit component beats both version.php and the repository name: it
+  // is the caller stating identity outright, which is what a dispatch form
+  // needs when nothing is checked out and the repo is named unconventionally.
   const { type, name } = derivePlugin(headRepo, {
     type: process.env.PLUGIN_TYPE,
     name: process.env.PLUGIN_NAME,
-    component: declared?.component,
+    component: (process.env.PLUGIN_COMPONENT || "").trim() || declared?.component,
   });
 
   // Independent of version.php: a plugin TYPE the bundled Moodle no longer has
@@ -591,7 +626,29 @@ async function main() {
     );
   }
 
-  const blueprint = buildBlueprint({ headRepo, headSha, prNumber, type, name, moodleBranch });
+  // A landing override must stay on the playground's own origin. Validated
+  // here rather than trusted: `//evil.tld/x` and `https://evil.tld` both parse
+  // as "somewhere else" to a browser, and schema.js accepts them (it does not
+  // check), so the refusal has to be ours.
+  const landingOverride = (process.env.LANDING_PATH || "").trim();
+  if (landingOverride && !LANDING_RE.test(landingOverride)) {
+    throw new Error(
+      `landing-path must be a site-relative path starting with "/" and no scheme or "//", got: ` +
+        JSON.stringify(landingOverride),
+    );
+  }
+  const builtBy = (process.env.BUILT_BY || "").trim();
+
+  const blueprint = buildBlueprint({
+    headRepo,
+    headSha,
+    prNumber,
+    type,
+    name,
+    moodleBranch,
+    landingOverride,
+    builtBy,
+  });
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
   const dataHosts = (process.env.DATA_HOSTS || "")
@@ -615,7 +672,7 @@ async function main() {
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
   setOutput("plugin-component", declared?.component || `${type}_${name}`);
-  setOutput("preview-user", previewUser(landingPath(type, name)));
+  setOutput("preview-user", previewUser(landingOverride || landingPath(type, name)));
   const risky = assertGated(blueprint, {
     dataHosts: hosts,
     requireSelfUrl: pluginZipUrl(headRepo, headSha),
@@ -640,8 +697,8 @@ async function main() {
       commit: headSha,
       repository: headRepo,
       Moodle: moodleBranch,
-      "signed in as": previewUser(landingPath(type, name)),
-      "landing page": landingPath(type, name),
+      "signed in as": previewUser(landingOverride || landingPath(type, name)),
+      "landing page": landingOverride || landingPath(type, name),
       "version.php": declared ? declared.path : "not checked out — compatibility NOT checked",
     }),
     "",

@@ -1,0 +1,105 @@
+# Build a preview link for any public Moodle plugin, by hand.
+#
+# Actions -> "Preview a plugin" -> Run workflow. Nothing is pushed, nothing is
+# commented, no repo is modified: the link appears in the run summary.
+#
+# WHY THIS IS A SEPARATE WORKFLOW from "Preview a blueprint". A dispatch form
+# has no conditional visibility — every field shows whatever you pick — so a
+# single form with a "source" selector would show eight irrelevant boxes. The
+# Actions sidebar is the selector, for free.
+#
+# FIVE FIELDS, deliberately. A review panel cut this from twelve: `php-version`
+# was silently substituted by the playground on an invalid branch/PHP pair,
+# `login-as` is already derived from where you land, and the numeric fields
+# changed nothing a reviewer could see. Every control is a failure surface, and
+# blueprint failure is invisible in this runtime.
+
+name: Preview a plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      plugin-repo:
+        description: "Public repo holding the plugin, e.g. ucl-isd/moodle-mod_coursework"
+        required: true
+        type: string
+      plugin-ref:
+        description: "Branch, tag or full SHA. Resolved to a SHA before the link is built. Blank = default branch."
+        required: false
+        type: string
+        default: ""
+      moodle-branch:
+        description: "Which Moodle to boot. Only branches whose compatibility data we hold."
+        required: false
+        type: choice
+        default: MOODLE_500_STABLE
+        options:
+          - MOODLE_500_STABLE
+          - MOODLE_405_STABLE
+          - MOODLE_404_STABLE
+      landing-path:
+        description: "Optional: site-relative page to land on, e.g. /course/view.php?id=2. Blank = the default for the plugin type."
+        required: false
+        type: string
+        default: ""
+      plugin-component:
+        description: "Optional: force the component, e.g. mod_coursework. Blank = read from the plugin's own version.php."
+        required: false
+        type: string
+        default: ""
+
+# Reads a public repo and writes nothing. The token needs no scopes.
+permissions: {}
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      # Resolve whatever was typed to a SHA, so the link is pinned. A branch
+      # link shows later commits and 404s once the branch is deleted — the
+      # mutable pointer this whole design refuses. Done with `gh api`, not
+      # `git ls-remote`, because ls-remote honours `--upload-pack=` and the ref
+      # is typed by a human.
+      - id: ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ inputs.plugin-repo }}
+          REF: ${{ inputs.plugin-ref }}
+        run: |
+          set -euo pipefail
+          case "$REPO" in
+            */*) : ;;
+            *) echo "::error::plugin-repo must be owner/repo, got '$REPO'"; exit 1 ;;
+          esac
+          if [ -z "$REF" ]; then
+            REF=$(gh api "repos/$REPO" --jq .default_branch)
+            echo "::notice::no ref given; using the default branch $REF"
+          fi
+          # A full SHA resolves to itself; anything else is looked up.
+          sha=$(gh api "repos/$REPO/commits/$REF" --jq .sha)
+          case "$sha" in
+            [0-9a-f]??????????????????????????????????????) : ;;
+            *) echo "::error::could not resolve '$REF' in $REPO to a commit"; exit 1 ;;
+          esac
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "::notice::$REPO@$REF -> $sha"
+
+      - id: preview
+        uses: ./preview
+        with:
+          head-repo: ${{ inputs.plugin-repo }}
+          head-sha: ${{ steps.ref.outputs.sha }}
+          moodle-branch: ${{ inputs.moodle-branch }}
+          landing-path: ${{ inputs.landing-path }}
+          plugin-component: ${{ inputs.plugin-component }}
+          # The only provenance a pasted link carries. Without it, a link built
+          # here is shape-identical to one born from a push — and nothing here
+          # booted anything.
+          built-by: dispatch · ${{ github.actor }}
+          # Nothing is checked out for the plugin, so version.php is fetched
+          # over https from the pinned SHA. Point plugin-root at a subdirectory
+          # only if the plugin does not sit at the repo root.
+          plugin-root: "."

@@ -22,6 +22,29 @@ inputs:
     description: "Plugin name without the type prefix. Inferred from a moodle-TYPE_NAME repo name when omitted."
     required: false
     default: ""
+  plugin-component:
+    description: >-
+      Frankenstyle component (e.g. mod_coursework), stating the plugin's
+      identity outright. Beats both version.php and the repository name. Needed
+      when nothing is checked out and the repo is named unconventionally;
+      leave empty otherwise.
+    required: false
+    default: ""
+  landing-path:
+    description: >-
+      Site-relative path the reviewer lands on, overriding the per-plugin-type
+      default (e.g. /course/view.php?id=2). Must start with "/" and carry no
+      scheme — a link that lands the reviewer on another origin is refused.
+    required: false
+    default: ""
+  built-by:
+    description: >-
+      Short plain-text note shown in the review course name, e.g.
+      "dispatch · alice · 2026-08-07". For links built by hand this is the only
+      provenance the reviewer gets: a dispatch-built link is otherwise
+      shape-identical to one born from a push, and nothing booted it.
+    required: false
+    default: ""
   plugin-root:
     description: >-
       Directory holding the plugin's version.php, relative to the workspace.
@@ -125,6 +148,9 @@ runs:
         PLUGIN_NAME: ${{ inputs.plugin-name }}
         PLAYGROUND_HOST: ${{ inputs.playground-host }}
         PLUGIN_ROOT: ${{ inputs.plugin-root }}
+        PLUGIN_COMPONENT: ${{ inputs.plugin-component }}
+        LANDING_PATH: ${{ inputs.landing-path }}
+        BUILT_BY: ${{ inputs.built-by }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out

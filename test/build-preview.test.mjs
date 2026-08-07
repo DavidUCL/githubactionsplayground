@@ -15,6 +15,7 @@ import {
   FORBIDDEN_PARAMS,
   DEFAULT_DATA_HOSTS,
   pluginZipUrl,
+  LANDING_RE,
 } from "../scripts/build-preview.mjs";
 
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
@@ -384,4 +385,43 @@ test("every URL param the playground reads is forbidden in a link", () => {
   ];
   const unguarded = READ_BY_PLAYGROUND.filter((p) => !FORBIDDEN_PARAMS.includes(p));
   assert.deepEqual(unguarded, ["debug", "profile"]);
+});
+
+// A dispatch-built link is shape-identical to one born from a push, so the
+// course name is its ONLY provenance — the ecosystem's answer (Netlify in the
+// hostname, Vercel on the page) applied to the one surface we control.
+test("built-by appears in the review course name", () => {
+  const bp = buildBlueprint({ ...base, type: "mod", name: "attendance", builtBy: "dispatch · alice" });
+  const course = bp.steps.find((s) => s.step === "createCourse");
+  assert.match(course.fullname, /^dispatch · alice · /);
+  assert.match(course.fullname, /mod_attendance$/);
+});
+
+test("built-by is refused unless it is plain text", () => {
+  for (const bad of ["alice<script>", "a\nb", "x".repeat(61), "a<b>c"]) {
+    assert.throws(
+      () => buildBlueprint({ ...base, type: "mod", name: "attendance", builtBy: bad }),
+      /built-by must be plain text/,
+      JSON.stringify(bad),
+    );
+  }
+});
+
+test("a landing override replaces the per-type default everywhere", () => {
+  const bp = buildBlueprint({
+    ...base, type: "mod", name: "attendance", landingOverride: "/admin/plugins.php",
+  });
+  assert.equal(bp.landingPage, "/admin/plugins.php");
+  assert.equal(bp.steps.find((s) => s.step === "setLandingPage").path, "/admin/plugins.php");
+  // and the login user follows the landing, not the plugin type
+  assert.equal(bp.steps.find((s) => s.step === "login").username, "admin");
+});
+
+test("a landing override that leaves the origin is refused", () => {
+  for (const bad of ["//evil.tld/x", "https://evil.tld", "\\\\evil.tld", "no-leading-slash"]) {
+    assert.equal(LANDING_RE.test(bad), false, bad);
+  }
+  for (const good of ["/course/view.php?id=2", "/admin/plugins.php", "/"]) {
+    assert.equal(LANDING_RE.test(good), true, good);
+  }
 });
