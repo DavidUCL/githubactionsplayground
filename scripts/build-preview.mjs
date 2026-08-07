@@ -437,7 +437,16 @@ export function buildPreviewUrl({
 // legitimate output already has. (render-summary.mjs has carried this guard
 // from the start; build-preview did not, because until version.php was read
 // every value here came from a regex-validated scalar.)
-const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+-]{0,4096}$/;
+// The comma is here because `risky-steps` is a comma-joined LIST, matching
+// `data-hosts` and GitHub's convention for list inputs. Widening a guard is
+// worth a moment's thought: what this defends against is a NEWLINE, which
+// would inject a second `name=value` line into $GITHUB_OUTPUT and let a
+// file-derived value forge `comment-body`. Newline stays excluded; a comma
+// cannot terminate a line. Omitting it made a two-element list THROW after
+// preview-url was already written, so the link still posted with the warning
+// stripped — the more risky steps a blueprint used, the less the reviewer was
+// told.
+const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+,-]{0,4096}$/;
 
 export function setOutput(name, value) {
   const str = String(value);

@@ -278,6 +278,13 @@ const MUTATIONS = [
     "if ((!type || !name) && overrides.component) {", "if (false) {"],
   ["output: drop the newline guard now a file feeds outputs", "scripts/build-preview.mjs",
     'const safe = SAFE_OUTPUT_RE.test(str) ? str : "";', "const safe = str;"],
+  ["output: drop the comma, so a two-element risky list throws",
+    "scripts/build-preview.mjs",
+    "const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+,-]{0,4096}$/;",
+    "const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+-]{0,4096}$/;"],
+  ["output: admit newlines while keeping the comma", "scripts/build-preview.mjs",
+    "const SAFE_OUTPUT_RE = /^[A-Za-z0-9._:/?=&%~+,-]{0,4096}$/;",
+    "const SAFE_OUTPUT_RE = /^[\\s\\S]{0,4096}$/;"],
 ];
 
 const survivors = [];

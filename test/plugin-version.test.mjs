@@ -167,6 +167,36 @@ test("readPluginVersion tolerates a directory path with no trailing slash", () =
 // is not exactly `type_name`). It is tested directly because it is the
 // defence that has to hold on the day a NEW file-derived value is emitted —
 // which is precisely how this class of bug arrives.
+// `risky-steps` is a comma-joined LIST. The guard originally omitted the
+// comma, so ONE risky step reported fine and TWO threw — after preview-url was
+// already written, with the caller's comment step running `if: always()`, so
+// the link posted with the warning stripped. The failure direction was
+// inverted: the more risky things a blueprint did, the less was reported.
+test("setOutput accepts a comma-joined list of any length", async () => {
+  const { setOutput } = await import("../scripts/build-preview.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "gh-output-list-"));
+  const file = join(dir, "out.txt");
+  writeFileSync(file, "");
+  const prev = process.env.GITHUB_OUTPUT;
+  process.env.GITHUB_OUTPUT = file;
+  try {
+    for (const v of ["runPhpCode", "mkdir,runPhpCode", "copyFile,mkdir,runPhpCode,writeFile", ""]) {
+      assert.doesNotThrow(() => setOutput("risky-steps", v), `should accept ${JSON.stringify(v)}`);
+    }
+    assert.match(readFileSync(file, "utf8"), /risky-steps=copyFile,mkdir,runPhpCode,writeFile/);
+  } finally {
+    if (prev === undefined) delete process.env.GITHUB_OUTPUT;
+    else process.env.GITHUB_OUTPUT = prev;
+  }
+});
+
+test("widening the guard did not admit a line break", async () => {
+  const { setOutput } = await import("../scripts/build-preview.mjs");
+  for (const v of ["a\nb", "a\r\nb", "ok\ncomment-body=pwned"]) {
+    assert.throws(() => setOutput("risky-steps", v), /refusing to emit unsafe output/);
+  }
+});
+
 test("setOutput refuses a value carrying a newline", async () => {
   const { setOutput } = await import("../scripts/build-preview.mjs");
   const dir = mkdtempSync(join(tmpdir(), "gh-output-"));
