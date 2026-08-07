@@ -186,6 +186,24 @@ to just before go-live — not the step list, which never included
 `installMoodlePlugin` or `restoreDatabase` and so was never the boundary it
 appeared to be.
 
+**What binds the plugin to the commit.** Two controls, with different reach.
+
+`requireSelfUrl` (at least one install step fetches this commit's archive) is a
+REGRESSION GUARD today, not a live control: only build-preview passes it, and
+it derives both sides from the same expression, so they cannot disagree. The
+verify half never passes it — that action takes a foreign blueprint and has no
+commit under review. It becomes live when a blueprint can arrive from outside.
+
+The duplicate-target check is the one that carries weight. Two plugin steps
+resolving to the same `type_name` are refused, because `installViaZipDownload`
+never clears the target directory and the second archive would win file by
+file, with Moodle reporting a clean install and the page still headed with your
+commit. Backed on the evidence side by `a6_extraction_distinct`, a bijection
+rather than a count, and by `plugin_sources` in the verdict, which records
+which archives were installed rather than how many. Found independently by
+three reviewers, 2026-08-07; conventional too — dpkg, Nix, Bazel and Moodle's
+own installer all hard-error on the same collision.
+
 CORRECTION (2026-08-03): this paragraph previously listed `restoreDatabase`
 as rejected for foreign blueprints, and described the allowlist as
 provenance-gated. Neither matches the code, and the code is right: the

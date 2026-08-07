@@ -47,10 +47,13 @@ inputs:
       installs plugins from elsewhere: a dependency on GitLab, a university
       host, the Moodle plugins directory.
 
-      Widening this is safe with respect to the central claim: the commit
-      under review is bound separately and must appear among the installed
-      plugins whatever this is set to. What it controls is where the OTHER
-      plugins may come from.
+      What protects the central claim when you widen this is NOT this input:
+      it is that two plugin steps resolving to the same directory are refused
+      outright. Without that, a second plugin sharing your plugin's type and
+      name would extract over the top of it file by file, and the page would
+      still be headed with your commit. That check runs whatever this is set
+      to. What this input controls is only where the OTHER plugins may come
+      from.
     required: false
     default: "github.com,raw.githubusercontent.com"
   playground-host:

@@ -268,10 +268,23 @@ const IDENTIFIER_RE = /^[a-z][a-z0-9_]*$/;
  * @param {{requireSelfUrl?: string}} [opts] — when given, at least ONE plugin
  *   install step must fetch exactly this URL. The blueprint may install any
  *   number of OTHER plugins (dependencies, third-party plugins the reviewer
- *   needs); what it may not do is omit the commit under review. Without this
- *   the host allowlist alone would accept any GitHub archive as "the PR's
- *   plugin", while the review course heading still names your SHA — a page
- *   that actively confirms the wrong thing.
+ *   needs); what it may not do is omit the commit under review.
+ *
+ *   SCOPE, honestly. Today this is a REGRESSION GUARD, not a live control.
+ *   The only caller that passes it is build-preview.mjs, which derives both
+ *   the install URL and this value from the same `pluginZipUrl(headRepo,
+ *   headSha)` call — so they cannot disagree at runtime, and it fires only if
+ *   someone later edits one side. The verify half never passes it: that action
+ *   takes a foreign `blueprint-url` and has no notion of a commit under
+ *   review. It becomes a real control the moment a blueprint arrives from
+ *   outside — an inline-JSON dispatch input, or a committed
+ *   `.github/preview.blueprint.json` — and the plumbing is kept and tested so
+ *   that day needs no new code.
+ *
+ *   What it does NOT defend against is substitution, which is the attack that
+ *   was actually found: this checks that your plugin is in the list, not that
+ *   it is the last writer to its directory. The duplicate-target check above
+ *   is what carries that weight, and unlike this it runs on both halves.
  */
 export function gateBlueprint(blueprint, dataHosts, opts = {}) {
   const stepErrors = [];
