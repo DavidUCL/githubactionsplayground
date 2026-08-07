@@ -41,11 +41,22 @@ export const ALLOWED_STEPS = new Set([
  * PHP, filesystem writes, core overlays. They are ALLOWED, and reported.
  *
  * They are worth reporting because they change what a result means rather than
- * whether it succeeds. `writeFile` can create
- * `/www/moodle/mod/x/version.php` with nothing behind it, so the structural
- * check "the plugin installed" passes without a plugin. A boot that used one
- * of these is still a real boot; it is just no longer self-proving, and
- * whoever reads the verdict should be told which.
+ * whether it succeeds. The risk is SUBSTITUTION, not fabrication: after the
+ * plugin has genuinely installed, `writeFile` can overwrite its files. The
+ * database registration is untouched, the admin page still lists the plugin,
+ * the boot log gains no line, and every assertion still passes — so a reviewer
+ * reads one diff while different code runs, with nothing on the page or in the
+ * verdict that differs. Measured against the deployed build 2026-08-07.
+ *
+ * NOT what an earlier version of this comment claimed. `writeFile` cannot
+ * fabricate a plugin: it emits no `Extracting plugin to …` line (which is what
+ * assert.mjs parses), and a bare `version.php` never registers, because the
+ * playground pins `alternative_component_cache` (config-template.js:124) and
+ * only `installMoodlePlugin` registers a component in it, via
+ * `playground_refresh_installed_plugin_cache` (moodle-plugins.js:303). Writing
+ * `/www/moodle/mod/fake/version.php` leaves `/admin/plugins.php` unchanged.
+ * Defending against fabrication would be effort spent on something that does
+ * not happen.
  *
  * Previously these were refused outright. Blocking them also blocked
  * legitimate uses — installing a dependency, preparing fixture files — so the

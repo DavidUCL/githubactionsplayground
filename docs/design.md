@@ -150,10 +150,41 @@ blueprint runs in PHP-WASM in the visitor's browser and cannot reach their
 filesystem or network.
 
 What is lost is stated rather than hidden. With any of those steps present the
-STRUCTURAL assertions stop being self-proving — `writeFile` can create
-`/www/moodle/mod/x/version.php` with nothing behind it, satisfying "the plugin
-installed" without a plugin. So the verdict carries the list and the summary
-says the assertions describe the end state, not what produced it.
+STRUCTURAL assertions stop being self-proving, so the verdict carries the list
+and the summary says the assertions describe the end state, not what produced
+it.
+
+CORRECTED 2026-08-07 after a six-persona review; the first version of this
+paragraph was wrong twice, and both errors mattered.
+
+**The risk is substitution, not fabrication.** `writeFile` cannot invent a
+plugin — it emits no `Extracting plugin to …` line (the line `assert.mjs`
+parses) and a bare `version.php` never registers, because the playground pins
+`alternative_component_cache` and patches out core's outdated-cache guard.
+Writing `/www/moodle/mod/fake/version.php` leaves `/admin/plugins.php`
+unchanged. What DOES work is overwriting a plugin that installed for real: the
+database registration is untouched, the admin page still lists it, the boot log
+gains no line, every assertion passes. The reviewer reads one diff while
+different code runs. Verified by execution against the deployed build.
+
+**The sandbox does not contain the network.** The earlier claim that a
+blueprint "cannot reach the visitor's filesystem or network" is half wrong.
+`getTcpOverFetchOptions` (`php-loader.js:113`) enables `tcpOverFetch`
+unconditionally and sets `openssl.cafile`/`curl.cainfo`, so PHP inside the
+playground has TLS-capable outbound networking; `allow_url_fopen=1` and both
+`open_basedir` and `disable_functions` are empty. PHP-initiated requests were
+observed on the wire. So `runPhpCode` can read `/www/moodle` — `config.php`
+included — and send it somewhere. The filesystem half of the claim stands: the
+visitor's own machine is not reachable.
+
+By contrast `request` does NOT leave the browser: `php-compat.js:20-23`
+discards the scheme and host and keeps only `pathname+search`, so it hits the
+in-WASM server. A 404 from an external-looking URL is that discard, not egress.
+
+The control that actually bounds this is the dedicated preview origin, deferred
+to just before go-live — not the step list, which never included
+`installMoodlePlugin` or `restoreDatabase` and so was never the boundary it
+appeared to be.
 
 CORRECTION (2026-08-03): this paragraph previously listed `restoreDatabase`
 as rejected for foreign blueprints, and described the allowlist as
