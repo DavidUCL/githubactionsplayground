@@ -33,11 +33,21 @@ inputs:
     default: "raw.githubusercontent.com"
   accepted-origins:
     description: >-
-      Comma-separated extra origins the boot may legitimately end on
-      (the playground-host origin is always accepted). Production
-      moodle-playground.com redirects to its GitHub Pages origin.
+      Comma-separated EXTRA origins the boot may legitimately end on. The
+      playground-host origin is always accepted, so leave this empty unless
+      your host redirects somewhere else — set it to
+      "https://ateeducacion.github.io" if you point playground-host at
+      moodle-playground.com, which 301s there.
+
+      This WIDENS a security check: a1_nav passes when the boot's final origin
+      is playground-host OR anything listed here (assert.mjs:142-147). It
+      defaulted to the ateeducacion origin back when playground-host defaulted
+      to moodle-playground.com; once the host default moved to our own build
+      the pairing stopped making sense, and every default run was quietly
+      accepting a boot that ended on a third party's origin — the precise thing
+      a1_nav exists to catch. Empty by default now.
     required: false
-    default: "https://ateeducacion.github.io"
+    default: ""
   artifacts-dir:
     description: "Directory where evidence + verdict.json are written"
     required: false

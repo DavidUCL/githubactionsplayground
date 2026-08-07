@@ -13,6 +13,7 @@
 // and review the diff as carefully as you would review the link itself.
 
 import { RISKY_STEPS } from "../scripts/preflight.mjs";
+import { PHP_FOR_BRANCH } from "../scripts/build-preview.mjs";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
@@ -212,4 +213,31 @@ test("the action's own blueprint uses no risky steps", () => {
     const risky = buildBlueprint(c).steps.map((s) => s.step).filter((s) => RISKY_STEPS.has(s));
     assert.deepEqual(risky, []);
   }
+});
+
+// The blueprint's version pin MUST be the branch the compatibility checks ran
+// against. It was the literal "MOODLE_500_STABLE" while `moodle-branch` fed
+// only the checks, so setting that input validated against one Moodle and
+// booted another. Invisible because the input's default equalled the literal.
+test("the blueprint pins the Moodle branch it was checked against", () => {
+  for (const branch of ["MOODLE_404_STABLE", "MOODLE_405_STABLE", "MOODLE_500_STABLE"]) {
+    const bp = buildBlueprint({ ...CASES.mod, moodleBranch: branch });
+    assert.equal(bp.preferredVersions.moodle, branch, branch);
+  }
+});
+
+test("PHP is derived from the branch, not fixed", () => {
+  // Every known branch takes 8.3 today, so this asserts the derivation exists
+  // rather than a second literal: the playground answers an invalid pair by
+  // silently substituting 8.3, so a wrong value here would never surface.
+  for (const branch of Object.keys(PHP_FOR_BRANCH)) {
+    assert.equal(buildBlueprint({ ...CASES.mod, moodleBranch: branch }).preferredVersions.php,
+      PHP_FOR_BRANCH[branch]);
+  }
+});
+
+test("an unknown branch still yields a usable pin", () => {
+  const bp = buildBlueprint({ ...CASES.mod, moodleBranch: "MOODLE_999_STABLE" });
+  assert.equal(bp.preferredVersions.moodle, "MOODLE_999_STABLE");
+  assert.equal(bp.preferredVersions.php, "8.3");
 });

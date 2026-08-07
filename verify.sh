@@ -261,6 +261,34 @@ print(f'default host: {declared}')
 PY_HOST
 check $? 1j "the default playground host is the same in the action and the script"
 
+# `accepted-origins` WIDENS a1_nav: the boot may finish on playground-host OR
+# anything listed there (assert.mjs:142-147). It once defaulted to the
+# ateeducacion origin, from when playground-host defaulted to
+# moodle-playground.com which 301s there. After the host default moved to our
+# own build, every default run was quietly accepting a boot that ended on a
+# third party's origin — exactly what a1_nav exists to catch. The two defaults
+# must stay coherent: extra origins are only ever needed for a host that
+# redirects.
+python3 - <<'PY_ORIGINS'
+import sys, pathlib
+try:
+    import yaml
+except ImportError:
+    print('pyyaml unavailable — skipping origin-default check'); sys.exit(0)
+inputs = yaml.safe_load(pathlib.Path('action.yml').read_text())['inputs']
+host = (inputs['playground-host'].get('default') or '').strip()
+extra = [o.strip() for o in (inputs['accepted-origins'].get('default') or '').split(',') if o.strip()]
+# A host that does NOT redirect needs no extra origins. Only the public apex is
+# known to 301 elsewhere; anything else defaulting to extras is drift.
+REDIRECTS = ('https://moodle-playground.com',)
+if extra and not host.startswith(REDIRECTS):
+    print(f'accepted-origins defaults to {extra} but playground-host defaults to {host},')
+    print('which does not redirect — every default run would accept a boot ending elsewhere.')
+    sys.exit(1)
+print(f'host {host or "(none)"}, extra origins {extra or "(none)"}')
+PY_ORIGINS
+check $? 1m "the default accepted-origins does not widen the origin check"
+
 # The silent failure the default exists to avoid: a link built for a step the
 # TARGET host does not implement boots a Moodle without it, with no error.
 # Both deployments serve their schema as a plain file, so ask the host what it

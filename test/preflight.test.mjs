@@ -385,3 +385,28 @@ test("the collision is reported even when the self URL is present", () => {
   assert.equal(bindErrors.length, 1);
   assert.match(bindErrors[0], /already installed/);
 });
+
+// The placeholder ban used to live in build-preview.mjs, so it applied only to
+// blueprints the action WROTE — never to the foreign ones the verify half
+// fetches, which is the half handling untrusted input.
+test("placeholders in a foreign blueprint are refused by the gate", () => {
+  const b = bp();
+  b.steps.push({
+    step: "installMoodlePlugin",
+    url: "https://raw.githubusercontent.com/{{REPO}}/{{REF}}/p.zip",
+    pluginType: "mod",
+    pluginName: "x",
+  });
+  const { unsafeStrings } = gateBlueprint(b, HOSTS);
+  assert.match(unsafeStrings.join(";"), /placeholder syntax is banned/);
+});
+
+test("a placeholder hidden in an object KEY is refused", () => {
+  const b = bp();
+  b.steps.push({ step: "createCategory", name: "x", "{{EVIL}}": 1 });
+  assert.match(gateBlueprint(b, HOSTS).unsafeStrings.join(";"), /banned in a key/);
+});
+
+test("an ordinary blueprint has no placeholder complaints", () => {
+  assert.deepEqual(gateBlueprint(bp(), HOSTS).unsafeStrings, []);
+});

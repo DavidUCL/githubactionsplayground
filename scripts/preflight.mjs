@@ -166,6 +166,52 @@ export function looksFetchable(s) {
 }
 
 /**
+ * Placeholder syntax anywhere in a blueprint is refused.
+ *
+ * The playground's substituteConstants() rewrites EVERY string using
+ * {{REPO}}/{{REF}}/{{OWNER}}/{{BRANCH}}, and URL params feed those constants
+ * with the highest precedence — so a blueprint carrying placeholders passes
+ * the host allowlist, hashes identically, and installs whatever the link says.
+ * That is the reason FORBIDDEN_PARAMS exists; this is the other half of it.
+ *
+ * This lived in build-preview.mjs and so applied only to blueprints the action
+ * WROTE — never to the foreign ones the verify half fetches from a URL, which
+ * is the half that handles untrusted input. Moved here so both halves get it.
+ */
+/** Throwing form, for callers that build a blueprint and want to fail fast. */
+export function assertNoPlaceholders(blueprint) {
+  const problems = [];
+  sweepPlaceholders(blueprint, problems);
+  if (problems.length) throw new Error(problems[0]);
+}
+
+function sweepPlaceholders(node, problems, path = "$", depth = 0) {
+  if (depth > MAX_DEPTH) return;
+  if (typeof node === "string") {
+    if (node.includes("{{") || node.includes("}}")) {
+      problems.push(
+        `${path}: placeholder syntax is banned — the playground substitutes ` +
+          `{{REPO}}/{{REF}} from the link's own query string, so this would ` +
+          `install whatever the link says while hashing identically`,
+      );
+    }
+    return;
+  }
+  if (Array.isArray(node)) {
+    node.forEach((v, i) => sweepPlaceholders(v, problems, `${path}[${i}]`, depth + 1));
+    return;
+  }
+  if (node && typeof node === "object") {
+    for (const [k, v] of Object.entries(node)) {
+      if (k.includes("{{") || k.includes("}}")) {
+        problems.push(`${path}.${k}: placeholder syntax is banned in a key`);
+      }
+      sweepPlaceholders(v, problems, `${path}.${k}`, depth + 1);
+    }
+  }
+}
+
+/**
  * Walk every string value in the blueprint; any that parses as an http(s)
  * URL must pass the data-host allowlist. This subsumes per-step URL checks
  * and neutralises proxy/host overrides hidden in unexpected keys.
@@ -382,6 +428,7 @@ export function gateBlueprint(blueprint, dataHosts, opts = {}) {
     }
   }
 
+  sweepPlaceholders(blueprint, unsafeStrings);
   sweepUrls(blueprint, dataHosts, urlErrors);
   sweepUnsafeStrings(blueprint, unsafeStrings);
   if (stepErrors.length || urlErrors.length || unsafeStrings.length || bindErrors.length) {

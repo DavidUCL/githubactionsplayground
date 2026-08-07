@@ -22,7 +22,11 @@ import { writeFileSync, mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
-import { gateBlueprint } from "./preflight.mjs";
+import { gateBlueprint, assertNoPlaceholders } from "./preflight.mjs";
+// Re-exported: the check now lives in preflight so BOTH halves get it (the
+// verify half fetches foreign blueprints and never had it), but this stays the
+// import site for preview concerns.
+export { assertNoPlaceholders };
 import {
   readPluginVersion,
   checkMoodleCompatibility,
@@ -50,24 +54,27 @@ const escapeHtml = (v) =>
   String(v).replace(/[&<>"']/g, (c) =>
     ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c],
   );
-// Params the playground resolver treats as overrides. None may appear.
-// `repo`/`ref`/`owner`/`branch` rewrite plugin URLs. `moodle`/`moodleBranch`/
-// `php`/`phpVersion` are resolved "URL params > blueprint > defaults"
-// (shell/main.js:575), so any of them overrides the blueprint's own
-// preferredVersions — booting a DIFFERENT Moodle from the one the
-// compatibility check was made against, while the link still looks right.
-export // `addonProxyUrl` decides who serves the plugin ZIP; `phpCorsProxyUrl` decides
-// where PHP's own outbound traffic goes — it reaches the runtime via
-// resolveCorsProxyUrl -> getTcpOverFetchOptions -> corsProxyUrl
-// (php-loader.js:27,40,56). A link carrying either would route the preview's
-// network through someone else's server while still reading as the playground
-// and booting the right code. Names are camelCase to match the playground's
-// parser (version-resolver.js), and the comparison is case-sensitive.
+// Params the playground resolver treats as overrides. None may appear in a
+// finished link, because they are resolved "URL params > blueprint > defaults"
+// (shell/main.js:575) — so any of them beats the blueprint's own settings.
 //
-// This bounds who the traffic goes THROUGH, not whether there is any: PHP has
-// network access regardless, because tcpOverFetch is enabled unconditionally.
-// What bounds that is the dedicated preview origin.
-const FORBIDDEN_PARAMS = [
+//   repo/ref/owner/branch      rewrite the plugin ZIP URL
+//   moodle/moodleBranch/       boot a DIFFERENT Moodle from the one the
+//   php/phpVersion             compatibility check was made against
+//   addonProxyUrl              decides who serves the plugin ZIP
+//   phpCorsProxyUrl            decides where PHP's own outbound traffic goes,
+//                              via resolveCorsProxyUrl -> getTcpOverFetchOptions
+//                              -> corsProxyUrl (php-loader.js:27,40,56)
+//
+// In every case the link still reads as the playground and looks correct.
+// Names are camelCase to match the playground's parser (version-resolver.js);
+// the comparison is case-sensitive. Gate check 1l fails if the playground
+// gains a param that is neither listed here nor a deliberate exception.
+//
+// The proxy entries bound who traffic goes THROUGH, not whether there is any:
+// PHP has network access regardless, because tcpOverFetch is enabled
+// unconditionally. What bounds that is the dedicated preview origin.
+export const FORBIDDEN_PARAMS = [
   "repo", "ref", "owner", "branch", "blueprint-url",
   "moodle", "moodleBranch", "php", "phpVersion",
   "addonProxyUrl", "phpCorsProxyUrl",
@@ -210,8 +217,22 @@ export function previewUser(landing) {
   return String(landing).startsWith("/admin/") ? "admin" : "teacher";
 }
 
+/**
+ * PHP version to pin for a Moodle branch. Every branch the action knows
+ * accepts 8.3 today, so this is one entry per branch rather than a range —
+ * but it exists so that a branch bundling a different range cannot silently
+ * fall back to the playground's substitution. verify.sh check 1m fails if a
+ * branch's list stops containing what we pin.
+ */
+export const PHP_FOR_BRANCH = {
+  MOODLE_404_STABLE: "8.3",
+  MOODLE_405_STABLE: "8.3",
+  MOODLE_500_STABLE: "8.3",
+};
+export const phpForBranch = (branch) => PHP_FOR_BRANCH[branch] ?? "8.3";
+
 /** @returns {object} the blueprint the preview link carries */
-export function buildBlueprint({ headRepo, headSha, prNumber, type, name }) {
+export function buildBlueprint({ headRepo, headSha, prNumber, type, name, moodleBranch = DEFAULT_MOODLE_BRANCH }) {
   if (!isRepo(headRepo)) throw new Error(`bad repo: ${headRepo}`);
   if (!SHA_RE.test(String(headSha))) {
     throw new Error(`head SHA must be a full 40-hex commit, got: ${headSha}`);
@@ -351,7 +372,18 @@ export function buildBlueprint({ headRepo, headSha, prNumber, type, name }) {
 
   const landingPage = landingPath(type, name);
   return {
-    preferredVersions: { php: "8.3", moodle: "MOODLE_500_STABLE" },
+    // The branch here MUST be the one the compatibility checks ran against.
+    // It used to be the literal "MOODLE_500_STABLE" while `moodle-branch` fed
+    // only the checks — so setting that input validated the plugin against one
+    // Moodle and then built a link that booted another. Nobody hit it because
+    // the input's default happened to equal the literal. One source now.
+    //
+    // PHP is derived rather than fixed for the same reason: valid versions
+    // differ per branch (4.4/4.5 take 8.1-8.3, 5.x take 8.2-8.4), and the
+    // playground answers an invalid pair by silently substituting 8.3
+    // (version-resolver.js:199-208) — so a wrong literal here would be
+    // invisible.
+    preferredVersions: { php: phpForBranch(moodleBranch), moodle: moodleBranch },
     // Both: the top-level value aims the FIRST navigation at the target, and
     // the step keeps working if a build ignores the top-level field.
     landingPage,
@@ -378,26 +410,6 @@ export function assertGated(blueprint, { dataHosts = DEFAULT_DATA_HOSTS, require
   return riskySteps || [];
 }
 
-/** Refuse any blueprint whose strings could be rewritten after posting. */
-export function assertNoPlaceholders(blueprint) {
-  const walk = (node, path) => {
-    if (typeof node === "string") {
-      if (node.includes("{{") || node.includes("}}")) {
-        throw new Error(
-          `${path}: placeholder syntax is banned — the playground substitutes ` +
-            `{{REPO}}/{{REF}} from the link's own query string, which would boot ` +
-            `different code with an identical blueprint hash`,
-        );
-      }
-      return;
-    }
-    if (Array.isArray(node)) return node.forEach((v, i) => walk(v, `${path}[${i}]`));
-    if (node && typeof node === "object") {
-      for (const [k, v] of Object.entries(node)) walk(v, `${path}.${k}`);
-    }
-  };
-  walk(blueprint, "$");
-}
 
 /** gzip + base64url (unpadded) — the form the playground's parser detects. */
 export function encodeBlueprint(blueprint) {
@@ -522,7 +534,7 @@ function main() {
     );
   }
 
-  const blueprint = buildBlueprint({ headRepo, headSha, prNumber, type, name });
+  const blueprint = buildBlueprint({ headRepo, headSha, prNumber, type, name, moodleBranch });
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
   const dataHosts = (process.env.DATA_HOSTS || "")
