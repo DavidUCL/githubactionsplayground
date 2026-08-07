@@ -40,6 +40,7 @@ const good = {
   steps_failed: 0,
   assertions: [{ id: "a0_loopback_binding", ok: true }],
   risky_steps: [],
+  plugin_sources: [],
 };
 
 test("valid verdict yields exactly the three expected outputs", () => {

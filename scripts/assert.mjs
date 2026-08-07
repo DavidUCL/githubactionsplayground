@@ -239,6 +239,17 @@ export function assess({ expectations, meta, bootLog, consoleLog, headSha = "", 
     "plugin_binding_mismatch",
   );
   check("a6_extraction_count", parsed.extractions.length === plugins.length, "plugin_binding_mismatch");
+  // A BIJECTION, not a count. Two plugin steps resolving to the same directory
+  // produce two extraction lines for one target, which `includes` plus a count
+  // reads as two successful installs — while the second archive has silently
+  // overwritten the first. Pre-flight now refuses that blueprint; this is the
+  // second lock, on the evidence side, so a collision cannot pass unnoticed
+  // even if it arrives some other way.
+  check(
+    "a6_extraction_distinct",
+    new Set(parsed.extractions).size === parsed.extractions.length,
+    "plugin_binding_mismatch",
+  );
   // A regression back to the third-party addon proxy must be visible: with
   // host-allowlisted URLs the playground fetches direct.
   check("a6_no_addon_proxy", parsed.downloads.every((d) => !d.viaProxy), "plugin_binding_mismatch");
@@ -257,9 +268,17 @@ export function assess({ expectations, meta, bootLog, consoleLog, headSha = "", 
     steps_failed: parsed.failLines,
     assertions,
     // Carried through from pre-flight so the verdict is honest about its own
-    // limits: with any of these present, "the plugin installed" is no longer
-    // self-proving — a filesystem write can satisfy the structural checks.
+    // limits: with any of these present the STRUCTURAL assertions describe the
+    // end state, not what produced it — code installed for real can be
+    // overwritten afterwards without touching the database, the boot log or
+    // any assertion.
     risky_steps: Array.isArray(exp.riskySteps) ? exp.riskySteps : [],
+    // WHICH archives were installed, not merely how many. Without this a
+    // reader who suspects a substitution has no record to check against; the
+    // list was already computed at pre-flight and thrown away.
+    plugin_sources: Array.isArray(exp.pluginSteps)
+      ? exp.pluginSteps.map((pl) => pl.url).filter((u) => typeof u === "string")
+      : [],
   };
 }
 
@@ -279,8 +298,9 @@ export function rejectedVerdict(errorClass, blueprintSha256, headSha) {
     steps_ok: 0,
     steps_failed: 0,
     assertions: [{ id: `preflight_${errorClass}`, ok: false }],
-    // Nothing booted, so nothing risky ran.
+    // Nothing booted, so nothing risky ran and nothing was installed.
     risky_steps: [],
+    plugin_sources: [],
   };
 }
 

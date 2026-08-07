@@ -52,6 +52,10 @@ const TOP_KEYS = [
   // STRUCTURAL assertions unprovable, because a filesystem write can satisfy
   // them without a plugin behind it. Empty on an ordinary blueprint.
   "risky_steps",
+  // The archive URLs that were installed. A count cannot distinguish two
+  // plugins from one plugin installed twice over itself, so the verdict
+  // records the sources.
+  "plugin_sources",
 ];
 
 const SHA1_RE = /^([0-9a-f]{40})?$/;
@@ -75,6 +79,17 @@ export function validateVerdict(v) {
   }
   if (v.schema !== 1) problems.push(`schema must be 1, got ${v.schema}`);
   // Closed like every other field: an array of known step names, nothing else.
+  if (!Array.isArray(v.plugin_sources)) {
+    problems.push("plugin_sources must be an array");
+  } else {
+    for (const u of v.plugin_sources) {
+      // Closed like everything else that crosses the trust boundary: https
+      // URLs only, length-capped, no control characters.
+      if (typeof u !== "string" || u.length > 2048 || !/^https:\/\/[^\s"'<>\\]+$/.test(u)) {
+        problems.push(`plugin_sources contains a bad URL: ${JSON.stringify(String(u).slice(0, 80))}`);
+      }
+    }
+  }
   if (!Array.isArray(v.risky_steps)) {
     problems.push("risky_steps must be an array");
   } else {

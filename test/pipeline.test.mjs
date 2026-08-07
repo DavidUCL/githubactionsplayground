@@ -54,7 +54,7 @@ test("assert.mjs writes the verdict for a staged passing capture", () => {
 test("a pre-placed verdict.json cannot survive assessment", () => {
   const dir = stagedCapture();
   const forged = {
-    schema: 1, status: "pass", error_class: "none", head_sha: "", blueprint_sha256: "", risky_steps: [],
+    schema: 1, status: "pass", error_class: "none", head_sha: "", blueprint_sha256: "", risky_steps: [], plugin_sources: [],
     boot_ms: 1, steps_ok: 99, steps_failed: 0, assertions: [{ id: "forged", ok: true }],
   };
   writeFileSync(join(dir, "verdict.json"), JSON.stringify(forged));

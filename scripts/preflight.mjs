@@ -327,6 +327,36 @@ export function gateBlueprint(blueprint, dataHosts, opts = {}) {
   // The commit under review must actually be installed. Checked across ALL
   // plugin steps, not just the first: dependencies and other people's plugins
   // are legitimate, missing your own is not.
+  // Two plugin steps that resolve to the SAME directory silently merge, and
+  // the second archive wins file by file: installViaZipDownload never clears
+  // the target (`moodle-plugins.js:198-262`). Moodle then reads exactly one
+  // file — version.php — to decide what the plugin is, keeps no manifest and
+  // no checksum, and reports a clean install. The reviewer gets a page headed
+  // with THIS commit while running someone else's code, and every signal is
+  // green: requireSelfUrl passes (your plugin IS in the list), risky_steps is
+  // empty (installMoodlePlugin was never risky), and a6_extraction_count sees
+  // two extractions for two steps.
+  //
+  // Rejecting the collision is also what everything else does, Moodle's own
+  // installer included ("Target location already exists"). Installing the same
+  // plugin twice to exercise an upgrade path cannot work here anyway — the
+  // second extraction merges rather than replaces, so it would test a chimera.
+  const targets = new Map();
+  for (const [i, step] of steps.entries()) {
+    if (!PLUGIN_STEPS.has(step?.step)) continue;
+    const type = step.step === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;
+    const key = `${type}_${step.pluginName}`;
+    if (targets.has(key)) {
+      bindErrors.push(
+        `step[${i}] ${step.step}: ${key} is already installed by step[${targets.get(key)}] — ` +
+          `both extract to the same directory and the second would overwrite the first ` +
+          `file by file, with nothing reporting it`,
+      );
+      continue;
+    }
+    targets.set(key, i);
+  }
+
   if (opts.requireSelfUrl) {
     const installed = steps
       .filter((s) => PLUGIN_STEPS.has(s?.step))

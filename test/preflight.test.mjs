@@ -330,3 +330,58 @@ test("restoreDatabase is allowed, but its URL must clear the data hosts", () => 
   bad.steps.push({ step: "restoreDatabase", url: "https://evil.tld/db.sq3" });
   assert.equal(gateBlueprint(bad, HOSTS).urlErrors.length, 1);
 });
+
+// Two plugin steps resolving to the SAME directory merge, second archive
+// winning file by file — installViaZipDownload never clears the target. Moodle
+// reads one file (version.php), keeps no manifest, and reports a clean
+// install. Every existing signal stays green: requireSelfUrl passes because
+// your plugin IS in the list, risky_steps is empty because
+// installMoodlePlugin was never risky. Found independently by three reviewers.
+const pluginStep = (owner, name, type, pname) => ({
+  step: "installMoodlePlugin",
+  url: `https://raw.githubusercontent.com/${owner}/${name}/${"a".repeat(40)}/p.zip`,
+  pluginType: type,
+  pluginName: pname,
+});
+
+test("two plugin steps targeting the same directory are refused", () => {
+  const b = bp();
+  b.steps.push(pluginStep("me", "mine", "mod", "x"));
+  b.steps.push(pluginStep("someone-else", "theirs", "mod", "x"));
+  const { bindErrors } = gateBlueprint(b, HOSTS);
+  assert.equal(bindErrors.length, 1);
+  assert.match(bindErrors[0], /mod_x is already installed/);
+  assert.match(bindErrors[0], /overwrite the first/);
+});
+
+test("a genuine dependency alongside the plugin is still fine", () => {
+  const b = bp();
+  b.steps.push(pluginStep("me", "mine", "mod", "x"));
+  b.steps.push(pluginStep("someone", "dep", "local", "dep"));
+  assert.deepEqual(gateBlueprint(b, HOSTS).bindErrors, []);
+});
+
+test("installTheme collides with an installMoodlePlugin of the same identity", () => {
+  // installTheme defaults pluginType to "theme", so the two forms can collide
+  // without either naming the type explicitly.
+  const b = bp();
+  b.steps.push({
+    step: "installTheme",
+    url: `https://raw.githubusercontent.com/a/b/${"a".repeat(40)}/p.zip`,
+    pluginName: "boost_x",
+  });
+  b.steps.push(pluginStep("c", "d", "theme", "boost_x"));
+  assert.match(gateBlueprint(b, HOSTS).bindErrors[0], /theme_boost_x is already installed/);
+});
+
+test("the collision is reported even when the self URL is present", () => {
+  // The point of the finding: requireSelfUrl passes, so it cannot be the
+  // control that catches this.
+  const self = `https://raw.githubusercontent.com/me/mine/${"a".repeat(40)}/p.zip`;
+  const b = bp();
+  b.steps.push({ step: "installMoodlePlugin", url: self, pluginType: "mod", pluginName: "x" });
+  b.steps.push(pluginStep("someone-else", "theirs", "mod", "x"));
+  const { bindErrors } = gateBlueprint(b, HOSTS, { requireSelfUrl: self });
+  assert.equal(bindErrors.length, 1);
+  assert.match(bindErrors[0], /already installed/);
+});
