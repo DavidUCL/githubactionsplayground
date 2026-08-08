@@ -50,13 +50,16 @@ inputs:
       PHP to boot, e.g. 8.2. Must be one the chosen moodle-branch accepts
       (4.x takes 8.1-8.3, 5.x takes 8.2-8.4) — an invalid pair is REFUSED
       rather than silently substituted, which is what the playground would
-      otherwise do. Blank = the default for the branch.
+      otherwise do. Blank, or the reserved token "(default)", means the
+      default for the branch — a choice input cannot be left blank, so the
+      dispatch form sends the token instead.
     required: false
     default: ""
   login-as:
     description: >-
       Account the reviewer arrives as: admin, teacher, or student1..studentN.
-      Blank derives it from the landing page (admin for admin pages, teacher
+      Blank, or the reserved token "(default)", derives it from the
+      landing page (admin for admin pages, teacher
       elsewhere), which is right for most reviews but cannot know you want to
       see the plugin as a learner.
     required: false

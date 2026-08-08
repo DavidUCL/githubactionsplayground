@@ -11,6 +11,9 @@ import { createHash } from "node:crypto";
 import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+// One-way: plugin-version.mjs imports nothing from here, so no cycle.
+import { checkNotCoreComponent } from "./plugin-version.mjs";
+import { checkOrder, checkReferences } from "./order-rules.mjs";
 
 import { sanitiseForLog } from "./sanitise.mjs";
 
@@ -63,6 +66,12 @@ export const ALLOWED_STEPS = new Set([
  * gate now reports instead of refusing.
  */
 export const RISKY_STEPS = new Set([
+  // Sandy: mkdir gets a badge and the step that swaps the entire database does
+  // not. restoreDatabase replaces every row in the site and runs no upgrade;
+  // restoreCourse writes arbitrary course content from a foreign .mbz. Both
+  // are legitimate and stay ALLOWED — this only means the summary names them,
+  // which is the whole point of the risky list.
+  "restoreDatabase", "restoreCourse",
   "runPhpCode", "runPhpScript", "writeFile", "writeFiles", "unzip",
   "applyPrOverlay", "request", "copyFile", "moveFile", "deleteFile",
   "deleteFiles", "mkdir", "rmdir", "setConfigFile", "setConfigFiles",
@@ -311,7 +320,7 @@ const IDENTIFIER_RE = /^[a-z][a-z0-9_]*$/;
 /**
  * @param {object} blueprint
  * @param {string[]} dataHosts — hosts any URL in the blueprint may point at.
- * @param {{requireSelfUrl?: string}} [opts] — when given, at least ONE plugin
+ * @param {{requireSelfUrl?: string, coreComponents?: object}} [opts] — when given, at least ONE plugin
  *   install step must fetch exactly this URL. The blueprint may install any
  *   number of OTHER plugins (dependencies, third-party plugins the reviewer
  *   needs); what it may not do is omit the commit under review.
@@ -371,7 +380,9 @@ export function gateBlueprint(blueprint, dataHosts, opts = {}) {
     }
 
     if (PLUGIN_STEPS.has(name)) {
-      const type = name === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;
+      // Forced, like the collision check below: the handler ignores pluginType
+      // and always installs to theme/ (moodle-plugins.js:111).
+      const type = name === "installTheme" ? "theme" : step.pluginType;
       if (!IDENTIFIER_RE.test(String(step.pluginName ?? ""))) {
         bindErrors.push(`step[${i}] ${name}: explicit pluginName required (got ${JSON.stringify(step.pluginName ?? null)})`);
       }
@@ -400,11 +411,32 @@ export function gateBlueprint(blueprint, dataHosts, opts = {}) {
   // installer included ("Target location already exists"). Installing the same
   // plugin twice to exercise an upgrade path cannot work here anyway — the
   // second extraction merges rather than replaces, so it would test a chimera.
+  // Ordering and referential integrity. These go into bindErrors rather than a
+  // new field on purpose: a new field is one a caller can forget to read, and
+  // this project has already shipped a deliverable that no test noticed was
+  // gutted. Every existing caller already surfaces bindErrors.
+  bindErrors.push(...checkOrder(steps));
+  bindErrors.push(...checkReferences(steps, opts.coreComponents));
+
   const targets = new Map();
   for (const [i, step] of steps.entries()) {
     if (!PLUGIN_STEPS.has(step?.step)) continue;
-    const type = step.step === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;
+    // FORCE "theme" for installTheme rather than honouring a supplied
+    // pluginType. The handler ignores the field entirely and always installs to
+    // theme/ (moodle-plugins.js:111), so reading `step.pluginType ?? "theme"`
+    // let a step declare `pluginType: mod` and slip past this check while still
+    // landing in theme/. One character of gate/runtime divergence is enough.
+    const type = step.step === "installTheme" ? "theme" : step.pluginType;
     const key = `${type}_${step.pluginName}`;
+
+    // Moodle's own plugins are not in `targets`, so the collision check above
+    // cannot see them. A ZIP declaring `mod_assign` overwrites core file by
+    // file — see fetchCoreComponents() for what Moodle then does to its
+    // capabilities.
+    if (opts.coreComponents) {
+      const core = checkNotCoreComponent(type, step.pluginName, opts.coreComponents);
+      if (!core.ok) bindErrors.push(`step[${i}] ${step.step}: ${core.reason}`);
+    }
     if (targets.has(key)) {
       bindErrors.push(
         `step[${i}] ${step.step}: ${key} is already installed by step[${targets.get(key)}] — ` +
@@ -440,7 +472,10 @@ export function gateBlueprint(blueprint, dataHosts, opts = {}) {
     .filter((s) => PLUGIN_STEPS.has(s.step))
     .map((s) => ({
       url: s.url,
-      pluginType: s.step === "installTheme" ? (s.pluginType ?? "theme") : s.pluginType,
+      // Forced: an expectation of mod/<name> for a step that extracts to
+      // theme/<name> makes assert.mjs compare against a path that can never
+      // appear, so the run fails blaming the wrong thing.
+      pluginType: s.step === "installTheme" ? "theme" : s.pluginType,
       pluginName: s.pluginName,
     }));
   return {

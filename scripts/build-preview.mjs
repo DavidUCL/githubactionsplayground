@@ -32,7 +32,8 @@ import {
   readPluginVersion,
   checkMoodleCompatibility,
   checkComponent,
-  checkPluginTypeSupported,
+  fetchCoreComponents,
+  checkNotCoreComponent,
   fetchPluginVersion,
   DEFAULT_MOODLE_BRANCH,
 } from "./plugin-version.mjs";
@@ -103,6 +104,74 @@ export function checkLandingPath(value) {
   return { ok: true };
 }
 const PR_NUMBER_RE = /^\d+$/;
+
+/**
+ * The reserved token a `choice` input uses to mean "leave this unset".
+ *
+ * `workflow_dispatch` has no unset state for a choice: every dropdown always
+ * submits something. The previous answer was an English sentence in the
+ * `default`, the same sentence in `options`, and a `${{ }}` ternary comparing
+ * against it a third time — three copies per control, in YAML, where NOTHING
+ * tests them. A mutation harness cannot reach inside a `${{ }}` expression.
+ * Improve a dropdown label, forget the ternary, and the literal sentence
+ * "default for the branch" is passed through as a PHP version.
+ *
+ * One token, passed verbatim by the YAML, resolved here where verify.sh can
+ * mutation-test it. Parentheses are illegal in a PHP version, a username, a
+ * component, a host, a course format and a language code, so it cannot be
+ * confused with a real value.
+ */
+export const DEFAULT_SENTINEL = "(default)";
+
+/** Read an optional input, resolving the sentinel to "unset". */
+export function opt(value) {
+  const v = String(value ?? "").trim();
+  return v === DEFAULT_SENTINEL ? "" : v;
+}
+
+/**
+ * Collects input failures instead of throwing at the first.
+ *
+ * main() used to throw on the first failed check, so three simultaneous
+ * mistakes cost three runs and about five minutes to learn three things that
+ * were all knowable in the first 200ms. Tolerable at nine inputs; at twenty it
+ * becomes the dominant experience of using the form.
+ */
+export class Problems {
+  constructor() {
+    this.list = [];
+  }
+  /** @param {string} input the FORM FIELD at fault, not the internal check */
+  add(input, message) {
+    if (message) this.list.push({ input, message });
+    return this;
+  }
+  /** Add when `check` is a {ok, reason} verdict; returns ok. */
+  check(input, verdict) {
+    if (verdict && verdict.ok === false) this.add(input, verdict.reason);
+    return !verdict || verdict.ok !== false;
+  }
+  get any() {
+    return this.list.length > 0;
+  }
+  /** One `::error title=<input>::` per problem, so GitHub annotates the run. */
+  annotate(log = console.log) {
+    for (const { input, message } of this.list) {
+      // Annotations are one line: a newline would end the command and dump the
+      // rest as plain output.
+      log(`::error title=${sanitiseForLog(input)}::${sanitiseForLog(message).replace(/\r?\n/g, " ")}`);
+    }
+  }
+  toError() {
+    const n = this.list.length;
+    const head =
+      n === 1 ? this.list[0].message : `${n} inputs are wrong, all of them fixable before the next run:`;
+    const body = n === 1 ? [] : this.list.map(({ input, message }) => `  - ${input}: ${message}`);
+    const err = new Error([head, ...body].join("\n"));
+    err.problems = this.list;
+    return err;
+  }
+}
 
 /** Escape for the label's FORMAT_HTML intro, which renders as live HTML. */
 const escapeHtml = (v) =>
@@ -566,11 +635,14 @@ export function buildBlueprint({
  * (which the inline path never validates, so it would fail at runtime in the
  * reviewer's browser), a banned step, and any URL outside the allowed hosts.
  */
-export function assertGated(blueprint, { dataHosts = DEFAULT_DATA_HOSTS, requireSelfUrl } = {}) {
+export function assertGated(
+  blueprint,
+  { dataHosts = DEFAULT_DATA_HOSTS, requireSelfUrl, coreComponents } = {},
+) {
   const { stepErrors, urlErrors, unsafeStrings, bindErrors, riskySteps } = gateBlueprint(
     blueprint,
     dataHosts,
-    requireSelfUrl ? { requireSelfUrl } : {},
+    { ...(requireSelfUrl ? { requireSelfUrl } : {}), ...(coreComponents ? { coreComponents } : {}) },
   );
   const problems = [...stepErrors, ...unsafeStrings, ...urlErrors, ...bindErrors];
   if (problems.length) {
@@ -686,14 +758,31 @@ function writeSummary(lines) {
   }
 }
 
-function summariseRefusal(reason, facts) {
+function summariseRefusal(reason, facts, problems = []) {
+  // With several problems the joined message is a wall of text. Give each one
+  // its own row naming the FORM FIELD at fault, so the reader sees how many
+  // things to fix and where each of them is.
+  const problemRows = problems.length
+    ? [
+        "",
+        `### ${problems.length} input${problems.length === 1 ? "" : "s"} to fix`,
+        "",
+        "| input | problem |",
+        "|---|---|",
+        ...problems.map(
+          ({ input, message }) =>
+            `| \`${sanitiseForLog(String(input))}\` | ${sanitiseForLog(String(message))} |`,
+        ),
+      ]
+    : [];
   writeSummary([
     "## 🚫 No preview link for this commit",
     "",
-    `**${sanitiseForLog(String(reason))}**`,
+    `**${sanitiseForLog(problems.length > 1 ? String(reason).split("\n")[0] : String(reason))}**`,
     "",
     "No link was built, so nothing was posted. This is a refusal, not a crash:",
     "the check below decided the preview would have been misleading.",
+    ...problemRows,
     "",
     "| | |",
     "|---|---|",
@@ -748,29 +837,49 @@ async function main() {
     component: (process.env.PLUGIN_COMPONENT || "").trim() || declared?.component,
   });
 
-  // Independent of version.php: a plugin TYPE the bundled Moodle no longer has
-  // cannot install whatever the plugin declares.
-  const supported = checkPluginTypeSupported(type, moodleBranch);
-  if (!supported.ok) throw new Error(supported.reason);
+  // Moodle's OWN list of what it ships, from the branch under test. Replaces a
+  // hand-written table that knew only about `atto`; this also catches
+  // `assignment` and `tinymce`, and is right per branch — `mod_qbank` is core
+  // on 5.0 and not on 4.5, so a static table is wrong for one of them.
+  const core = await fetchCoreComponents(moodleBranch);
+  if (!core.ok) {
+    // Loud, not silent: a skipped check must never look like a passed one.
+    console.log(`note: core-component collision NOT checked — ${core.reason}`);
+  }
+
+  // The resolved identity, whatever it came from. `plugin-component` is a
+  // caller-supplied override that `derivePlugin` trusts above version.php and
+  // validates only for SHAPE, so without this a caller could simply declare
+  // themselves to be mod_assign.
+  //
+  // Deliberately redundant with the gate, which checks every plugin step and
+  // catches the same input (measured — deleting this still refuses, via
+  // "a blueprint our own gate rejects"). Kept because it names the problem
+  // directly, and because it does not depend on the resolved identity
+  // reaching a plugin step.
+  const notCore = checkNotCoreComponent(type, name, core);
+  // From here on, input failures are COLLECTED rather than thrown one at a
+  // time. Everything below is a pure-string check on something the form
+  // supplied, so all of it is knowable in one pass.
+  const problems = new Problems();
+  problems.check("plugin-component", notCore);
 
   // A parse we could not trust is a REFUSAL. It used to collapse to nulls, and
   // nulls pass every check — so an unreadable version.php was indistinguishable
   // from a permissive one.
   if (declared && declared.ok === false) {
-    throw new Error(declared.reason || "version.php could not be read reliably");
-  }
-
-  if (declared) {
+    problems.add("version.php", declared.reason || "version.php could not be read reliably");
+  } else if (declared) {
     // A component that disagrees with the install path is a silent failure:
     // upgrade_plugins skips a directory with no readable version.php without
     // saying anything, and the reviewer gets a Moodle with no plugin.
-    const comp = checkComponent(declared.component, type, name);
-    if (!comp.ok) throw new Error(comp.reason);
+    problems.check("plugin-component", checkComponent(declared.component, type, name));
 
     const compat = checkMoodleCompatibility(declared, moodleBranch);
-    if (!compat.ok) throw new Error(compat.reason);
-    if (compat.reason) console.log(`note: ${compat.reason}`);
-  } else {
+    problems.check("moodle-branch", compat);
+    if (compat.ok && compat.reason) console.log(`note: ${compat.reason}`);
+  }
+  if (!declared) {
     // Not fatal. This repo's own dogfood previews a third-party plugin that
     // was never checked out, and that is a legitimate shape. Say plainly that
     // the strongest check was skipped rather than implying it passed.
@@ -784,11 +893,14 @@ async function main() {
   // here rather than trusted: `//evil.tld/x` and `https://evil.tld` both parse
   // as "somewhere else" to a browser, and schema.js accepts them (it does not
   // check), so the refusal has to be ours.
+  // NOT opt(): landing-path is free text, so a literal "(default)" here is a
+  // mistake to refuse, not a token to swallow. Only CHOICE inputs, which
+  // cannot be left blank, use the sentinel.
   const landingOverride = (process.env.LANDING_PATH || "").trim();
   if (landingOverride) {
     const ok = checkLandingPath(landingOverride);
     if (!ok.ok) {
-      throw new Error(`landing-path ${ok.reason}: ${JSON.stringify(landingOverride)}`);
+      problems.add("landing-path", `${ok.reason}: ${JSON.stringify(landingOverride)}`);
     }
   }
   const builtBy = (process.env.BUILT_BY || "").trim();
@@ -796,15 +908,16 @@ async function main() {
   // PHP is refused rather than substituted. The playground answers an invalid
   // branch/PHP pair by quietly using 8.3, so an unchecked value here would
   // produce a preview that is not testing what the summary says it is.
-  const phpOverride = (process.env.PHP_VERSION || "").trim();
+  const phpOverride = opt(process.env.PHP_VERSION);
   const phpOk = checkPhpForBranch(phpOverride, moodleBranch);
-  if (!phpOk.ok) throw new Error(phpOk.reason);
-  if (phpOk.reason) console.log(`note: ${phpOk.reason}`);
+  problems.check("php-version", phpOk);
+  if (phpOk.ok && phpOk.reason) console.log(`note: ${phpOk.reason}`);
 
-  const loginAs = (process.env.LOGIN_AS || "").trim();
+  const loginAs = opt(process.env.LOGIN_AS);
   if (loginAs && !studentNames(20).concat("admin", "teacher").includes(loginAs)) {
-    throw new Error(
-      `login-as must be admin, teacher or student1..student20 — those are the ` +
+    problems.add(
+      "login-as",
+      `must be admin, teacher or student1..student20 — those are the ` +
         `only accounts the blueprint creates. Got: ${JSON.stringify(loginAs)}`,
     );
   }
@@ -816,9 +929,17 @@ async function main() {
   // Asking to arrive as a student the blueprint never made is a refusal, not a
   // login failure at boot — phpLogin does MUST_EXIST and would abort there.
   if (loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
-    throw new Error(
-      `login-as ${loginAs} but only ${students} student account(s) are created — raise the student count`,
+    problems.add(
+      "login-as",
+      `${loginAs} but only ${students} student account(s) are created — raise the student count`,
     );
+  }
+
+  // One throw for everything above. Annotations first, so GitHub shows a marker
+  // against each offending field even though the run ends here.
+  if (problems.any) {
+    problems.annotate();
+    throw problems.toError();
   }
 
   const blueprint = buildBlueprint({
@@ -863,6 +984,7 @@ async function main() {
   const risky = assertGated(blueprint, {
     dataHosts: hosts,
     requireSelfUrl: pluginZipUrl(headRepo, headSha),
+    coreComponents: core,
   });
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
@@ -895,6 +1017,9 @@ async function main() {
       "course": `${students} student(s), ${sections} section(s)`,
       "landing page": landingOverride || landingPath(type, name),
       "version.php": declared ? declared.path : "not checked out — compatibility NOT checked",
+      "core components": core.ok
+        ? `${core.standard.size} from lib/plugins.json`
+        : "NOT CHECKED — could not read Moodle's plugin list",
     }),
     "",
     ...(risky.length
@@ -920,12 +1045,16 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     // A refusal is the designed outcome of several checks, and its wording is
     // the whole point. Put it where a human will see it, then still fail —
     // the caller decides what to do with a red step.
-    summariseRefusal(err?.message ?? String(err), {
-      repository: process.env.HEAD_REPO,
-      commit: process.env.HEAD_SHA,
-      Moodle: process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH,
-      "plugin root": process.env.PLUGIN_ROOT || ".",
-    });
+    summariseRefusal(
+      err?.message ?? String(err),
+      {
+        repository: process.env.HEAD_REPO,
+        commit: process.env.HEAD_SHA,
+        Moodle: process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH,
+        "plugin root": process.env.PLUGIN_ROOT || ".",
+      },
+      err?.problems ?? [],
+    );
     console.error(err?.stack ?? String(err));
     process.exit(1);
   }

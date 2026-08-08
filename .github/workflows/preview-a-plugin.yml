@@ -50,23 +50,23 @@ on:
         type: string
         default: ""
       php-version:
-        description: "PHP to boot. Must be one the chosen Moodle accepts — 4.x takes 8.1-8.3, 5.x takes 8.2-8.4. An invalid pair is refused, not substituted."
+        description: "PHP to boot. Leave as (default) to let the branch decide. Must be one the chosen Moodle accepts — 4.x takes 8.1-8.3, 5.x takes 8.2-8.4. An invalid pair is refused, not substituted."
         required: false
         type: choice
-        default: default for the branch
+        default: "(default)"
         options:
-          - default for the branch
+          - "(default)"
           - "8.1"
           - "8.2"
           - "8.3"
           - "8.4"
       login-as:
-        description: "Who you arrive as. Blank derives it from the landing page; pick a student to see the plugin as a learner."
+        description: "Who you arrive as. Leave as (default) to derive it from the landing page; pick a student to see the plugin as a learner."
         required: false
         type: choice
-        default: derive from landing page
+        default: "(default)"
         options:
-          - derive from landing page
+          - "(default)"
           - admin
           - teacher
           - student1
@@ -142,8 +142,8 @@ jobs:
           # The two sentinel options mean "leave it to the action", which is
           # not the same as an empty string a user typed — a `choice` has no
           # unset state, so the sentinel is how "unset" is expressed.
-          php-version: ${{ inputs.php-version == 'default for the branch' && '' || inputs.php-version }}
-          login-as: ${{ inputs.login-as == 'derive from landing page' && '' || inputs.login-as }}
+          php-version: ${{ inputs.php-version }}
+          login-as: ${{ inputs.login-as }}
           students: ${{ inputs.students }}
           sections: ${{ inputs.sections }}
           # The only provenance a pasted link carries. Without it, a link built

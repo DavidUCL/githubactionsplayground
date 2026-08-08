@@ -1,0 +1,217 @@
+{
+  "_comment": [
+    "One row per input of preview/action.yml. An input with NO row here is a",
+    "FAILURE in check 1o, not a skip \u2014 that is what stops this table",
+    "fossilising as controls are added, the way REMOVED_PLUGIN_TYPES and",
+    "RISKY_STEPS both did.",
+    "",
+    "target says which artifact must move:",
+    "  blueprint  the diff must be non-empty AND touch only expect_paths",
+    "  url        preview-url in $GITHUB_OUTPUT must change",
+    "  refusal    the probe value must be REFUSED, matching expect_error",
+    "",
+    "expect_in_summary asserts the probe value reaches $GITHUB_STEP_SUMMARY.",
+    "That is the assertion that catches a gutted writeSummary, which once left",
+    "230/230 tests and 118/118 mutants green."
+  ],
+  "baseline": {
+    "HEAD_REPO": "DavidUCL/moodle-mod_attendance",
+    "HEAD_SHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "PR_NUMBER": "7",
+    "PLUGIN_TYPE": "",
+    "PLUGIN_NAME": "",
+    "PLUGIN_COMPONENT": "",
+    "LANDING_PATH": "",
+    "BUILT_BY": "probe-baseline",
+    "PHP_VERSION": "",
+    "LOGIN_AS": "",
+    "STUDENTS": "1",
+    "SECTIONS": "3",
+    "PLUGIN_ROOT": ".",
+    "MOODLE_BRANCH": "MOODLE_500_STABLE",
+    "DATA_HOSTS": "",
+    "PLAYGROUND_HOST": "https://daviducl.github.io/moodle-playground"
+  },
+  "probes": [
+    {
+      "input": "head-repo",
+      "env": "HEAD_REPO",
+      "probe": "DavidUCL/moodle-mod_coursework",
+      "target": "blueprint",
+      "expect_paths": [
+        "landingPage",
+        "steps[*].fullname",
+        "steps[*].intro",
+        "steps[*].path",
+        "steps[*].pluginName",
+        "steps[*].url"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "head-sha",
+      "env": "HEAD_SHA",
+      "probe": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].fullname",
+        "steps[*].intro",
+        "steps[*].url"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "pr-number",
+      "env": "PR_NUMBER",
+      "probe": "99",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].fullname",
+        "steps[*].intro"
+      ],
+      "note": "Reaches the course name, which the reviewer reads in Moodle; it is not one of the facts the summary tabulates."
+    },
+    {
+      "input": "plugin-type",
+      "env": "PLUGIN_TYPE",
+      "probe": "block",
+      "target": "blueprint",
+      "expect_paths": [
+        "landingPage",
+        "steps[*].fullname",
+        "steps[*].intro",
+        "steps[*].path",
+        "steps[*].pluginType",
+        "steps[*].username"
+      ]
+    },
+    {
+      "input": "plugin-name",
+      "env": "PLUGIN_NAME",
+      "probe": "probename",
+      "target": "blueprint",
+      "expect_paths": [
+        "landingPage",
+        "steps[*].fullname",
+        "steps[*].intro",
+        "steps[*].path",
+        "steps[*].pluginName"
+      ]
+    },
+    {
+      "input": "plugin-component",
+      "env": "PLUGIN_COMPONENT",
+      "probe": "mod_probecomp",
+      "target": "blueprint",
+      "expect_paths": [
+        "landingPage",
+        "steps[*].fullname",
+        "steps[*].intro",
+        "steps[*].path",
+        "steps[*].pluginName"
+      ]
+    },
+    {
+      "input": "landing-path",
+      "env": "LANDING_PATH",
+      "probe": "/my/",
+      "target": "blueprint",
+      "expect_paths": [
+        "landingPage",
+        "steps[*].path"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "built-by",
+      "env": "BUILT_BY",
+      "probe": "probe-built-by",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].fullname",
+        "steps[*].intro"
+      ],
+      "note": "Reaches the course name, which the reviewer reads in Moodle; it is not one of the facts the summary tabulates."
+    },
+    {
+      "input": "php-version",
+      "env": "PHP_VERSION",
+      "probe": "8.4",
+      "target": "blueprint",
+      "expect_paths": [
+        "preferredVersions.php"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "login-as",
+      "env": "LOGIN_AS",
+      "probe": "admin",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].username"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "students",
+      "env": "STUDENTS",
+      "probe": "5",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].enrolments[*]",
+        "steps[*].users[*]"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "sections",
+      "env": "SECTIONS",
+      "probe": "7",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].numsections"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "plugin-root",
+      "env": "PLUGIN_ROOT",
+      "probe": "test/fixtures/probe-plugin",
+      "target": "blueprint",
+      "expect_paths": [
+        "landingPage",
+        "steps[*].fullname",
+        "steps[*].intro",
+        "steps[*].path",
+        "steps[*].pluginName"
+      ],
+      "note": "Unobservable without a version.php under the probe root; the fixture supplies one."
+    },
+    {
+      "input": "moodle-branch",
+      "env": "MOODLE_BRANCH",
+      "probe": "MOODLE_405_STABLE",
+      "target": "blueprint",
+      "expect_paths": [
+        "preferredVersions.moodle"
+      ],
+      "expect_in_summary": true
+    },
+    {
+      "input": "data-hosts",
+      "env": "DATA_HOSTS",
+      "probe": "gitlab.com",
+      "target": "refusal",
+      "expect_error": "host not in allowlist",
+      "note": "data-hosts REPLACES the allowlist and only affects the gate, so a widening value changes no artifact at all. Narrowing it to exclude the plugin's own host is the one observable, deterministic proof that the env var reaches the gate."
+    },
+    {
+      "input": "playground-host",
+      "env": "PLAYGROUND_HOST",
+      "probe": "https://ateeducacion.github.io/moodle-playground",
+      "target": "url",
+      "note": "Changes where the link points, not what the blueprint says. A blueprint diff would be the wrong assertion."
+    }
+  ]
+}

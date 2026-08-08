@@ -256,12 +256,6 @@ const MUTATIONS = [
   ["url: allow the proxy params, re-aiming the preview's network",
     "scripts/build-preview.mjs",
     '  "addonProxyUrl", "phpCorsProxyUrl",\n', ""],
-  ["type: preview a plugin type the bundled Moodle removed", "scripts/plugin-version.mjs",
-    "if (coreVersion == null || coreVersion < removed.removedAt) return { ok: true };",
-    "return { ok: true };"],
-  ["type: refuse a removed type even on Moodles that still have it",
-    "scripts/plugin-version.mjs",
-    "coreVersion < removed.removedAt", "false"],
   ["landing: send tiny subplugins back to the generic plugin list",
     "scripts/build-preview.mjs",
     'return "/admin/settings.php?section=editorsettingstiny";',
@@ -284,9 +278,10 @@ const MUTATIONS = [
   ["duplicate: allow two plugin steps to share a target directory",
     "scripts/preflight.mjs",
     "    if (targets.has(key)) {", "    if (false) {"],
-  ["duplicate: ignore installTheme's implied type", "scripts/preflight.mjs",
-    'const type = step.step === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;',
-    "const type = step.pluginType;"],
+  // Was: 'ignore installTheme's implied type'. That mutant targeted the old
+  // `step.pluginType ?? "theme"` default. 1c FORCES "theme" here, and the
+  // replacement mutant is "1c: honour installTheme's declared pluginType
+  // again", which restores exactly the line Sandy broke.
   ["evidence: count extractions without requiring them distinct",
     "scripts/assert.mjs",
     "    new Set(parsed.extractions).size === parsed.extractions.length,", "    true,"],
@@ -379,7 +374,138 @@ const MUTATIONS = [
     "const hosts = DEFAULT_DATA_HOSTS;"],
   ["identity: ignore version.php, trust the repository name", "scripts/build-preview.mjs",
     "if ((!type || !name) && overrides.component) {", "if (false) {"],
+  // 1e: the (default) sentinel and collect-all-errors
+  ["1e: sentinel stops resolving to unset", "scripts/build-preview.mjs",
+    'return v === DEFAULT_SENTINEL ? "" : v;', "return v;"],
+  ["1e: sentinel swallows real values too", "scripts/build-preview.mjs",
+    'return v === DEFAULT_SENTINEL ? "" : v;', 'return "";'],
+  ["1e: sentinel is not trimmed before comparison", "scripts/build-preview.mjs",
+    'const v = String(value ?? "").trim();', 'const v = String(value ?? "");'],
+  ["1e: collect-all stops collecting failed verdicts", "scripts/build-preview.mjs",
+    "if (verdict && verdict.ok === false) this.add(input, verdict.reason);", ""],
+  ["1e: collect-all treats passing verdicts as failures", "scripts/build-preview.mjs",
+    "if (verdict && verdict.ok === false) this.add(input, verdict.reason);",
+    "if (verdict) this.add(input, verdict.reason);"],
+  ["1e: problems are never thrown", "scripts/build-preview.mjs",
+    "    problems.annotate();\n    throw problems.toError();", ""],
+  ["1e: no annotation is emitted", "scripts/build-preview.mjs",
+    "    problems.annotate();\n    throw problems.toError();",
+    "    throw problems.toError();"],
+  ["1e: annotation keeps embedded newlines", "scripts/build-preview.mjs",
+    'sanitiseForLog(message).replace(/\\r?\\n/g, " ")', "sanitiseForLog(message)"],
+  ["1e: annotation drops the input name", "scripts/build-preview.mjs",
+    "`::error title=${sanitiseForLog(input)}::", "`::error::${\"\"}${"],
+  ["1e: the refusal summary stops listing the inputs", "scripts/build-preview.mjs",
+    "  const problemRows = problems.length", "  const problemRows = false"],
+  ["1e: php-version failure no longer registers", "scripts/build-preview.mjs",
+    'problems.check("php-version", phpOk);', ""],
+  ["1e: landing-path failure no longer registers", "scripts/build-preview.mjs",
+    'problems.add("landing-path", `${ok.reason}: ${JSON.stringify(landingOverride)}`);', ""],
+
+  // Review fixes (2026-08-08)
+  ["rev: allow anything before installMoodle again", "scripts/order-rules.mjs",
+    '    except: ["restoreDatabase"],\n    why: "nothing exists before Moodle is installed",',
+    '    why: "nothing exists before Moodle is installed",'],
+  ["rev: stop checking addModule names a real module", "scripts/order-rules.mjs",
+    "      if (!isCore && !mods.has(step.module)) {", "      if (false) {"],
+  ["rev: treat every module as core", "scripts/order-rules.mjs",
+    "const isCore = coreComponents.standard.has(`mod_${step.module}`);", "const isCore = true;"],
+  ["rev: forget mods installed by an earlier step", "scripts/order-rules.mjs",
+    'if (name === "installMoodlePlugin" && step.pluginType === "mod") mods.add(step.pluginName);', ""],
+  ["rev: stop catching the late welcome-message config", "scripts/order-rules.mjs",
+    'if (c?.name === "sendcoursewelcomemessage") {', "if (false) {"],
+  ["rev: flag the welcome message even before any course", "scripts/order-rules.mjs",
+    '(name === "setConfig" || name === "setConfigs") && coursesCreatedAt >= 0',
+    '(name === "setConfig" || name === "setConfigs")'],
+  ["rev: expectations honour installTheme's declared type again", "scripts/preflight.mjs",
+    'pluginType: s.step === "installTheme" ? "theme" : s.pluginType,',
+    'pluginType: s.step === "installTheme" ? (s.pluginType ?? "theme") : s.pluginType,'],
+  ["rev: identifier check honours installTheme's declared type again", "scripts/preflight.mjs",
+    '      const type = name === "installTheme" ? "theme" : step.pluginType;',
+    '      const type = name === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;'],
+  ["rev: free-text landing-path swallows the sentinel again", "scripts/build-preview.mjs",
+    '  const landingOverride = (process.env.LANDING_PATH || "").trim();',
+    "  const landingOverride = opt(process.env.LANDING_PATH);"],
+
+  // 1b: referential integrity
+  ["1b: forget that installMoodle creates the admin", "scripts/order-rules.mjs",
+    'if (name === "installMoodle") users.add(step.username || "admin");', ""],
+  ["1b: honour a renamed admin no longer", "scripts/order-rules.mjs",
+    'users.add(step.username || "admin");', 'users.add("admin");'],
+  ["1b: forget themes installed via installMoodlePlugin", "scripts/order-rules.mjs",
+    'if (name === "installMoodlePlugin" && step.pluginType === "theme") themes.add(step.pluginName);', ""],
+  ["1b: refuse a core theme that needs no install", "scripts/order-rules.mjs",
+    "const isCore = coreComponents?.ok && coreComponents.standard.has(`theme_${step.name}`);",
+    "const isCore = false;"],
+  ["1b: guess at themes when the core list failed to load", "scripts/order-rules.mjs",
+    "if (!isCore && !themes.has(step.name) && coreComponents?.ok) {",
+    "if (!isCore && !themes.has(step.name)) {"],
+  ["1b: stop waiving references after a restore", "scripts/order-rules.mjs",
+    "if (i > opaqueFrom) continue;", ""],
+  ["1b: waive references BEFORE the restore too", "scripts/order-rules.mjs",
+    "let opaqueFrom = steps.findIndex((s) => OPAQUE_SOURCES.has(s?.step));",
+    "let opaqueFrom = -1;"],
+  ["1b: stop checking login usernames", "scripts/order-rules.mjs",
+    'if (name === "login" && step.username && !users.has(step.username)) {', "if (false) {"],
+  ["1b: stop checking enrolment courses", "scripts/order-rules.mjs",
+    "if (e?.course && !courses.has(e.course)) {", "if (false) {"],
+  ["1b: stop checking enrolment usernames", "scripts/order-rules.mjs",
+    "if (e?.username && !users.has(e.username)) {", "if (false) {"],
+  // The ordering engine itself. Per-RULE mutants are generated below.
+  ["1b: ordering check reports nothing", "scripts/order-rules.mjs",
+    "  const names = steps.map((s) => s?.step);\n  const errors = [];",
+    "  const names = [];\n  const errors = [];"],
+  ["1b: gate stops consuming the ordering rules", "scripts/preflight.mjs",
+    "bindErrors.push(...checkOrder(steps));", ""],
+  ["1b: gate stops consuming the reference rules", "scripts/preflight.mjs",
+    "bindErrors.push(...checkReferences(steps, opts.coreComponents));", ""],
+  ["1b: wildcard ignores its except list", "scripts/order-rules.mjs",
+    "const except = new Set(rule.except || []);", "const except = new Set();"],
+  ["1b: restoreDatabase is no longer reported as risky", "scripts/preflight.mjs",
+    '  "restoreDatabase", "restoreCourse",\n  "runPhpCode"', '  "runPhpCode"'],
+
+  // 1c: the bundle's own plugins as collision targets
+  ["1c: gate stops refusing core components", "scripts/preflight.mjs",
+    "if (!core.ok) bindErrors.push(`step[${i}] ${step.step}: ${core.reason}`);", ""],
+  ["1c: gate ignores the core list entirely", "scripts/preflight.mjs",
+    "if (opts.coreComponents) {", "if (false) {"],
+  ["1c: allow installing over a core component", "scripts/plugin-version.mjs",
+    "if (core.standard.has(component)) {", "if (false) {"],
+  ["1c: allow a plugin type core deleted", "scripts/plugin-version.mjs",
+    "if (core.removedTypes.has(String(type))) {", "if (false) {"],
+  // Sandy's divergence: the handler always installs to theme/, so honouring a
+  // supplied pluginType lets a step evade both the collision map and the core
+  // list while still landing on theme_boost.
+  ["1c: honour installTheme's declared pluginType again", "scripts/preflight.mjs",
+    'const type = step.step === "installTheme" ? "theme" : step.pluginType;',
+    'const type = step.step === "installTheme" ? (step.pluginType ?? "theme") : step.pluginType;'],
+  // A failed fetch must fail OPEN but be reported; treating it as a pass-with-
+  // empty-set would silently disable the check for every branch.
+  ["1c: treat a failed core fetch as an empty core", "scripts/plugin-version.mjs",
+    "if (!core?.ok) return { ok: true };", "if (false) return { ok: true };"],
+  ["1c: accept an empty standard list as success", "scripts/plugin-version.mjs",
+    "result = standard.size", "result = true"],
+  ["1c: drop the branch-name check before fetching", "scripts/plugin-version.mjs",
+    'if (!/^[A-Za-z0-9_]+$/.test(key)) {', "if (false) {"],
+  // NOT mutated individually: the builder's own checkNotCoreComponent call is
+  // deliberately redundant with the gate's. Measured 2026-08-07 by deleting it
+  // and running the builder with PLUGIN_COMPONENT=mod_assign — the gate still
+  // refused, only with the less direct "a blueprint our own gate rejects"
+  // wording. Per the redundant-guard policy above, mutating it alone would
+  // demand a test for redundancy rather than for behaviour. The gate side is
+  // covered by "1c: gate stops refusing core components".
 ];
+
+// One mutation per ORDER_RULES entry, sliced out of the source file: deleting
+// any single rule must break a test, or that rule is decoration. Generated
+// rather than hand-listed so a rule added later cannot arrive without a
+// mutant. (The per-rule TESTS are hand-written for the opposite reason — a
+// generated test would vanish along with the rule it covers.)
+const ORDER_SRC = readFileSync(join(ROOT, "scripts/order-rules.mjs"), "utf8");
+for (const block of ORDER_SRC.match(/ {2}\{\n {4}id: "[^"]+",[\s\S]*?\n {2}\},\n/g) || []) {
+  const id = /id: "([^"]+)"/.exec(block)[1];
+  MUTATIONS.push([`1b: drop ordering rule ${id}`, "scripts/order-rules.mjs", block, ""]);
+}
 
 const survivors = [];
 let killed = 0;

@@ -545,3 +545,137 @@ test("a count is clamped once, where the summary can see it", async () => {
   assert.equal(clampCount(undefined, 7, 1, 20), 7);
   assert.equal(clampCount("2.9", 1, 1, 20), 2);
 });
+
+// --- 1e: the (default) sentinel and collect-all-errors ----------------------
+// A `choice` input always submits something, so one option has to MEAN unset.
+// It used to be an English sentence in three places — the option, the default,
+// and a `${{ }}` ternary — none of which any test or mutant can reach. Now it
+// is one token resolved here.
+test("the sentinel resolves to unset, and real values survive", async () => {
+  const { opt, DEFAULT_SENTINEL } = await import("../scripts/build-preview.mjs");
+  assert.equal(DEFAULT_SENTINEL, "(default)");
+  assert.equal(opt(DEFAULT_SENTINEL), "");
+  assert.equal(opt(" (default) "), "");
+  assert.equal(opt("8.3"), "8.3");
+  assert.equal(opt("  admin "), "admin");
+  assert.equal(opt(""), "");
+  assert.equal(opt(undefined), "");
+});
+
+// Parentheses are illegal in every value space these controls accept, which is
+// why this token cannot collide with a real answer.
+test("the sentinel cannot be confused with a legitimate value", async () => {
+  const { opt, DEFAULT_SENTINEL } = await import("../scripts/build-preview.mjs");
+  assert.match(DEFAULT_SENTINEL, /[()]/);
+  for (const real of ["8.3", "admin", "student1", "mod_attendance", "topics", "en", "de_du"]) {
+    assert.equal(opt(real), real);
+  }
+});
+
+test("Problems collects every failure and names the input for each", async () => {
+  const { Problems } = await import("../scripts/build-preview.mjs");
+  const p = new Problems();
+  assert.equal(p.any, false);
+  p.check("php-version", { ok: true });
+  assert.equal(p.any, false, "a passing check must not register a problem");
+  p.check("php-version", { ok: false, reason: "bad php" });
+  p.add("login-as", "no such user");
+  assert.equal(p.any, true);
+  const err = p.toError();
+  assert.match(err.message, /2 inputs are wrong/);
+  assert.match(err.message, /php-version: bad php/);
+  assert.match(err.message, /login-as: no such user/);
+  assert.deepEqual(err.problems.map((x) => x.input), ["php-version", "login-as"]);
+});
+
+test("a single problem reads as itself, not as a list of one", async () => {
+  const { Problems } = await import("../scripts/build-preview.mjs");
+  const p = new Problems();
+  p.add("php-version", "bad php");
+  assert.equal(p.toError().message, "bad php");
+});
+
+// An annotation is one line: a newline would terminate the workflow command
+// and dump the remainder as plain output.
+test("annotations are one line each and carry the input name", async () => {
+  const { Problems } = await import("../scripts/build-preview.mjs");
+  const p = new Problems();
+  p.add("landing-path", "line one\nline two");
+  const lines = [];
+  p.annotate((l) => lines.push(l));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^::error title=landing-path::/);
+  assert.ok(!lines[0].slice(2).includes("\n"), `annotation contains a newline: ${lines[0]}`);
+});
+
+// Three simultaneous mistakes used to cost three runs. This is the end-to-end
+// proof that they now cost one — and that each is attributed to its own field.
+test("three bad inputs are all reported by one run", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "collect-"));
+  const summary = join(dir, "summary.md");
+  writeFileSync(summary, "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env,
+        HEAD_REPO: "DavidUCL/moodle-mod_attendance",
+        HEAD_SHA: SHA,
+        PHP_VERSION: "8.9",
+        LOGIN_AS: "nobody",
+        LANDING_PATH: "//evil.tld/x",
+        OUT_DIR: join(dir, "out"),
+        GITHUB_OUTPUT: join(dir, "gho.txt"),
+        GITHUB_STEP_SUMMARY: summary,
+      },
+      stdio: "pipe",
+    });
+    assert.fail("expected a refusal");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  for (const input of ["php-version", "login-as", "landing-path"]) {
+    assert.match(out, new RegExp(`::error title=${input}::`), `no annotation for ${input}`);
+  }
+  const md = readFileSync(summary, "utf8");
+  assert.match(md, /3 inputs to fix/);
+  for (const input of ["php-version", "login-as", "landing-path"]) {
+    assert.ok(md.includes(`\`${input}\``), `summary table missing ${input}`);
+  }
+});
+
+test("a free-text input does NOT swallow the sentinel", async () => {
+  const { checkLandingPath } = await import("../scripts/build-preview.mjs");
+  // "(default)" is not a path; landing-path must refuse it rather than treat
+  // it as "unset", which would silently drop what the user asked for.
+  assert.equal(checkLandingPath("(default)").ok, false);
+});
+
+test("the sentinel is accepted everywhere a choice can send it", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "sentinel-"));
+  const gho = join(dir, "gho.txt");
+  writeFileSync(gho, "");
+  execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+    env: {
+      ...process.env,
+      HEAD_REPO: "DavidUCL/moodle-mod_attendance",
+      HEAD_SHA: SHA,
+      // Only the CHOICE inputs send the sentinel. landing-path is free text,
+      // where a literal "(default)" is a mistake and must be refused.
+      PHP_VERSION: "(default)",
+      LOGIN_AS: "(default)",
+      OUT_DIR: join(dir, "out"),
+      GITHUB_OUTPUT: gho,
+    },
+    stdio: "pipe",
+  });
+  assert.match(readFileSync(gho, "utf8"), /preview-url=/);
+});

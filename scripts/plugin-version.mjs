@@ -22,19 +22,21 @@ import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 /**
- * Moodle core `$version` at the tip of each branch the playground can bundle.
+ * The Moodle `$version` each branch's BUNDLED IMAGE runs — the Moodle the
+ * reviewer actually boots, NOT the tip of moodle/moodle.
  *
- * Compared exactly as Moodle compares it in `upgrade_requires_exception`:
- * a plugin is refused when `requires > core version`.
+ * The distinction is the whole point, and this comment used to have it
+ * backwards. Core only ever increases $version, so gating this table against
+ * the branch TIP pushes it ABOVE the bundle: when core cuts 5.0.9 the table
+ * would say 2025041409 while the bundle still runs 5.0.8, and a plugin
+ * requiring 5.0.9 would pass the compatibility check, boot, and install
+ * NOTHING. That is a false PASS, not the "false refusal only" this comment
+ * once claimed.
  *
- * These drift upward as core cuts point releases, and a stale entry here can
- * only ever produce a FALSE REFUSAL (never a false pass), because core's
- * number only increases. `verify.sh` check 1h re-derives them from
- * moodle/moodle and fails loudly on drift, the same way check 1e guards
- * PLUGIN_TYPE_DIRS.
- *
- * Verified 2026-08-03 against raw.githubusercontent.com/moodle/moodle/<branch>/version.php.
- * (`v5.0.0` reads 2025041400.00, confirming the X.Y.0 base convention.)
+ * Check 1h keeps it honest without anyone maintaining a number: the branch
+ * base comes from core's version.php (floored to 100) and the point release
+ * from the bundle's own {playground-host}/assets/manifests/{branch}.json
+ * `release` field. Update this table to what the BUNDLE runs.
  */
 export const MOODLE_BRANCH_VERSIONS = {
   MOODLE_404_STABLE: 2024042212,
@@ -43,17 +45,97 @@ export const MOODLE_BRANCH_VERSIONS = {
 };
 
 /**
- * Plugin types core has REMOVED, and the core version that removed them.
- * A subplugin of a host that no longer exists cannot install, and the preview
- * would show a clean Moodle with nothing in it — the same silent failure the
- * `requires` check exists to stop, arriving by a different route.
+ * Moodle's own list of the plugins it ships, read from the branch under test.
  *
- * Verified 2026-08-03: lib/editor/atto/version.php is present on
- * MOODLE_405_STABLE and 404s on MOODLE_500_STABLE.
+ * `lib/plugins.json` (MDL-81084) is the ONLY source
+ * `core_plugin_manager::standard_plugins_list()` reads
+ * (plugin_manager.php:348-355), so it is the same bytes Moodle itself uses.
+ *
+ * Fetched per branch rather than shipped as a table, because a table would be
+ * WRONG for at least one branch in the selector — measured:
+ *   4.4: 442 standard components, `mod_qbank` absent, `atto` still standard
+ *   4.5: 448
+ *   5.0: 412, `mod_qbank` present, `atto` moved to `deleted`
+ * A per-branch fetch is authoritative and cannot drift; a table fossilises.
+ *
+ * Why it matters: `installViaZipDownload` never clears the target directory
+ * (moodle-plugins.js:198-262), so a ZIP declaring `mod_assign` is written file
+ * by file over Moodle's own. If it also declares a higher version, nothing
+ * throws — the attacker's `xmldb_assign_upgrade()` runs against the live
+ * schema and `update_capabilities()` -> `capabilities_cleanup()`
+ * (lib/accesslib.php:2426) DELETES every core `mod/assign:*` capability absent
+ * from the new db/access.php, and unassigns it from every role. Silently.
+ *
+ * @returns {Promise<{ok: boolean, reason?: string, standard: Set<string>, removedTypes: Set<string>}>}
  */
-export const REMOVED_PLUGIN_TYPES = {
-  atto: { removedAt: 2025041400, replacement: "tiny", release: "Moodle 5.0" },
-};
+const coreComponentCache = new Map();
+
+export async function fetchCoreComponents(branch) {
+  const key = String(branch);
+  if (coreComponentCache.has(key)) return coreComponentCache.get(key);
+  const empty = { ok: false, standard: new Set(), removedTypes: new Set() };
+  if (!/^[A-Za-z0-9_]+$/.test(key)) {
+    return { ...empty, reason: `refusing to fetch a core list for branch ${JSON.stringify(branch)}` };
+  }
+  const url = `https://raw.githubusercontent.com/moodle/moodle/${key}/lib/plugins.json`;
+  let result;
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000), redirect: "error" });
+    if (!res.ok) {
+      result = { ...empty, reason: `HTTP ${res.status} fetching ${url}` };
+    } else {
+      const doc = JSON.parse((await res.text()).slice(0, 1048576));
+      const standard = new Set();
+      for (const [type, names] of Object.entries(doc.standard || {})) {
+        for (const name of names) standard.add(`${type}_${name}`);
+      }
+      // A plugin TYPE present in `deleted` but absent from `standard` is a type
+      // core has removed. On 5.0 that is assignment, atto, tinymce — a superset
+      // of the hand-written table this replaces, which knew only about atto.
+      const removedTypes = new Set(
+        Object.keys(doc.deleted || {}).filter((t) => !Object.hasOwn(doc.standard || {}, t)),
+      );
+      result = standard.size
+        ? { ok: true, standard, removedTypes }
+        : { ...empty, reason: `${url} parsed but listed no standard plugins` };
+    }
+  } catch (err) {
+    result = { ...empty, reason: `could not fetch ${url}: ${err.message}` };
+  }
+  coreComponentCache.set(key, result);
+  return result;
+}
+
+/**
+ * Refuse a component Moodle itself ships.
+ *
+ * @returns {{ok: boolean, reason?: string}}
+ */
+export function checkNotCoreComponent(type, name, core) {
+  if (!core?.ok) return { ok: true };
+  const component = `${type}_${name}`;
+  if (core.standard.has(component)) {
+    return {
+      ok: false,
+      reason:
+        `"${component}" is a plugin Moodle itself ships. Installing over it does not ` +
+        `replace it — the ZIP is written file by file into the same directory, and if ` +
+        `it declares a higher version Moodle runs its upgrade against the live schema ` +
+        `and silently deletes core capabilities. Rename the plugin, or preview it as ` +
+        `the component it really is.`,
+    };
+  }
+  if (core.removedTypes.has(String(type))) {
+    return {
+      ok: false,
+      reason:
+        `"${type}" plugins were removed from this Moodle — it lists the type under ` +
+        `"deleted". The plugin cannot install, and the preview would show a working ` +
+        `Moodle without it.`,
+    };
+  }
+  return { ok: true };
+}
 
 /** The playground's own default branch (version-resolver.js, `default: true`). */
 export const DEFAULT_MOODLE_BRANCH = "MOODLE_500_STABLE";
@@ -325,25 +407,6 @@ export function checkMoodleCompatibility(plugin, moodleBranch = DEFAULT_MOODLE_B
   return { ok: true, coreVersion };
 }
 
-/**
- * Refuse a plugin whose TYPE no longer exists in the bundled Moodle.
- *
- * @returns {{ok: boolean, reason?: string}}
- */
-export function checkPluginTypeSupported(type, moodleBranch = DEFAULT_MOODLE_BRANCH) {
-  const removed = REMOVED_PLUGIN_TYPES[String(type)];
-  if (!removed) return { ok: true };
-  const coreVersion = MOODLE_BRANCH_VERSIONS[String(moodleBranch)];
-  if (coreVersion == null || coreVersion < removed.removedAt) return { ok: true };
-  return {
-    ok: false,
-    reason:
-      `"${type}" plugins were removed in ${removed.release}, which is what the ` +
-      `playground bundles (${moodleBranch}). The plugin cannot install, and the ` +
-      `preview would show a working Moodle without it` +
-      (removed.replacement ? ` — ${removed.replacement} replaced it.` : "."),
-  };
-}
 
 /**
  * Cross-check a declared component against the identity the blueprint will use.

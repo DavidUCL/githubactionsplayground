@@ -66,12 +66,19 @@ test("proxy override key anywhere rejected", () => {
 });
 
 test("every risky step is ALLOWED — they are reported, not refused", () => {
-  // The 15 used to be banned outright. Blocking them also blocked legitimate
+  // These used to be banned outright. Blocking them also blocked legitimate
   // uses (installing a dependency, preparing fixtures), so they now run and
   // are reported instead. Unknown names are still refused; see below.
+  //
+  // 15 -> 17 when restoreDatabase and restoreCourse joined the list. Both were
+  // ALREADY in ALLOWED_STEPS, so the allowed count does NOT move: the only
+  // change is that the summary now names them.
   for (const s of RISKY_STEPS) assert.equal(ALLOWED_STEPS.has(s), true, s);
   assert.equal(ALLOWED_STEPS.size, 47);
-  assert.equal(RISKY_STEPS.size, 15);
+  assert.equal(RISKY_STEPS.size, 17);
+  for (const s of ["restoreDatabase", "restoreCourse"]) {
+    assert.equal(RISKY_STEPS.has(s), true, s);
+  }
 });
 
 test("a risky step is reported by name, and does not block the blueprint", () => {
@@ -372,7 +379,10 @@ test("installTheme collides with an installMoodlePlugin of the same identity", (
     pluginName: "boost_x",
   });
   b.steps.push(pluginStep("c", "d", "theme", "boost_x"));
-  assert.match(gateBlueprint(b, HOSTS).bindErrors[0], /theme_boost_x is already installed/);
+  // Joined, not [0]: appending to this fixture also trips the ordering rule
+  // (the fixture ends with setTheme), and indexing the first error would make
+  // this test depend on which check happens to run first.
+  assert.match(gateBlueprint(b, HOSTS).bindErrors.join(";"), /theme_boost_x is already installed/);
 });
 
 test("the collision is reported even when the self URL is present", () => {
@@ -453,4 +463,67 @@ test("fetchBlueprint returns bytes and the final URL for a good fetch", async (t
   assert.ok(bytes.length > 0);
   assert.match(finalUrl, /^https:\/\/raw\.githubusercontent\.com\//);
   assert.ok(JSON.parse(bytes.toString("utf8")).steps.length > 0);
+});
+
+// --- 1c: the bundle's own plugins are collision targets too -----------------
+// The duplicate-target check only ever compared plugin steps against EACH
+// OTHER. Moodle's own plugins are not in that map, so a step declaring
+// mod_assign sailed through and installViaZipDownload wrote it over core.
+const CORE = {
+  ok: true,
+  standard: new Set(["mod_assign", "theme_boost"]),
+  removedTypes: new Set(["atto"]),
+};
+const withCore = (b) => gateBlueprint(b, HOSTS, { coreComponents: CORE });
+
+test("gate refuses a plugin step that installs over a core component", () => {
+  const b = bp();
+  b.steps.push(pluginStep("c", "d", "mod", "assign"));
+  assert.match(withCore(b).bindErrors.join(";"), /Moodle itself ships/);
+});
+
+test("gate refuses a step whose plugin TYPE core deleted", () => {
+  const b = bp();
+  b.steps.push(pluginStep("c", "d", "atto", "whatever"));
+  assert.match(withCore(b).bindErrors.join(";"), /removed from this Moodle/);
+});
+
+// Sandy: the gate read `step.pluginType ?? "theme"` while the handler ALWAYS
+// installs to theme/ (moodle-plugins.js:111) and ignores the field. So
+// declaring `pluginType: mod` moved the step to a different key in the
+// collision map while it still landed on theme_boost. One character of
+// gate/runtime divergence was enough to evade both checks.
+test("installTheme is judged as a theme however it declares itself", () => {
+  const b = bp();
+  b.steps.push({
+    step: "installTheme",
+    url: `https://raw.githubusercontent.com/c/d/${"a".repeat(40)}/p.zip`,
+    pluginType: "mod",
+    pluginName: "boost",
+  });
+  assert.match(withCore(b).bindErrors.join(";"), /theme_boost/);
+});
+
+test("a lying installTheme still collides with a real theme step", () => {
+  const b = bp();
+  b.steps.push(pluginStep("c", "d", "theme", "boost_x"));
+  b.steps.push({
+    step: "installTheme",
+    url: `https://raw.githubusercontent.com/e/f/${"a".repeat(40)}/p.zip`,
+    pluginType: "mod",
+    pluginName: "boost_x",
+  });
+  assert.match(withCore(b).bindErrors.join(";"), /theme_boost_x is already installed/);
+});
+
+test("a genuine third-party plugin still passes with the core list present", () => {
+  const b = bp();
+  b.steps.push(pluginStep("c", "d", "mod", "coursework"));
+  assert.deepEqual(withCore(b).bindErrors, []);
+});
+
+test("without a core list the gate behaves exactly as before", () => {
+  const b = bp();
+  b.steps.push(pluginStep("c", "d", "mod", "assign"));
+  assert.deepEqual(gateBlueprint(b, HOSTS).bindErrors, []);
 });

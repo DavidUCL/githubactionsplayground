@@ -106,28 +106,56 @@ else
     echo "CHECK 1f SKIP: SKIP_NET set"
 fi
 
-# The Moodle-version table in plugin-version.mjs is a snapshot of core's own
-# $version per branch. Core only ever increases it, so a stale entry can only
-# cause a FALSE REFUSAL of a valid plugin — annoying, and invisible until an
-# adopter reports it. Re-derive from moodle/moodle and say so out loud.
-# Same shape as check 1e: real source when reachable, loud waiver when not.
+# The Moodle-version table in plugin-version.mjs decides whether a plugin's
+# $plugin->requires is satisfiable. It must match the Moodle the reviewer
+# ACTUALLY BOOTS — the playground's bundled image — not moodle/moodle's branch
+# tip, which runs ahead of it.
+#
+# This check used to compare against the tip, with a comment claiming a stale
+# entry could only cause a FALSE REFUSAL. That was wrong, and backwards. Core
+# only ever increases $version, so gating on the tip pushes the table ABOVE the
+# bundle: when core cuts 5.0.9 this check FAILS until the table says
+# 2025041409, while the bundle is still 5.0.8. A plugin requiring 5.0.9 then
+# passes the gate, boots, and installs NOTHING — the silent empty-Moodle
+# failure the requires check exists to prevent. The check was manufacturing the
+# bug it was meant to catch.
+#
+# Neither number here is hand-maintained:
+#   base  (first 8 digits, fixed for the life of a branch) from core's version.php
+#   point (the .N release) from the bundle's own manifest `release` field
+# base + point = the version running in the browser.
+#
+# Prior art: WordPress's is_wp_version_compatible() reads wp_get_wp_version();
+# Composer resolves against the live platform. Read what is running.
+PLAYGROUND_HOST_URL="${PLAYGROUND_HOST:-https://daviducl.github.io/moodle-playground}"
 if [[ -z "${SKIP_NET:-}" ]]; then
-    DRIFT=$(node -e '
+    DRIFT=$(HOST="$PLAYGROUND_HOST_URL" node -e '
 import("./scripts/plugin-version.mjs").then(async (m) => {
   const problems = [];
   for (const [branch, recorded] of Object.entries(m.MOODLE_BRANCH_VERSIONS)) {
-    const url = `https://raw.githubusercontent.com/moodle/moodle/${branch}/version.php`;
-    let text;
+    let base, point;
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
-      if (!res.ok) { console.log(`SKIP ${branch}: HTTP ${res.status}`); continue; }
-      text = await res.text();
+      const res = await fetch(`https://raw.githubusercontent.com/moodle/moodle/${branch}/version.php`,
+        { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) { console.log(`SKIP ${branch}: core HTTP ${res.status}`); continue; }
+      const found = /\$version\s*=\s*([0-9]+)/.exec(await res.text());
+      if (!found) { console.log(`SKIP ${branch}: no $version in core version.php`); continue; }
+      // Point releases occupy the last two digits, so flooring to 100 gives the
+      // branch base whatever point release the tip happens to sit on.
+      base = Math.floor(Number(found[1]) / 100) * 100;
     } catch (e) { console.log(`SKIP ${branch}: ${e.message}`); continue; }
-    const found = /\$version\s*=\s*([0-9]+)/.exec(text);
-    if (!found) { console.log(`SKIP ${branch}: no $version found`); continue; }
-    const actual = Number(found[1]);
-    if (actual !== recorded) {
-      problems.push(`${branch}: table says ${recorded}, core says ${actual}`);
+    try {
+      const res = await fetch(`${process.env.HOST}/assets/manifests/${branch}.json`,
+        { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) { console.log(`SKIP ${branch}: manifest HTTP ${res.status}`); continue; }
+      const rel = (await res.json()).release;
+      const parts = /^(\d+)\.(\d+)(?:\.(\d+))?/.exec(String(rel));
+      if (!parts) { console.log(`SKIP ${branch}: unparseable release ${JSON.stringify(rel)}`); continue; }
+      point = Number(parts[3] || 0);
+    } catch (e) { console.log(`SKIP ${branch}: ${e.message}`); continue; }
+    const running = base + point;
+    if (running !== recorded) {
+      problems.push(`${branch}: table says ${recorded}, the bundle runs ${running}`);
     }
   }
   if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
@@ -135,18 +163,184 @@ import("./scripts/plugin-version.mjs").then(async (m) => {
 });
 ' 2>&1) || true
     if [[ "$DRIFT" == *DRIFT* ]]; then
-        echo "CHECK 1h FAIL: Moodle version table is stale — $DRIFT"
-        echo "               Update MOODLE_BRANCH_VERSIONS in scripts/plugin-version.mjs."
-        FAILED+=("1h: Moodle version table is stale")
+        echo "CHECK 1h FAIL: version table does not match the bundle — $DRIFT"
+        echo "               Update MOODLE_BRANCH_VERSIONS in scripts/plugin-version.mjs"
+        echo "               to the version the BUNDLE runs, not moodle/moodle's tip."
+        FAILED+=("1h: version table does not match the bundle")
+    elif [[ "$DRIFT" != *"OK"* && "$DRIFT" != *"SKIP"* ]]; then
+        # Neither a verdict nor a waiver: the probe itself broke. This used to
+        # fall through to PASS, certifying a check that never ran.
+        echo "CHECK 1h FAIL: the check did not run — $DRIFT"
+        FAILED+=("1h: the check did not run")
     elif [[ "$DRIFT" == *"SKIP"* && "$DRIFT" != *"OK"* ]]; then
-        echo "CHECK 1h WAIVED: could not reach moodle/moodle — version table UNCHECKED"
+        echo "CHECK 1h WAIVED: could not reach core or the bundle manifest — table UNCHECKED"
         echo "                 ($DRIFT)"
     else
-        echo "CHECK 1h PASS: Moodle version table matches core"
+        echo "CHECK 1h PASS: version table matches the Moodle the bundle actually runs"
     fi
 else
     echo "CHECK 1h SKIP: SKIP_NET set"
 fi
+
+# The core-component list is fetched per branch at build time rather than
+# shipped as a table (see fetchCoreComponents). This proves the real fetch
+# still works and still returns a list Moodle would recognise — a silent
+# failure would fail OPEN and stop refusing core collisions altogether.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    CORE=$(node -e '
+import("./scripts/plugin-version.mjs").then(async (m) => {
+  const problems = [];
+  for (const branch of Object.keys(m.MOODLE_BRANCH_VERSIONS)) {
+    const core = await m.fetchCoreComponents(branch);
+    if (!core.ok) { console.log(`SKIP ${branch}: ${core.reason}`); continue; }
+    // Anchors: components core has shipped for over a decade. If these are
+    // missing the file moved or changed shape and the check is not checking.
+    for (const c of ["mod_assign", "mod_quiz", "theme_boost", "block_html"]) {
+      if (!core.standard.has(c)) problems.push(`${branch}: ${c} missing from standard`);
+    }
+    if (m.checkNotCoreComponent("mod", "assign", core).ok) {
+      problems.push(`${branch}: mod_assign was NOT refused`);
+    }
+    if (!m.checkNotCoreComponent("mod", "coursework", core).ok) {
+      problems.push(`${branch}: mod_coursework was wrongly refused`);
+    }
+  }
+  if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
+  console.log("OK");
+});
+' 2>&1) || true
+    if [[ "$CORE" == *DRIFT* ]]; then
+        echo "CHECK 1p FAIL: core-component list is not usable — $CORE"
+        FAILED+=("1p: core-component list is not usable")
+    elif [[ "$CORE" != *"OK"* && "$CORE" != *"SKIP"* ]]; then
+        # Neither a verdict nor a waiver: the probe itself broke. This used to
+        # fall through to PASS, certifying a check that never ran.
+        echo "CHECK 1p FAIL: the check did not run — $CORE"
+        FAILED+=("1p: the check did not run")
+    elif [[ "$CORE" == *"SKIP"* && "$CORE" != *"OK"* ]]; then
+        echo "CHECK 1p WAIVED: could not reach lib/plugins.json — core collisions UNCHECKED"
+        echo "                 ($CORE)"
+    else
+        echo "CHECK 1p PASS: core-component list fetches and refuses core collisions"
+    fi
+else
+    echo "CHECK 1p SKIP: SKIP_NET set"
+fi
+
+# A `choice` input has no unset state, so one option has to MEAN "unset". That
+# token is now a single reserved string resolved in JS (DEFAULT_SENTINEL), not
+# an English sentence compared inside a `${{ }}` ternary. The ternaries are
+# gone; this stops them coming back, and stops the YAML token drifting away
+# from the JS one — nothing else would notice, because a `${{ }}` expression is
+# not reachable by the test suite or the mutation harness.
+SENTINEL=$(node -e 'import("./scripts/build-preview.mjs").then(m=>process.stdout.write(m.DEFAULT_SENTINEL))')
+SENT_PROBLEMS=""
+if [[ -z "$SENTINEL" ]]; then
+    SENT_PROBLEMS="build-preview.mjs exports no DEFAULT_SENTINEL"
+else
+    # Every choice input whose default is not a real value must use the token.
+    while IFS= read -r line; do
+        SENT_PROBLEMS+="a choice input still defaults to prose, not $SENTINEL: $line; "
+    done < <(grep -rnE '^ *default: *(default for|derive from|none|blank|unset|auto)' .github/workflows/*.yml || true)
+    # And the token the YAML uses must be the token the JS resolves — in BOTH
+    # directions. The first version hardcoded "(default)" in the grep, so
+    # editing the YAML token while leaving DEFAULT_SENTINEL alone matched
+    # nothing and passed: exactly the drift the check exists to prevent.
+    # Every choice input that offers an unset option must offer THIS token.
+    while IFS= read -r f; do
+        # Options that look like a reserved token: parenthesised, not a value.
+        # sed, not `tr -d ' -"'` — in tr that dash is a RANGE (space to \"), so it
+        # strips nothing and every token keeps its leading "- ", never matching.
+        STRAY=$(grep -oE '^ *- *"?\([a-z-]+\)"?' "$f" | sed -E 's/^ *- *"?//; s/"?$//' | sort -u || true)
+        for tok in $STRAY; do
+            [[ "$tok" == "$SENTINEL" ]] || SENT_PROBLEMS+="$f offers option '$tok' but JS resolves '$SENTINEL'; "
+        done
+        # And if the JS token is offered nowhere, the resolution is dead code.
+        grep -qF -- "$SENTINEL" "$f" && SENTINEL_SEEN=1
+    done < <(ls .github/workflows/*.yml)
+    [[ -n "${SENTINEL_SEEN:-}" ]] || SENT_PROBLEMS+="no workflow offers '$SENTINEL', so opt() resolves a token nothing sends; "
+fi
+if [[ -n "$SENT_PROBLEMS" ]]; then
+    echo "CHECK 1q FAIL: $SENT_PROBLEMS"
+    FAILED+=("1q: default-sentinel drift")
+else
+    echo "CHECK 1q PASS: the unset-choice token is '$SENTINEL' in both the YAML and the JS"
+fi
+
+# No `${{ }}` inside a `run:` block, anywhere. GitHub pastes the expression into
+# the shell BEFORE the shell parses it, so a value containing a quote or a
+# backtick is executed on the runner. With free-text fields on the dispatch
+# form that is an injection surface, and it is also where the sentinel
+# ternaries used to live. Inputs reach `run:` through `env:` instead.
+RUN_INTERP=$(node -e '
+import("node:fs").then(async (fs) => {
+  // Composite actions have run: blocks too, and the same injection risk. The
+  // first version of this check scanned only .github/workflows and would have
+  // passed a compromised action.yml.
+  const files = fs
+    .readdirSync(".github/workflows")
+    .filter((f) => f.endsWith(".yml"))
+    .map((f) => `.github/workflows/${f}`)
+    .concat(["action.yml", "preview/action.yml"].filter((f) => fs.existsSync(f)));
+  const bad = [];
+  for (const f of files) {
+    const lines = fs.readFileSync(f, "utf8").split("\n");
+    let indent = -1;
+    for (const [i, line] of lines.entries()) {
+      if (indent >= 0) {
+        const here = line.search(/\S/);
+        // Blank lines belong to the block; a line at or left of the `run:` key
+        // ends it.
+        if (here >= 0 && here <= indent) indent = -1;
+        else if (line.includes("${{")) bad.push(`${f}:${i + 1}: ${line.trim().slice(0, 60)}`);
+      }
+      if (indent < 0 && /^\s*run: *[|>]/.test(line)) indent = line.search(/\S/);
+      else if (indent < 0 && /^\s*run: /.test(line) && line.includes("${{")) {
+        bad.push(`${f}:${i + 1}: ${line.trim().slice(0, 60)}`);
+      }
+    }
+  }
+  console.log(bad.length ? "BAD " + bad.join(" | ") : "OK");
+});
+' 2>&1) || true
+if [[ "$RUN_INTERP" == BAD* ]]; then
+    echo "CHECK 1r FAIL: \${{ }} interpolated into a run: block — ${RUN_INTERP#BAD }"
+    echo "               Pass the value through env: and read it as a shell variable."
+    FAILED+=("1r: \${{ }} inside a run: block")
+else
+    echo "CHECK 1r PASS: no \${{ }} is interpolated into any run: block"
+fi
+
+# The gate does not run the program. Every other check here reads a hand-made
+# fixture or calls buildBlueprint() directly, so the real path
+#   form input -> action.yml env: -> main() -> blueprint / URL / summary
+# is never traversed. It was proved twice that this matters: gutting
+# writeSummary left the whole suite green, and rewiring two env vars in
+# action.yml passed the entire gate. Mutants test FUNCTIONS; this tests WIRING.
+# Output is held back unless it fails: check() prints the verdict, and the
+# script's own success line would just duplicate it.
+PROBE_OUT=$(python3 scripts/probe-controls.py 2>&1); PROBE_RC=$?
+[[ $PROBE_RC -eq 0 ]] || echo "$PROBE_OUT"
+check $PROBE_RC 1o "every declared input reaches the artifact it claims to, at its own field"
+
+# ...and prove the probe harness itself fires. Point it at a copy of the action
+# that declares a control with no probe row; if that passes, 1o is decoration.
+PROBE_TMP=$(mktemp -d)
+python3 - "$PROBE_TMP/action.yml" <<'PY_PROBE'
+import sys
+src = open("preview/action.yml").read()
+# A new control, declared and documented, wired to nothing and covered by no row.
+open(sys.argv[1], "w").write(
+    src.replace("  data-hosts:", "  probe-selftest-control:\n    description: \"planted\"\n    required: false\n  data-hosts:", 1)
+)
+PY_PROBE
+if PROBE_ACTION="$PROBE_TMP/action.yml" python3 scripts/probe-controls.py >/dev/null 2>&1; then
+    echo "CHECK 1o-self FAIL: the probe harness PASSED an action with an uncovered control"
+    FAILED+=("1o-self: the probe harness does not fire")
+else
+    echo "CHECK 1o-self PASS: the probe harness fails on an uncovered control"
+fi
+rm -rf "$PROBE_TMP"
 
 # Every action/workflow file must parse, and every output the preview script
 # sets must be DECLARED by the action — an undeclared output silently arrives

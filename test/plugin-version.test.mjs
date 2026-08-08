@@ -17,7 +17,8 @@ import {
   readPluginVersion,
   checkMoodleCompatibility,
   checkComponent,
-  checkPluginTypeSupported,
+  checkNotCoreComponent,
+  fetchCoreComponents,
   fetchPluginVersion,
   MOODLE_BRANCH_VERSIONS,
   DEFAULT_MOODLE_BRANCH,
@@ -246,29 +247,62 @@ test("setOutput refuses a value carrying a newline", async () => {
   }
 });
 
-// Atto was removed in Moodle 5.0 (lib/editor/atto/version.php is present on
-// MOODLE_405_STABLE and 404s on MOODLE_500_STABLE, checked 2026-08-03). An
-// atto_* plugin on a 5.0 bundle cannot install, and without this the reviewer
-// gets the usual clean-Moodle-with-nothing-in-it.
-test("refuses an atto subplugin on a Moodle that removed Atto", () => {
-  const r = checkPluginTypeSupported("atto", "MOODLE_500_STABLE");
+// The hand-written REMOVED_PLUGIN_TYPES table these replace knew only about
+// `atto`. Moodle's own lib/plugins.json is per-branch and authoritative, and
+// also names `assignment` and `tinymce` as removed types.
+//
+// The `core` argument is built offline here so these run without a network;
+// the LIVE gate check exercises the real fetch.
+const core50 = {
+  ok: true,
+  standard: new Set(["mod_assign", "theme_boost", "mod_qbank"]),
+  removedTypes: new Set(["assignment", "atto", "tinymce"]),
+};
+
+test("refuses a plugin claiming to BE a core component", () => {
+  const r = checkNotCoreComponent("mod", "assign", core50);
   assert.equal(r.ok, false);
-  assert.match(r.reason, /removed in Moodle 5\.0/);
-  assert.match(r.reason, /tiny/);
+  // The reason must say what actually happens, not just "not allowed" — the
+  // ZIP is written over core file by file and core capabilities are deleted.
+  assert.match(r.reason, /Moodle itself ships/);
 });
 
-test("allows an atto subplugin on a Moodle that still has Atto", () => {
-  assert.equal(checkPluginTypeSupported("atto", "MOODLE_405_STABLE").ok, true);
+test("refuses a core THEME as well as a core mod", () => {
+  assert.equal(checkNotCoreComponent("theme", "boost", core50).ok, false);
 });
 
-test("plugin types core still ships are untouched", () => {
-  for (const t of ["mod", "block", "theme", "tiny", "qtype"]) {
-    assert.equal(checkPluginTypeSupported(t, "MOODLE_500_STABLE").ok, true, t);
-  }
+test("refuses a plugin whose whole TYPE core deleted", () => {
+  const r = checkNotCoreComponent("atto", "anything", core50);
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /removed from this Moodle/);
 });
 
-test("an unknown branch does not refuse a removed type on a guess", () => {
-  assert.equal(checkPluginTypeSupported("atto", "MOODLE_999_STABLE").ok, true);
+test("allows a genuine third-party plugin", () => {
+  assert.equal(checkNotCoreComponent("mod", "coursework", core50).ok, true);
+  assert.equal(checkNotCoreComponent("theme", "boost_union", core50).ok, true);
+});
+
+// Per-branch, not a table: mod_qbank is core on 5.0 and third-party on 4.4, so
+// ANY static table is wrong for one of them. This is the whole reason the list
+// is fetched.
+test("the same component is judged per branch", () => {
+  const core44 = { ok: true, standard: new Set(["mod_assign"]), removedTypes: new Set() };
+  assert.equal(checkNotCoreComponent("mod", "qbank", core50).ok, false);
+  assert.equal(checkNotCoreComponent("mod", "qbank", core44).ok, true);
+});
+
+// Fails OPEN, like the version.php fallback — but main() prints a loud note and
+// the job summary says NOT CHECKED, so a skipped check never reads as a pass.
+test("a failed fetch does not refuse everything", () => {
+  const dead = { ok: false, reason: "boom", standard: new Set(), removedTypes: new Set() };
+  assert.equal(checkNotCoreComponent("mod", "assign", dead).ok, true);
+  assert.equal(checkNotCoreComponent("mod", "assign", undefined).ok, true);
+});
+
+test("refuses to fetch a core list for a branch name it cannot trust", async () => {
+  const r = await fetchCoreComponents("../../evil");
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /refusing to fetch/);
 });
 
 // When version.php is NOT on disk every strong check was skipped — which is
