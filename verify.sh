@@ -18,6 +18,31 @@ set -uo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
+# ---------------------------------------------------------------------------
+# ISOLATE THE RUNNER'S OUTPUT FILES.
+#
+# This is a TEST HARNESS, and much of what it runs exists to append to
+# $GITHUB_OUTPUT / $GITHUB_STEP_SUMMARY. On a laptop those are unset and
+# nothing happens. On a runner they point at the REAL files, so the suite
+# appended 38000 bytes of probe output into them — including a bare `b` line,
+# which GitHub rejected with:
+#
+#     Invalid format 'b'
+#     Unable to process file command 'output' successfully.
+#
+# The gate itself exited 0. The JOB still went red, for output it merely
+# passed through. Measured on the first CI run of this file (5d56651).
+#
+# Remember the originals so the check at the end can prove we left them alone.
+GATE_REAL_OUTPUT="${GITHUB_OUTPUT:-}"
+GATE_REAL_SUMMARY="${GITHUB_STEP_SUMMARY:-}"
+GATE_REAL_OUTPUT_SIZE=0
+GATE_REAL_SUMMARY_SIZE=0
+[[ -f "$GATE_REAL_OUTPUT" ]] && GATE_REAL_OUTPUT_SIZE=$(wc -c <"$GATE_REAL_OUTPUT")
+[[ -f "$GATE_REAL_SUMMARY" ]] && GATE_REAL_SUMMARY_SIZE=$(wc -c <"$GATE_REAL_SUMMARY")
+export GITHUB_OUTPUT="$(mktemp)"
+export GITHUB_STEP_SUMMARY="$(mktemp)"
+
 FAILED=()
 check() {
     local rc=$1 num=$2 label=$3
@@ -717,6 +742,28 @@ json.dump(bp, open('$TAMPER_OUT/blueprint.json', 'w'))
     check $? 5 "swapped local blueprint is refused by the hash binding (log: /tmp/bv-verify-tamper.log)"
 else
     echo "CHECK 4-5 SKIP: live boot (set LIVE=1 to include — required for the gate)"
+fi
+
+# Prove the isolation held. Without this the fix is invisible: a future edit
+# that runs a script before the export above would re-corrupt the runner's
+# file, the gate would still exit 0, and the job would go red for a reason
+# nothing here reports.
+GATE_LEAK=""
+if [[ -n "$GATE_REAL_OUTPUT" && -f "$GATE_REAL_OUTPUT" ]]; then
+    NOW=$(wc -c <"$GATE_REAL_OUTPUT")
+    [[ "$NOW" == "$GATE_REAL_OUTPUT_SIZE" ]] || GATE_LEAK+="GITHUB_OUTPUT grew ${GATE_REAL_OUTPUT_SIZE}->${NOW} bytes; "
+fi
+if [[ -n "$GATE_REAL_SUMMARY" && -f "$GATE_REAL_SUMMARY" ]]; then
+    NOW=$(wc -c <"$GATE_REAL_SUMMARY")
+    [[ "$NOW" == "$GATE_REAL_SUMMARY_SIZE" ]] || GATE_LEAK+="GITHUB_STEP_SUMMARY grew ${GATE_REAL_SUMMARY_SIZE}->${NOW} bytes; "
+fi
+if [[ -n "$GATE_LEAK" ]]; then
+    echo "CHECK 1s FAIL: the harness wrote into the runner's own files — $GATE_LEAK"
+    FAILED+=("1s: harness wrote into the runner's output files")
+elif [[ -n "$GATE_REAL_OUTPUT$GATE_REAL_SUMMARY" ]]; then
+    echo "CHECK 1s PASS: the runner's output files were left untouched"
+else
+    echo "CHECK 1s SKIP: not running under Actions (no output files to protect)"
 fi
 
 echo ""
