@@ -212,6 +212,67 @@ else
     echo "CHECK 1h SKIP: SKIP_NET set"
 fi
 
+# The .mbz reader, against archives Moodle itself produced. The unit tests use
+# archives built in memory (core's fixtures are GPL, this repo is MIT), so they
+# prove the PARSING; this proves the parsing still matches what Moodle EMITS.
+#
+# Both container formats are represented on purpose: 4 of 5 core 4.4 fixtures
+# are tar.gz and one is a zip, so a reader that assumed either would pass a
+# one-format check and reject a real backup.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    MBZOUT=$(node -e '
+import("./scripts/mbz.mjs").then(async (m) => {
+  const RAW = "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE";
+  // [path, expected format, expected type, expected modulenames, must be usable]
+  const CASES = [
+    ["completion/tests/fixtures/legacy_course_completion.mbz", "tar.gz", "course", ["assign"], true],
+    ["admin/tool/uploadcourse/tests/fixtures/backup.mbz", "zip", "course", ["glossary"], true],
+    ["mod/quiz/tests/fixtures/moodle_311_quiz.mbz", "tar.gz", "activity", ["quiz"], false],
+  ];
+  const problems = [];
+  let checked = 0;
+  for (const [path, format, type, mods, usable] of CASES) {
+    let bytes;
+    try {
+      const res = await fetch(`${RAW}/${path}`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) { console.log(`SKIP ${path}: HTTP ${res.status}`); continue; }
+      bytes = Buffer.from(await res.arrayBuffer());
+    } catch (e) { console.log(`SKIP ${path}: ${e.message}`); continue; }
+    const info = m.inspectMbz(bytes);
+    if (!info.ok) { problems.push(`${path}: unreadable — ${info.reason}`); continue; }
+    if (info.format !== format) problems.push(`${path}: read as ${info.format}, expected ${format}`);
+    if (info.type !== type) problems.push(`${path}: type ${info.type}, expected ${type}`);
+    if (JSON.stringify(info.modulenames) !== JSON.stringify(mods)) {
+      problems.push(`${path}: modules ${JSON.stringify(info.modulenames)}, expected ${JSON.stringify(mods)}`);
+    }
+    // The one that matters: an activity backup must be REFUSED, because
+    // restoring it leaves a normal-looking site with no course.
+    const verdict = m.checkCourseBackup(bytes);
+    if (verdict.ok !== usable) {
+      problems.push(`${path}: checkCourseBackup said ${verdict.ok}, expected ${usable}`);
+    }
+    checked++;
+  }
+  if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
+  console.log(checked === CASES.length ? "ALLOK" : `PARTIAL ${checked}/${CASES.length} fixtures checked`);
+});
+' 2>&1) || true
+    if [[ "$MBZOUT" == *DRIFT* ]]; then
+        echo "CHECK 1t FAIL: the .mbz reader disagrees with real Moodle backups — $MBZOUT"
+        FAILED+=("1t: .mbz reader disagrees with real backups")
+    elif [[ "$MBZOUT" != *"ALLOK"* && "$MBZOUT" != *"PARTIAL"* && "$MBZOUT" != *"SKIP"* ]]; then
+        echo "CHECK 1t FAIL: the check did not run — $MBZOUT"
+        FAILED+=("1t: the check did not run")
+    elif [[ "$MBZOUT" != *"ALLOK"* ]]; then
+        echo "CHECK 1t WAIVED: could not fetch every core fixture — reader UNCHECKED against real backups"
+        echo "                 ($MBZOUT)"
+    else
+        echo "CHECK 1t PASS: the .mbz reader agrees with real Moodle backups (tar.gz and zip)"
+    fi
+else
+    echo "CHECK 1t SKIP: SKIP_NET set"
+fi
+
 # The PHP-per-branch tables. Two comments in build-preview.mjs claimed these
 # were covered — one named check 1m (which is the accepted-origins check) and
 # one named "check 1n", WHICH DID NOT EXIST. Nothing checked PHP_FOR_BRANCH or
