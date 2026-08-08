@@ -375,8 +375,9 @@ export function previewUser(landing) {
  * PHP version to pin for a Moodle branch. Every branch the action knows
  * accepts 8.3 today, so this is one entry per branch rather than a range —
  * but it exists so that a branch bundling a different range cannot silently
- * fall back to the playground's substitution. verify.sh check 1m fails if a
- * branch's list stops containing what we pin.
+ * fall back to the playground's substitution. verify.sh check 1n fails if a
+ * branch's lowest offered PHP stops satisfying the Moodle the bundle runs.
+ * (This comment used to name check 1m, which is the accepted-origins check.)
  */
 export const PHP_FOR_BRANCH = {
   MOODLE_404_STABLE: "8.3",
@@ -390,7 +391,10 @@ export const PHP_FOR_BRANCH = {
  * takes 8.2-8.4 — and the playground answers an invalid pair by silently
  * substituting 8.3 (`version-resolver.js:199-208`). So an unchecked php input
  * would let someone chase a PHP 8.1 bug on Moodle 5.0 and test 8.3 without
- * being told. Refuse the pair instead; gate check 1n fails if this drifts.
+ * being told. Refuse the pair instead; gate check 1n fails if this drifts —
+ * and until 2026-08-08 that was a LIE: there was no check 1n, and nothing
+ * checked either PHP table. A comment claiming a guard is worse than none,
+ * because the next person trusts it. The check now exists.
  */
 export const PHP_BY_BRANCH = {
   MOODLE_404_STABLE: ["8.1", "8.2", "8.3"],

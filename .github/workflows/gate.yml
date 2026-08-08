@@ -1,0 +1,111 @@
+# Run the gate in CI.
+#
+# Until this file existed, `verify.sh` ran NOWHERE except one laptop. The whole
+# point of its 22 checks — the drift detectors especially — is to catch a
+# FUTURE maintainer's mistake, and they caught nothing unless that maintainer
+# happened to be the author sitting at the right machine. A panel found this by
+# grepping the workflows and finding the only mention of verify.sh was a
+# comment.
+#
+# Two jobs, deliberately split by what can make them red:
+#
+#   gate       offline + drift checks. Depends on this repo only. Blocking.
+#              Its network checks (1f, 1h, 1p) WAIVE loudly when a host is
+#              unreachable rather than failing, so an upstream outage does not
+#              red an unrelated PR.
+#
+#   gate-live  boots the real playground in a browser (checks 4 and 5). This
+#              CAN go red because someone else deployed something, which is
+#              exactly why it must not gate a pull request. It runs on main,
+#              on a schedule, and on demand. `canary.yml` already separates
+#              "playground broke" from "our code broke"; this keeps that
+#              distinction instead of collapsing it into the PR gate.
+
+name: gate
+
+on:
+  push:
+    # Every branch. A tags-only filter silently disables branch pushes — see
+    # check 1i, which exists because we shipped exactly that once.
+    branches: ["**"]
+  pull_request:
+  schedule:
+    # Not 02:17 — canary.yml owns that slot.
+    - cron: "41 3 * * *"
+  workflow_dispatch: {}
+
+# Read-only. Nothing here posts, comments, or writes.
+permissions:
+  contents: read
+
+concurrency:
+  group: gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: verify.sh (offline + drift)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      # --ignore-scripts: check 1d pins the lockfile to the playwright tree, and
+      # a lifecycle script would run code the lockfile check cannot see.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      # The sibling playground checkout does not exist on a runner, so check 1e
+      # waives itself. That is correct here — 1e compares against a working
+      # copy, and a CI runner has none — but it means the plugin-directory
+      # drift check is NOT covered by CI. Left explicit rather than hidden.
+      - name: Run the gate
+        run: ./verify.sh
+
+  gate-live:
+    name: verify.sh (LIVE browser boot)
+    # Never on pull_request: a red here can mean someone else's deploy broke,
+    # and that must not block a contributor's PR.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Install chromium
+        run: npx playwright install --with-deps chromium
+
+      # NSS_LIBS is the local-machine shim for a broken system NSS; a GitHub
+      # runner has a working one, so it stays unset. verify.sh reads
+      # LD_LIBRARY_PATH="${NSS_LIBS:-}", which is empty and harmless here.
+      - name: Run the gate with LIVE checks
+        env:
+          LIVE: "1"
+        run: ./verify.sh
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gate-live-evidence
+          path: |
+            /tmp/bv-verify-*.log
+          if-no-files-found: ignore
+          retention-days: 7

@@ -182,6 +182,83 @@ else
     echo "CHECK 1h SKIP: SKIP_NET set"
 fi
 
+# The PHP-per-branch tables. Two comments in build-preview.mjs claimed these
+# were covered — one named check 1m (which is the accepted-origins check) and
+# one named "check 1n", WHICH DID NOT EXIST. Nothing checked PHP_FOR_BRANCH or
+# PHP_BY_BRANCH at all. A comment asserting a guard exists is worse than no
+# comment, because the next person trusts it. This is that check.
+#
+# Source is Moodle's own admin/environment.xml, and the block is chosen by the
+# release the BUNDLE runs (from the manifest, as check 1h does) — not the
+# newest block in the file, which is a future Moodle: on MOODLE_404_STABLE the
+# newest block is 5.2 and demands PHP 8.3, while Moodle 4.4 itself needs 8.1.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    PHPDRIFT=$(HOST="$PLAYGROUND_HOST_URL" node -e '
+import("./scripts/build-preview.mjs").then(async (bp) => {
+  const pv = await import("./scripts/plugin-version.mjs");
+  const problems = [];
+  const branches = Object.keys(pv.MOODLE_BRANCH_VERSIONS);
+  // Both tables must cover exactly the branches we offer, or a branch silently
+  // has no PHP policy at all.
+  for (const b of branches) {
+    if (!bp.PHP_BY_BRANCH[b]) problems.push(`${b}: absent from PHP_BY_BRANCH`);
+    if (!bp.PHP_FOR_BRANCH[b]) problems.push(`${b}: absent from PHP_FOR_BRANCH`);
+  }
+  for (const b of Object.keys(bp.PHP_BY_BRANCH)) {
+    if (!branches.includes(b)) problems.push(`${b}: in PHP_BY_BRANCH but not an offered branch`);
+  }
+  for (const b of branches) {
+    const list = bp.PHP_BY_BRANCH[b];
+    const dflt = bp.PHP_FOR_BRANCH[b];
+    if (!list || !dflt) continue;
+    // The default must be selectable, or the summary names a PHP the form
+    // cannot produce.
+    if (!list.includes(dflt)) problems.push(`${b}: default ${dflt} is not in ${JSON.stringify(list)}`);
+    let release;
+    try {
+      const res = await fetch(`${process.env.HOST}/assets/manifests/${b}.json`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) { console.log(`SKIP ${b}: manifest HTTP ${res.status}`); continue; }
+      release = /^(\d+)\.(\d+)/.exec(String((await res.json()).release));
+      if (!release) { console.log(`SKIP ${b}: unparseable release`); continue; }
+    } catch (e) { console.log(`SKIP ${b}: ${e.message}`); continue; }
+    const want = `${release[1]}.${release[2]}`;
+    let xml;
+    try {
+      const res = await fetch(`https://raw.githubusercontent.com/moodle/moodle/${b}/admin/environment.xml`, { signal: AbortSignal.timeout(20000) });
+      if (!res.ok) { console.log(`SKIP ${b}: environment.xml HTTP ${res.status}`); continue; }
+      xml = await res.text();
+    } catch (e) { console.log(`SKIP ${b}: ${e.message}`); continue; }
+    // The <MOODLE version="X.Y"> block for the release the bundle runs.
+    const block = new RegExp(`<MOODLE[^>]*version="${want.replace(".", "\\.")}"[\\s\\S]*?</MOODLE>`).exec(xml);
+    if (!block) { console.log(`SKIP ${b}: no MOODLE block for ${want}`); continue; }
+    const req = /<PHP[^>]*version="([0-9.]+)"/.exec(block[0]);
+    if (!req) { console.log(`SKIP ${b}: no PHP requirement in the ${want} block`); continue; }
+    const [rMaj, rMin] = req[1].split(".").map(Number);
+    const lowest = list.map((v) => v.split(".").map(Number)).sort((a, z) => a[0] - z[0] || a[1] - z[1])[0];
+    if (lowest[0] < rMaj || (lowest[0] === rMaj && lowest[1] < rMin)) {
+      problems.push(`${b}: offers PHP ${lowest.join(".")} but Moodle ${want} requires >= ${req[1]}`);
+    }
+  }
+  if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
+  console.log("OK");
+});
+' 2>&1) || true
+    if [[ "$PHPDRIFT" == *DRIFT* ]]; then
+        echo "CHECK 1n FAIL: PHP-per-branch tables are wrong — $PHPDRIFT"
+        FAILED+=("1n: PHP-per-branch tables are wrong")
+    elif [[ "$PHPDRIFT" != *"OK"* && "$PHPDRIFT" != *"SKIP"* ]]; then
+        echo "CHECK 1n FAIL: the check did not run — $PHPDRIFT"
+        FAILED+=("1n: the check did not run")
+    elif [[ "$PHPDRIFT" == *"SKIP"* && "$PHPDRIFT" != *"OK"* ]]; then
+        echo "CHECK 1n WAIVED: could not reach core or the manifest — PHP tables UNCHECKED"
+        echo "                 ($PHPDRIFT)"
+    else
+        echo "CHECK 1n PASS: every offered PHP satisfies the Moodle the bundle runs"
+    fi
+else
+    echo "CHECK 1n SKIP: SKIP_NET set"
+fi
+
 # The core-component list is fetched per branch at build time rather than
 # shipped as a table (see fetchCoreComponents). This proves the real fetch
 # still works and still returns a list Moodle would recognise — a silent
