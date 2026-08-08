@@ -157,6 +157,8 @@ if [[ -z "${SKIP_NET:-}" ]]; then
     DRIFT=$(HOST="$PLAYGROUND_HOST_URL" node -e '
 import("./scripts/plugin-version.mjs").then(async (m) => {
   const problems = [];
+  let checked = 0;
+  const branches = Object.keys(m.MOODLE_BRANCH_VERSIONS);
   for (const [branch, recorded] of Object.entries(m.MOODLE_BRANCH_VERSIONS)) {
     let base, point;
     try {
@@ -182,9 +184,12 @@ import("./scripts/plugin-version.mjs").then(async (m) => {
     if (running !== recorded) {
       problems.push(`${branch}: table says ${recorded}, the bundle runs ${running}`);
     }
+    checked++;
   }
   if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
-  console.log("OK");
+  // ALLOK only when every branch was actually checked. A bare "OK" after a
+  // per-branch SKIP used to fall through to PASS and claim otherwise.
+  console.log(checked === branches.length ? "ALLOK" : `PARTIAL ${checked}/${branches.length} branches checked`);
 });
 ' 2>&1) || true
     if [[ "$DRIFT" == *DRIFT* ]]; then
@@ -192,12 +197,12 @@ import("./scripts/plugin-version.mjs").then(async (m) => {
         echo "               Update MOODLE_BRANCH_VERSIONS in scripts/plugin-version.mjs"
         echo "               to the version the BUNDLE runs, not moodle/moodle's tip."
         FAILED+=("1h: version table does not match the bundle")
-    elif [[ "$DRIFT" != *"OK"* && "$DRIFT" != *"SKIP"* ]]; then
+    elif [[ "$DRIFT" != *"ALLOK"* && "$DRIFT" != *"PARTIAL"* && "$DRIFT" != *"SKIP"* ]]; then
         # Neither a verdict nor a waiver: the probe itself broke. This used to
         # fall through to PASS, certifying a check that never ran.
         echo "CHECK 1h FAIL: the check did not run — $DRIFT"
         FAILED+=("1h: the check did not run")
-    elif [[ "$DRIFT" == *"SKIP"* && "$DRIFT" != *"OK"* ]]; then
+    elif [[ "$DRIFT" != *"ALLOK"* ]]; then
         echo "CHECK 1h WAIVED: could not reach core or the bundle manifest — table UNCHECKED"
         echo "                 ($DRIFT)"
     else
@@ -222,6 +227,7 @@ if [[ -z "${SKIP_NET:-}" ]]; then
 import("./scripts/build-preview.mjs").then(async (bp) => {
   const pv = await import("./scripts/plugin-version.mjs");
   const problems = [];
+  let checked = 0;
   const branches = Object.keys(pv.MOODLE_BRANCH_VERSIONS);
   // Both tables must cover exactly the branches we offer, or a branch silently
   // has no PHP policy at all.
@@ -263,18 +269,38 @@ import("./scripts/build-preview.mjs").then(async (bp) => {
     if (lowest[0] < rMaj || (lowest[0] === rMaj && lowest[1] < rMin)) {
       problems.push(`${b}: offers PHP ${lowest.join(".")} but Moodle ${want} requires >= ${req[1]}`);
     }
+    // The UPPER bound. Moodle declares unsupported majors in the same <PHP>
+    // block as `<RESTRICT function="restrict_php_version_84">` — measured: 4.4
+    // and 4.5 restrict 8.4, 5.0 restricts nothing. Without this, adding "8.4"
+    // to the 4.4 list stayed GREEN while Moodle 4.4 rejects it and the
+    // playground silently substitutes 8.3 — the exact substitution the
+    // php-version input promises to refuse rather than perform.
+    const phpBlock = /<PHP[^>]*>[\s\S]*?<\/PHP>/.exec(block[0]);
+    const restricted = new Set(
+      [...(phpBlock ? phpBlock[0] : "").matchAll(/restrict_php_version_(\d)(\d)/g)].map(
+        (mm) => `${mm[1]}.${mm[2]}`,
+      ),
+    );
+    for (const v of list) {
+      if (restricted.has(v)) {
+        problems.push(`${b}: offers PHP ${v}, which Moodle ${want} declares unsupported`);
+      }
+    }
+    checked++;
   }
   if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
-  console.log("OK");
+  // ALLOK only when every branch was actually checked. A bare "OK" after a
+  // per-branch SKIP used to fall through to PASS and claim otherwise.
+  console.log(checked === branches.length ? "ALLOK" : `PARTIAL ${checked}/${branches.length} branches checked`);
 });
 ' 2>&1) || true
     if [[ "$PHPDRIFT" == *DRIFT* ]]; then
         echo "CHECK 1n FAIL: PHP-per-branch tables are wrong — $PHPDRIFT"
         FAILED+=("1n: PHP-per-branch tables are wrong")
-    elif [[ "$PHPDRIFT" != *"OK"* && "$PHPDRIFT" != *"SKIP"* ]]; then
+    elif [[ "$PHPDRIFT" != *"ALLOK"* && "$PHPDRIFT" != *"PARTIAL"* && "$PHPDRIFT" != *"SKIP"* ]]; then
         echo "CHECK 1n FAIL: the check did not run — $PHPDRIFT"
         FAILED+=("1n: the check did not run")
-    elif [[ "$PHPDRIFT" == *"SKIP"* && "$PHPDRIFT" != *"OK"* ]]; then
+    elif [[ "$PHPDRIFT" != *"ALLOK"* ]]; then
         echo "CHECK 1n WAIVED: could not reach core or the manifest — PHP tables UNCHECKED"
         echo "                 ($PHPDRIFT)"
     else
@@ -292,6 +318,8 @@ if [[ -z "${SKIP_NET:-}" ]]; then
     CORE=$(node -e '
 import("./scripts/plugin-version.mjs").then(async (m) => {
   const problems = [];
+  let checked = 0;
+  const branches = Object.keys(m.MOODLE_BRANCH_VERSIONS);
   for (const branch of Object.keys(m.MOODLE_BRANCH_VERSIONS)) {
     const core = await m.fetchCoreComponents(branch);
     if (!core.ok) { console.log(`SKIP ${branch}: ${core.reason}`); continue; }
@@ -306,20 +334,23 @@ import("./scripts/plugin-version.mjs").then(async (m) => {
     if (!m.checkNotCoreComponent("mod", "coursework", core).ok) {
       problems.push(`${branch}: mod_coursework was wrongly refused`);
     }
+    checked++;
   }
   if (problems.length) { console.log("DRIFT " + problems.join("; ")); process.exit(3); }
-  console.log("OK");
+  // ALLOK only when every branch was actually checked. A bare "OK" after a
+  // per-branch SKIP used to fall through to PASS and claim otherwise.
+  console.log(checked === branches.length ? "ALLOK" : `PARTIAL ${checked}/${branches.length} branches checked`);
 });
 ' 2>&1) || true
     if [[ "$CORE" == *DRIFT* ]]; then
         echo "CHECK 1p FAIL: core-component list is not usable — $CORE"
         FAILED+=("1p: core-component list is not usable")
-    elif [[ "$CORE" != *"OK"* && "$CORE" != *"SKIP"* ]]; then
+    elif [[ "$CORE" != *"ALLOK"* && "$CORE" != *"PARTIAL"* && "$CORE" != *"SKIP"* ]]; then
         # Neither a verdict nor a waiver: the probe itself broke. This used to
         # fall through to PASS, certifying a check that never ran.
         echo "CHECK 1p FAIL: the check did not run — $CORE"
         FAILED+=("1p: the check did not run")
-    elif [[ "$CORE" == *"SKIP"* && "$CORE" != *"OK"* ]]; then
+    elif [[ "$CORE" != *"ALLOK"* ]]; then
         echo "CHECK 1p WAIVED: could not reach lib/plugins.json — core collisions UNCHECKED"
         echo "                 ($CORE)"
     else
@@ -436,11 +467,19 @@ open(sys.argv[1], "w").write(
     src.replace("  data-hosts:", "  probe-selftest-control:\n    description: \"planted\"\n    required: false\n  data-hosts:", 1)
 )
 PY_PROBE
-if PROBE_ACTION="$PROBE_TMP/action.yml" python3 scripts/probe-controls.py >/dev/null 2>&1; then
+# Assert on WHAT it says, not merely that it exited non-zero: an ImportError or
+# a syntax error also exits non-zero, and would have read as "the check fires"
+# while check 1o was hard-failing for an unrelated reason.
+SELF_OUT=$(PROBE_ACTION="$PROBE_TMP/action.yml" python3 scripts/probe-controls.py 2>&1)
+SELF_RC=$?
+if [[ $SELF_RC -eq 0 ]]; then
     echo "CHECK 1o-self FAIL: the probe harness PASSED an action with an uncovered control"
     FAILED+=("1o-self: the probe harness does not fire")
+elif [[ "$SELF_OUT" != *"probe-selftest-control"* ]]; then
+    echo "CHECK 1o-self FAIL: the harness failed for the WRONG reason — $SELF_OUT"
+    FAILED+=("1o-self: harness failed for an unrelated reason")
 else
-    echo "CHECK 1o-self PASS: the probe harness fails on an uncovered control"
+    echo "CHECK 1o-self PASS: the probe harness names the uncovered control"
 fi
 rm -rf "$PROBE_TMP"
 

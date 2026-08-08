@@ -12,7 +12,11 @@ import { mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 // One-way: plugin-version.mjs imports nothing from here, so no cycle.
-import { checkNotCoreComponent } from "./plugin-version.mjs";
+import {
+  checkNotCoreComponent,
+  fetchCoreComponents,
+  DEFAULT_MOODLE_BRANCH,
+} from "./plugin-version.mjs";
 import { checkOrder, checkReferences } from "./order-rules.mjs";
 
 import { sanitiseForLog } from "./sanitise.mjs";
@@ -596,8 +600,15 @@ async function main() {
     reject("blueprint_fetch_failed", `not JSON: ${err.message}`, sha256);
   }
 
+  // Same omission as the preview half had: this blueprint is fetched from a
+  // caller-supplied URL, so it is the LEAST trusted input in the system and
+  // was the one path with the core-collision check switched off.
+  const core = await fetchCoreComponents(
+    blueprint?.preferredVersions?.moodle || DEFAULT_MOODLE_BRANCH,
+  );
+  if (!core.ok) console.log(`note: core-component collision NOT checked — ${core.reason}`);
   const { stepErrors, urlErrors, unsafeStrings, bindErrors, riskySteps, expectations } =
-    gateBlueprint(blueprint, dataHosts);
+    gateBlueprint(blueprint, dataHosts, { coreComponents: core });
   if (stepErrors.length) {
     reject("blueprint_step_banned", stepErrors.join("; "), sha256);
   } else if (unsafeStrings.length) {

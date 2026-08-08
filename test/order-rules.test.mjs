@@ -26,20 +26,10 @@ const CASES = {
     s("setTheme", { name: "boost_union" }),
     s("installTheme", { url: ZIP, pluginName: "boost_union" }),
   ],
-  "users-before-enrol": [
-    s("installMoodle"),
-    s("enrolUsers", { enrolments: [{ username: "u", course: "C" }] }),
-    s("createUsers", { users: [{ username: "u" }] }),
-  ],
   "users-before-login": [
     s("installMoodle"),
     s("login", { username: "u" }),
     s("createUsers", { users: [{ username: "u" }] }),
-  ],
-  "course-before-enrol": [
-    s("installMoodle"),
-    s("enrolUsers", { enrolments: [{ username: "u", course: "C" }] }),
-    s("createCourse", { shortname: "C" }),
   ],
   "landing-page-last": [
     s("installMoodle"),
@@ -338,4 +328,55 @@ test("an ordinary config after a course is fine; the welcome message is not", ()
   const fine = [s("installMoodle"), s("setConfig", { name: "sendcoursewelcomemessage", value: "1" }),
     s("createCourse", { shortname: "C" })];
   assert.deepEqual(checkReferences(fine, CORE), []);
+});
+
+// ---------------------------------------------------------------------------
+// Review round 2 (2026-08-08). All four were real.
+
+// An ORDER rule is "all X before all Y", so the removed users-before-enrol /
+// course-before-enrol rules refused a blueprint where every reference
+// resolves. checkReferences does the same job per NAME and gets this right.
+test("interleaved courses and enrolments are accepted", () => {
+  const steps = [
+    s("installMoodle"),
+    s("createUsers", { users: [{ username: "u" }] }),
+    s("createCourse", { shortname: "A" }),
+    s("enrolUsers", { enrolments: [{ username: "u", course: "A" }] }),
+    s("createCourse", { shortname: "B" }),
+    s("enrolUsers", { enrolments: [{ username: "u", course: "B" }] }),
+  ];
+  assert.deepEqual(checkOrder(steps), []);
+  assert.deepEqual(checkReferences(steps, CORE), []);
+});
+
+// ...and removing them must not lose the breakage they were aimed at.
+test("an enrolment naming a user nobody creates is still refused", () => {
+  const steps = [
+    s("installMoodle"),
+    s("createCourse", { shortname: "A" }),
+    s("enrolUsers", { enrolments: [{ username: "ghost", course: "A" }] }),
+  ];
+  assert.match(checkReferences(steps, CORE).join(";"), /creates the user "ghost"/);
+});
+
+// The JSDoc promised references were waived from the first restore onward, but
+// the `continue` sat BELOW the setTheme/addModule checks, so a snapshot
+// blueprint activating a theme vendored into the bundle image was refused.
+test("every reference rule is waived after an opaque source", () => {
+  const after = (st) => checkReferences([s("installMoodle"), s("restoreDatabase", { url: ZIP }), st], CORE);
+  assert.deepEqual(after(s("setTheme", { name: "vendored_theme" })), []);
+  assert.deepEqual(after(s("addModule", { module: "vendored_mod", course: "C" })), []);
+  assert.deepEqual(after(s("login", { username: "fromdb" })), []);
+});
+
+test("the same references are still checked with no restore present", () => {
+  assert.match(
+    checkReferences([s("installMoodle"), s("setTheme", { name: "nope_union" })], CORE).join(";"),
+    /neither a core theme nor/,
+  );
+  assert.match(
+    checkReferences([s("installMoodle"), s("createCourse", { shortname: "C" }),
+      s("addModule", { module: "ghostmod", course: "C" })], CORE).join(";"),
+    /neither a core activity nor/,
+  );
 });

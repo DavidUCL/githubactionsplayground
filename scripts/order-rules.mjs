@@ -55,6 +55,12 @@ export const STEP_GROUPS = {
  * deleting a rule would leave the suite green — the table would be testing
  * itself into vacuity.
  */
+// NOTE on what is deliberately NOT here. `users-before-enrol` and
+// `course-before-enrol` were removed: an ORDER rule is "all X before all Y", so
+// `createCourse A -> enrolUsers A -> createCourse B -> enrolUsers B` was
+// REFUSED even though every reference resolves. checkReferences already does
+// the same job per NAME, which is both stricter (it catches a typo'd username)
+// and correct on interleaving. A rule that refuses valid input is not safety.
 export const ORDER_RULES = [
   {
     id: "install-moodle-first",
@@ -91,22 +97,10 @@ export const ORDER_RULES = [
     why: "a theme cannot be activated before it is installed",
   },
   {
-    id: "users-before-enrol",
-    before: "createUsers",
-    after: "enrolUsers",
-    why: "an enrolment needs the account it enrols",
-  },
-  {
     id: "users-before-login",
     before: "createUsers",
     after: "login",
     why: "phpLogin does MUST_EXIST on the username and dies if it is absent",
-  },
-  {
-    id: "course-before-enrol",
-    before: "createCourse",
-    after: "enrolUsers",
-    why: "an enrolment needs the course it enrols into",
   },
   {
     id: "landing-page-last",
@@ -209,6 +203,14 @@ export function checkReferences(steps, coreComponents) {
       coursesCreatedAt = i;
     }
 
+    // Waived from the first restoreDatabase/restoreCourse onward — ALL of the
+    // checks below, which is what the JSDoc promises. The `continue` used to
+    // sit lower down, so setTheme and addModule were still enforced against a
+    // database this gate cannot see inside: a snapshot blueprint activating a
+    // theme vendored into the bundle image was refused with "neither a core
+    // theme nor installed by an earlier installTheme".
+    if (i > opaqueFrom) continue;
+
     // --- check ---
     if (name === "setTheme" && step.name) {
       // A CORE theme needs no install step: `setTheme: boost` is valid input,
@@ -254,7 +256,6 @@ export function checkReferences(steps, coreComponents) {
       }
     }
 
-    if (i > opaqueFrom) continue;
     if (name === "login" && step.username && !users.has(step.username)) {
       errors.push(
         `step[${i}] login: no earlier step creates the user "${step.username}" — ` +

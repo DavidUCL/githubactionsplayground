@@ -402,6 +402,22 @@ const MUTATIONS = [
   ["1e: landing-path failure no longer registers", "scripts/build-preview.mjs",
     'problems.add("landing-path", `${ok.reason}: ${JSON.stringify(landingOverride)}`);', ""],
 
+  // Review round 2 (2026-08-08)
+  ["rev2: foreign blueprint path stops passing the core list", "scripts/build-blueprint-preview.mjs",
+    "    { coreComponents: core },\n", ""],
+  ["rev2: verify half stops passing the core list", "scripts/preflight.mjs",
+    "gateBlueprint(blueprint, dataHosts, { coreComponents: core });",
+    "gateBlueprint(blueprint, dataHosts);"],
+  ["rev2: message-less failures are dropped again", "scripts/build-preview.mjs",
+    'this.list.push({ input, message: message || "refused, but the check gave no reason" });',
+    "if (message) this.list.push({ input, message });"],
+  ["rev2: table cells stop escaping pipes", "scripts/build-preview.mjs",
+    'sanitiseForLog(String(v)).replace(/\\|/g, "\\\\|")', "sanitiseForLog(String(v))"],
+  ["rev2: login-as reports the count error on a bad name too", "scripts/build-preview.mjs",
+    "if (loginAsNameOk && loginAs.startsWith(\"student\")", 'if (loginAs.startsWith("student")'],
+  ["rev2: reference waiver slides back below the checks", "scripts/order-rules.mjs",
+    "    if (i > opaqueFrom) continue;\n\n", ""],
+
   // Review fixes (2026-08-08)
   ["rev: allow anything before installMoodle again", "scripts/order-rules.mjs",
     '    except: ["restoreDatabase"],\n    why: "nothing exists before Moodle is installed",',

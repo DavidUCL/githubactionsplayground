@@ -143,7 +143,11 @@ export class Problems {
   }
   /** @param {string} input the FORM FIELD at fault, not the internal check */
   add(input, message) {
-    if (message) this.list.push({ input, message });
+    // Never drop a failure for want of wording. `if (message)` meant a verdict
+    // of {ok:false} with no reason vanished, `any` stayed false, and the link
+    // was built as though the check had passed — a guard that fails OPEN, in
+    // the file whose whole subject is guards that fail closed.
+    this.list.push({ input, message: message || "refused, but the check gave no reason" });
     return this;
   }
   /** Add when `check` is a {ok, reason} verdict; returns ok. */
@@ -762,6 +766,10 @@ function writeSummary(lines) {
   }
 }
 
+/** A markdown table cell: sanitised, with pipes escaped so one value
+ * cannot become several columns. */
+const cell = (v) => sanitiseForLog(String(v)).replace(/\|/g, "\\|");
+
 function summariseRefusal(reason, facts, problems = []) {
   // With several problems the joined message is a wall of text. Give each one
   // its own row naming the FORM FIELD at fault, so the reader sees how many
@@ -773,9 +781,12 @@ function summariseRefusal(reason, facts, problems = []) {
         "",
         "| input | problem |",
         "|---|---|",
+        // `|` is escaped because the message embeds raw form input
+        // (JSON.stringify of landing-path), and an unescaped pipe splits the
+        // row into extra columns and mangles the table.
         ...problems.map(
           ({ input, message }) =>
-            `| \`${sanitiseForLog(String(input))}\` | ${sanitiseForLog(String(message))} |`,
+            `| \`${cell(input)}\` | ${cell(message)} |`,
         ),
       ]
     : [];
@@ -932,7 +943,11 @@ async function main() {
   const sections = clampCount(process.env.SECTIONS, 3, 1, 20);
   // Asking to arrive as a student the blueprint never made is a refusal, not a
   // login failure at boot — phpLogin does MUST_EXIST and would abort there.
-  if (loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
+  // Only when the NAME itself was valid. Otherwise `student99` produced two
+  // rows for one field, the second advising the user to raise a count whose
+  // maximum is 20.
+  const loginAsNameOk = !loginAs || studentNames(20).concat("admin", "teacher").includes(loginAs);
+  if (loginAsNameOk && loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
     problems.add(
       "login-as",
       `${loginAs} but only ${students} student account(s) are created — raise the student count`,

@@ -16,6 +16,7 @@ import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { createHash } from "node:crypto";
 import { fetchBlueprint, gateBlueprint } from "./preflight.mjs";
+import { fetchCoreComponents, DEFAULT_MOODLE_BRANCH } from "./plugin-version.mjs";
 import {
   buildPreviewUrl,
   DEFAULT_DATA_HOSTS,
@@ -64,9 +65,20 @@ async function main() {
   // syntax, off-allowlist URLs, duplicate install targets, raw-HTML configs.
   // requireSelfUrl is deliberately NOT passed — there is no commit under
   // review here, and claiming otherwise would be the lie this exists to avoid.
+  // The core-component list MUST reach this call. It was wired only into
+  // build-preview.mjs, where the component is derived from the repo under
+  // review; HERE the whole blueprint is caller-supplied, which is exactly the
+  // case fetchCoreComponents exists for. Without it a supplied blueprint
+  // declaring `pluginType: mod, pluginName: assign` was ACCEPTED (measured),
+  // overwrote core mod/assign file by file, and capabilities_cleanup() deleted
+  // every core mod/assign:* capability. It also silently disabled the setTheme
+  // and addModule reference rules, which are gated on the same list.
+  const core = await fetchCoreComponents(blueprint?.preferredVersions?.moodle || DEFAULT_MOODLE_BRANCH);
+  if (!core.ok) console.log(`note: core-component collision NOT checked — ${core.reason}`);
   const { stepErrors, urlErrors, unsafeStrings, bindErrors, riskySteps } = gateBlueprint(
     blueprint,
     dataHosts,
+    { coreComponents: core },
   );
   const problems = [...stepErrors, ...unsafeStrings, ...urlErrors, ...bindErrors];
   if (problems.length) {

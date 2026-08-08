@@ -679,3 +679,64 @@ test("the sentinel is accepted everywhere a choice can send it", async () => {
   });
   assert.match(readFileSync(gho, "utf8"), /preview-url=/);
 });
+
+// --- review round 2 (2026-08-08) -------------------------------------------
+// `add()` did `if (message) push(...)`, so a {ok:false} verdict carrying no
+// reason vanished, `any` stayed false, and the link was built as though the
+// check had passed — a guard that fails OPEN.
+test("a failure with no message is still a failure", async () => {
+  const { Problems } = await import("../scripts/build-preview.mjs");
+  const p = new Problems();
+  p.check("php-version", { ok: false });
+  assert.equal(p.any, true, "a message-less refusal was dropped");
+  assert.match(p.toError().message, /no reason/);
+});
+
+// The message embeds JSON.stringify(landing-path) — raw form input. An
+// unescaped `|` split the markdown row into extra columns.
+test("a pipe in a problem message cannot break the summary table", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "pipe-"));
+  const summary = join(dir, "s.md");
+  writeFileSync(summary, "");
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: { ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+        LANDING_PATH: "//evil|x", OUT_DIR: join(dir, "o"), GITHUB_OUTPUT: join(dir, "g"),
+        GITHUB_STEP_SUMMARY: summary },
+      stdio: "pipe",
+    });
+    assert.fail("expected a refusal");
+  } catch { /* refusal is the point */ }
+  const row = readFileSync(summary, "utf8").split("\n").find((l) => l.includes("landing-path"));
+  assert.ok(row, "no landing-path row in the summary");
+  // 2 cells => 3 pipes. A raw `|` in the message would add more.
+  assert.equal((row.match(/(?<!\\)\|/g) || []).length, 3, `row split into extra columns: ${row}`);
+});
+
+// `student99` tripped both the name check and the count check, and the second
+// told the user to raise a count whose maximum is 20.
+test("an invalid login-as name produces exactly one problem", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "loginas-"));
+  const summary = join(dir, "s.md");
+  writeFileSync(summary, "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: { ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+        LOGIN_AS: "student99", OUT_DIR: join(dir, "o"), GITHUB_OUTPUT: join(dir, "g"),
+        GITHUB_STEP_SUMMARY: summary },
+      stdio: "pipe",
+    });
+    assert.fail("expected a refusal");
+  } catch (err) { out = `${err.stdout ?? ""}${err.stderr ?? ""}`; }
+  assert.equal((out.match(/::error title=login-as::/g) || []).length, 1, out);
+  assert.ok(!out.includes("raise the student count"), "gave advice that cannot help");
+});
