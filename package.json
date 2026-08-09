@@ -14,5 +14,5 @@
   "dependencies": {
     "playwright": "1.61.1"
   },
-  "license": "MIT"
+  "license": "GPL-3.0-or-later"
 }

@@ -212,9 +212,13 @@ else
     echo "CHECK 1h SKIP: SKIP_NET set"
 fi
 
-# The .mbz reader, against archives Moodle itself produced. The unit tests use
-# archives built in memory (core's fixtures are GPL, this repo is MIT), so they
-# prove the PARSING; this proves the parsing still matches what Moodle EMITS.
+# The vendored .mbz fixtures must still be what upstream serves.
+#
+# The unit suite now reads real Moodle backups from test/fixtures/mbz offline,
+# which is better coverage — but it means a vendored copy that drifts from
+# upstream would quietly become the only thing we ever test against. This
+# compares byte-for-byte against moodle/moodle and fails if they differ, so the
+# offline fixtures cannot rot into fiction.
 #
 # Both container formats are represented on purpose: 4 of 5 core 4.4 fixtures
 # are tar.gz and one is a zip, so a reader that assumed either would pass a
@@ -238,6 +242,16 @@ import("./scripts/mbz.mjs").then(async (m) => {
       if (!res.ok) { console.log(`SKIP ${path}: HTTP ${res.status}`); continue; }
       bytes = Buffer.from(await res.arrayBuffer());
     } catch (e) { console.log(`SKIP ${path}: ${e.message}`); continue; }
+    // Byte-for-byte against the vendored copy.
+    try {
+      const fs = await import("node:fs");
+      const local = fs.readFileSync(`test/fixtures/mbz/${path.split("/").pop()}`);
+      if (!local.equals(bytes)) {
+        problems.push(`${path}: the vendored copy no longer matches upstream`);
+      }
+    } catch (e) {
+      problems.push(`${path}: no vendored copy to compare (${e.code || e.message})`);
+    }
     const info = m.inspectMbz(bytes);
     if (!info.ok) { problems.push(`${path}: unreadable — ${info.reason}`); continue; }
     if (info.format !== format) problems.push(`${path}: read as ${info.format}, expected ${format}`);
@@ -267,7 +281,7 @@ import("./scripts/mbz.mjs").then(async (m) => {
         echo "CHECK 1t WAIVED: could not fetch every core fixture — reader UNCHECKED against real backups"
         echo "                 ($MBZOUT)"
     else
-        echo "CHECK 1t PASS: the .mbz reader agrees with real Moodle backups (tar.gz and zip)"
+        echo "CHECK 1t PASS: vendored .mbz fixtures match upstream, and the reader agrees"
     fi
 else
     echo "CHECK 1t SKIP: SKIP_NET set"

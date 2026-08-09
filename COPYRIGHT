@@ -1,0 +1,50 @@
+action-moodle-playground-verify
+Copyright (C) 2026 David Aylmer
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+this program. If not, see <https://www.gnu.org/licenses/>.
+
+---
+
+Why GPLv3-or-later, recorded so nobody has to re-derive it:
+
+  - It matches the ecosystem this tool exists to serve. Moodle core is GPLv3,
+    ucl-isd/moodle is GPL-3.0, and ucl-isd/moodle-mod_coursework carries GPLv3
+    headers. Every consumer of this action is a Moodle plugin repository, which
+    is GPLv3+ by convention.
+  - It removes a real friction: this repo reads and vendors Moodle-produced
+    artifacts (backup .mbz fixtures, lib/plugins.json data). Under a permissive
+    licence, copying any of those in raised a licence-mixing question every
+    time. Under the same licence as Moodle, it does not.
+  - The sole dependency, Playwright, is Apache-2.0, which is compatible in this
+    direction (Apache-2.0 code may be combined into a GPLv3 work).
+
+It was MIT until 2026-08-09 only because the initial scaffold commit
+(7834104) included an MIT template. Nothing in the repo relied on it: no gate
+check, no test, no dependency, and it is not published to the GitHub
+Marketplace.
+
+---
+
+VENDORED THIRD-PARTY FILES
+
+test/fixtures/mbz/*.mbz
+  Moodle backup archives taken unmodified from moodle/moodle, branch
+  MOODLE_404_STABLE at commit 67c80957df19d4d908e4927fb1c40db02fe40dd2.
+  Copyright (C) Moodle Pty Ltd and contributors. Licensed GPLv3-or-later,
+  the same licence as this repository.
+    legacy_course_completion.mbz  completion/tests/fixtures/      tar.gz, course
+    backup.mbz                    admin/tool/uploadcourse/tests/fixtures/  zip, course
+    moodle_311_quiz.mbz           mod/quiz/tests/fixtures/        tar.gz, ACTIVITY
+  Kept so the .mbz reader is tested against archives Moodle really produced,
+  in both container formats, including an activity-type backup that must be
+  refused — offline, rather than only when check 1t can reach the network.

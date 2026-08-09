@@ -186,3 +186,9 @@ source. `test/contract.test.mjs` compares them, but only with a checkout to
 compare against: pass `PLAYGROUND_SRC=<path to moodle-playground
 src/blueprint/steps/moodle-plugins.js>`. `verify.sh` prints check 1e as
 WAIVED when it cannot run, and a waived check is not a pass.
+
+## Licence
+
+GPL v3 or later — see `LICENSE`, and `COPYRIGHT` for why. It matches Moodle
+core and `ucl-isd/moodle`, which is the ecosystem every consumer of this action
+already lives in.

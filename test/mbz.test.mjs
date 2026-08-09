@@ -1,13 +1,15 @@
 // Tests for the .mbz reader.
 //
-// The archives here are BUILT IN MEMORY rather than committed. Two reasons:
-// core's real .mbz fixtures are GPL and this repo is MIT, which is not a
-// licensing call to make casually; and a synthetic archive lets a test say
-// "what if moodle_backup.xml is missing" without hand-editing a binary.
+// Two kinds of archive here, deliberately.
 //
-// The real-Moodle half is covered by the network gate check, which fetches
-// actual core fixtures — so this file proves the PARSING and that one proves
-// the parsing still matches what Moodle emits.
+// SYNTHETIC ones, built in memory, prove the PARSING — and let a test ask
+// "what if moodle_backup.xml is missing" or "what if the tar size field is
+// garbage" without hand-editing a binary.
+//
+// VENDORED ones (test/fixtures/mbz, see COPYRIGHT) prove the reader against
+// bytes Moodle actually produced, in both container formats, OFFLINE. Check 1t
+// verifies they still match upstream, so a stale vendored fixture is caught
+// rather than quietly becoming the only thing we test against.
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -189,3 +191,37 @@ test("a tar with an unreadable size field is refused, not looped on", () => {
   assert.equal(r.ok, false);
   assert.match(r.reason, /unreadable size/);
 });
+
+// --- vendored real Moodle backups ------------------------------------------
+// Synthetic archives prove the PARSING; these prove it against bytes Moodle
+// actually produced — offline, rather than only when check 1t reaches the
+// network. Vendored under the same licence as this repo (see COPYRIGHT);
+// check 1t verifies they still match upstream.
+
+const VENDORED = [
+  ["legacy_course_completion.mbz", "tar.gz", "course", ["assign"], 1, true],
+  ["backup.mbz", "zip", "course", ["glossary"], 1, true],
+  // The one that matters: restoring an activity backup leaves a working-looking
+  // site with no course, and restoreCourse cannot report it.
+  ["moodle_311_quiz.mbz", "tar.gz", "activity", ["quiz"], 1, false],
+];
+
+for (const [file, format, type, mods, acts, usable] of VENDORED) {
+  test(`real Moodle backup ${file} reads as ${format}/${type}`, async () => {
+    const { readFileSync } = await import("node:fs");
+    const { join, dirname } = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const bytes = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), "fixtures", "mbz", file),
+    );
+    const info = inspectMbz(bytes);
+    assert.equal(info.ok, true, info.reason);
+    assert.equal(info.format, format);
+    assert.equal(info.type, type);
+    assert.deepEqual(info.modulenames, mods);
+    // Cross-checked against a real boot: legacy_course_completion restores
+    // exactly 1 course_module, and this count must agree with that.
+    assert.equal(info.activityCount, acts);
+    assert.equal(checkCourseBackup(bytes).ok, usable);
+  });
+}
