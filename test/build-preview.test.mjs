@@ -740,3 +740,120 @@ test("an invalid login-as name produces exactly one problem", async () => {
   assert.equal((out.match(/::error title=login-as::/g) || []).length, 1, out);
   assert.ok(!out.includes("raise the student count"), "gave advice that cannot help");
 });
+
+// --- step 2: restoring a course instead of building an empty one -----------
+const MBZ_FIXTURE = "test/fixtures/mbz/legacy_course_completion.mbz";
+
+async function restoreInfo() {
+  const { readFileSync } = await import("node:fs");
+  const { inspectMbz } = await import("../scripts/mbz.mjs");
+  return inspectMbz(readFileSync(MBZ_FIXTURE));
+}
+
+test("a restore REPLACES createCourse rather than joining it", async () => {
+  const { buildBlueprint } = await import("../scripts/build-preview.mjs");
+  const info = await restoreInfo();
+  const bp = buildBlueprint({
+    headRepo: "DavidUCL/moodle-mod_attendance", headSha: SHA, type: "mod", name: "attendance",
+    restore: { url: "https://raw.githubusercontent.com/a/b/c.mbz", info },
+  });
+  const names = bp.steps.map((s) => s.step);
+  // phpRestoreCourse only takes the shortname if no other course holds it, so
+  // keeping both would leave the content in a course named "restored" while
+  // REVIEW sat empty beside it.
+  assert.ok(!names.includes("createCourse"), "createCourse must be gone");
+  assert.equal(names.filter((n) => n === "restoreCourse").length, 1);
+});
+
+test("the post-restore assertion is inserted, and before anything uses the course", async () => {
+  const { buildBlueprint } = await import("../scripts/build-preview.mjs");
+  const info = await restoreInfo();
+  const bp = buildBlueprint({
+    headRepo: "DavidUCL/moodle-mod_attendance", headSha: SHA, type: "mod", name: "attendance",
+    restore: { url: "https://raw.githubusercontent.com/a/b/c.mbz", info },
+  });
+  const names = bp.steps.map((s) => s.step);
+  const assertIdx = names.indexOf("runPhpCode");
+  assert.ok(assertIdx > names.indexOf("restoreCourse"), "assertion must follow the restore");
+  assert.ok(assertIdx < names.indexOf("login"), "a failure must land the reviewer before login");
+  // It has to assert what the backup actually declares, not a hand-typed guess.
+  assert.match(bp.steps[assertIdx].code, /'assign'/);
+});
+
+// A restored course's id is not knowable when the link is built. Landing by
+// name resolves through MUST_EXIST, so a missing course is a loud error rather
+// than someone else's course.
+test("a restore lands by course NAME, never by hardcoded id", async () => {
+  const { buildBlueprint } = await import("../scripts/build-preview.mjs");
+  const info = await restoreInfo();
+  for (const type of ["mod", "theme", "format"]) {
+    const bp = buildBlueprint({
+      headRepo: "DavidUCL/moodle-mod_attendance", headSha: SHA, type, name: "attendance",
+      restore: { url: "https://raw.githubusercontent.com/a/b/c.mbz", info },
+    });
+    const path = bp.steps.find((s) => s.step === "setLandingPage").path;
+    assert.match(path, /name=REVIEW/, `${type} landed on ${path}`);
+    assert.ok(!/course=2|id=2/.test(path), `${type} still hardcodes an id: ${path}`);
+  }
+});
+
+test("without a restore the blueprint is unchanged", async () => {
+  const { buildBlueprint } = await import("../scripts/build-preview.mjs");
+  const bp = buildBlueprint({
+    headRepo: "DavidUCL/moodle-mod_attendance", headSha: SHA, type: "mod", name: "attendance",
+  });
+  const names = bp.steps.map((s) => s.step);
+  assert.ok(names.includes("createCourse"));
+  assert.ok(!names.includes("restoreCourse"));
+  assert.ok(!names.includes("runPhpCode"));
+  assert.match(bp.steps.find((s) => s.step === "setLandingPage").path, /course=2/);
+});
+
+// The guard used to count createCourse only, and refused the restore blueprint
+// outright. The invariant is "exactly one course we control".
+test("two courses are still refused, however they are made", async () => {
+  const { buildBlueprint } = await import("../scripts/build-preview.mjs");
+  const info = await restoreInfo();
+  assert.throws(
+    () => buildBlueprint({
+      headRepo: "DavidUCL/moodle-mod_attendance", headSha: SHA, type: "mod", name: "attendance",
+      restore: { url: "https://raw.githubusercontent.com/a/b/c.mbz", info: { ...info, modulenames: [] } },
+    }),
+    /refusing to assert nothing/,
+  );
+});
+
+// Found by BOOTING, not by reading: the restore succeeded and the assertion
+// passed, then createUsers died with exit code 1 because the backup already
+// contained `student1`. Refuse at link-build time instead of half-building a
+// site.
+test("a backup whose users collide with the preview's is refused", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "collide-"));
+  writeFileSync(join(dir, "s.md"), "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env,
+        HEAD_REPO: "DavidUCL/moodle-mod_attendance",
+        HEAD_SHA: SHA,
+        RESTORE_COURSE_URL:
+          "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/completion/tests/fixtures/legacy_course_completion.mbz",
+        OUT_DIR: join(dir, "out"),
+        GITHUB_OUTPUT: join(dir, "g"),
+        GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+      },
+      stdio: "pipe",
+    });
+    assert.fail("expected a refusal");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /::error title=restore-course-url::/);
+  assert.match(out, /student1/);
+  assert.match(out, /createUsers would fail mid-boot/);
+});

@@ -174,7 +174,24 @@ def main():
             fail(f"{name}: probe build failed (rc={res['rc']}): {res['stderr'][-200:]}")
             continue
 
-        if target == "url":
+        if target == "shape":
+            # Some inputs change the step LIST, not field values. Index-
+            # normalised paths are useless there — inserting one step makes
+            # every later step compare against a different one — so assert on
+            # the step-name multiset instead, which is what actually changed.
+            from collections import Counter
+            before = Counter(x.get("step") for x in base["blueprint"]["steps"])
+            after = Counter(x.get("step") for x in res["blueprint"]["steps"])
+            added = sorted((after - before).elements())
+            removed = sorted((before - after).elements())
+            if added != sorted(row.get("expect_steps_added", [])):
+                fail(f"{name}: added steps {added}, declared {sorted(row.get('expect_steps_added', []))}")
+            if removed != sorted(row.get("expect_steps_removed", [])):
+                fail(f"{name}: removed steps {removed}, declared {sorted(row.get('expect_steps_removed', []))}")
+            if not added and not removed:
+                fail(f"{name}: the step list is unchanged — the input reaches nothing")
+            signatures[name] = (frozenset(added + removed), tuple(added + removed))
+        elif target == "url":
             if preview_url(res["output"]) == preview_url(base["output"]):
                 fail(f"{name}: preview-url is unchanged — the input reaches nothing")
         elif target == "blueprint":

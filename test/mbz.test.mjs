@@ -225,3 +225,23 @@ for (const [file, format, type, mods, acts, usable] of VENDORED) {
     assert.equal(checkCourseBackup(bytes).ok, usable);
   });
 }
+
+// A backup that carries users CREATES them on restore. Measured by booting:
+// the restore succeeded, the assertion passed, and createUsers then died with
+// exit code 1 five steps in because the backup already had `student1`.
+test("usernames the backup will create are reported", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { join, dirname } = await import("node:path");
+  const { fileURLToPath } = await import("node:url");
+  const here = dirname(fileURLToPath(import.meta.url));
+  const withUsers = inspectMbz(readFileSync(join(here, "fixtures/mbz/legacy_course_completion.mbz")));
+  assert.deepEqual(withUsers.usernames, ["student1", "student2", "teacher1"]);
+  const without = inspectMbz(readFileSync(join(here, "fixtures/mbz/backup.mbz")));
+  assert.deepEqual(without.usernames, [], "a users=0 backup creates nobody");
+});
+
+test("a backup with no users.xml reports no usernames rather than failing", () => {
+  const r = inspectMbz(tarGz([["moodle_backup.xml", manifest()]]));
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual(r.usernames, []);
+});

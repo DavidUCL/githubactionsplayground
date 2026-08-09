@@ -92,6 +92,16 @@ inputs:
       MOODLE_500_STABLE. The link does not yet pin this (see README).
     required: false
     default: "MOODLE_500_STABLE"
+  restore-course-url:
+    description: >-
+      A Moodle course backup (.mbz) to restore as the review course, instead of
+      building an empty one. Must be on an allowed data host. It is fetched and
+      inspected when the LINK is built, so a wrong file is refused with a
+      readable reason — restoreCourse itself cannot report a content failure,
+      and a failed restore otherwise leaves a working-looking site with an
+      empty course.
+    required: false
+    default: ""
   data-hosts:
     description: >-
       Comma-separated hosts that URLs inside the blueprint may point at —
@@ -185,6 +195,7 @@ runs:
         LOGIN_AS: ${{ inputs.login-as }}
         STUDENTS: ${{ inputs.students }}
         SECTIONS: ${{ inputs.sections }}
+        RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out

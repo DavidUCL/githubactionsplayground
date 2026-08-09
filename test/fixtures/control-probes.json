@@ -212,6 +212,20 @@
       "probe": "https://ateeducacion.github.io/moodle-playground",
       "target": "url",
       "note": "Changes where the link points, not what the blueprint says. A blueprint diff would be the wrong assertion."
+    },
+    {
+      "input": "restore-course-url",
+      "env": "RESTORE_COURSE_URL",
+      "probe": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
+      "target": "shape",
+      "note": "Changes the step LIST, not just field values: createCourse becomes restoreCourse and the post-restore assertion is inserted. Index-normalised field paths cannot express that \u2014 inserting a step makes every later step compare against a different one. Uses the users=0 fixture: a backup carrying student1 is refused, because createUsers would fail mid-boot.",
+      "expect_steps_added": [
+        "restoreCourse",
+        "runPhpCode"
+      ],
+      "expect_steps_removed": [
+        "createCourse"
+      ]
     }
   ]
 }

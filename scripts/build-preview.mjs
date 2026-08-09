@@ -23,7 +23,9 @@ import { sanitiseForLog } from "./sanitise.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
-import { gateBlueprint, assertNoPlaceholders } from "./preflight.mjs";
+import { gateBlueprint, assertNoPlaceholders, checkUrl } from "./preflight.mjs";
+import { buildRestoreAssertion } from "./restore-assert.mjs";
+import { checkCourseBackup } from "./mbz.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
 // import site for preview concerns.
@@ -104,6 +106,9 @@ export function checkLandingPath(value) {
   return { ok: true };
 }
 const PR_NUMBER_RE = /^\d+$/;
+/** A review course backup is a fixture, not a data set. Bounded because it is
+ * fetched from a URL at link-build time. */
+export const MAX_MBZ_BYTES = 64 * 1024 * 1024;
 
 /**
  * The reserved token a `choice` input uses to mean "leave this unset".
@@ -291,7 +296,20 @@ export function derivePlugin(repoFullName, overrides = {}) {
  * course_modules and bypasses the plugin's own add_instance(), so a working
  * mod plugin often renders blank — land on the add form instead.
  */
-export function landingPath(type, name) {
+export function landingPath(type, name, { restored = false } = {}) {
+  // A RESTORED course is not created by us, so its id is not knowable when the
+  // link is built — "Course restored (id 2)" held in every boot measured, but
+  // it holds only while nothing else makes a course first, and that is exactly
+  // the assumption COURSE_ID already encodes and should not encode twice.
+  // Land by NAME instead: /course/view.php?name= resolves through MUST_EXIST,
+  // so a missing course is a loud error page rather than someone else's course.
+  //
+  // This costs the `mod` add-form landing, which is the better review page
+  // when there is no content. With a restored course there IS content, so
+  // landing in it is the more useful place anyway.
+  if (restored && (type === "mod" || type === "theme" || type === "format")) {
+    return `/course/view.php?name=${COURSE_SHORTNAME}`;
+  }
   switch (type) {
     case "mod":
       // CONFIRMED in a browser: the real add form, which runs the plugin's own
@@ -443,6 +461,8 @@ export function buildBlueprint({
   // sections — the shape every preview had before these became adjustable.
   students = 1,
   sections = 3,
+  // {url, info} from mbz.mjs when a course backup is being restored.
+  restore = null,
 }) {
   if (!isRepo(headRepo)) throw new Error(`bad repo: ${headRepo}`);
   if (!SHA_RE.test(String(headSha))) {
@@ -521,22 +541,44 @@ export function buildBlueprint({
     // coherent. (The local playground checkout aborts on any throw and cannot
     // reproduce this; only the deployed build can.)
     { step: "createCategory", name: "Review", critical: true },
-    {
-      step: "createCourse",
-      // The course name is the self-check: the reviewer's screen either shows
-      // the commit named in the PR header, or something is wrong.
-      fullname: label,
+    // One course, made one of two ways. A restore REPLACES createCourse rather
+    // than joining it: phpRestoreCourse only takes the shortname if no other
+    // course holds it, so keeping both would leave the sample content in a
+    // course silently named "restored" while REVIEW sat empty next to it.
+    restore
+      ? {
+          step: "restoreCourse",
+          url: restore.url,
+          fullname: label,
+          shortname: COURSE_SHORTNAME,
+          category: "Review",
+          critical: true,
+        }
+      : {
+          step: "createCourse",
+          // The course name is the self-check: the reviewer's screen either shows
+          // the commit named in the PR header, or something is wrong.
+          fullname: label,
+          shortname: COURSE_SHORTNAME,
+          critical: true,
+          // Without this the course lands in Miscellaneous and the category
+          // created above sits empty — the helper only honours a named category
+          // on the course itself.
+          category: "Review",
+          // A format plugin is only visible if the review course actually uses it
+          // — the exact analogue of setTheme for themes.
+          ...(type === "format" ? { format: name } : {}),
+          numsections: sections,
+        },
+    // Immediately after the restore and BEFORE anything depends on the course:
+    // restoreCourse cannot report a content failure (its handler catches and
+    // bare-returns), so without this a restore that produced nothing carries on
+    // and the reviewer gets a working-looking site with an empty course.
+    ...(restore ? [buildRestoreAssertion({
       shortname: COURSE_SHORTNAME,
-      critical: true,
-      // Without this the course lands in Miscellaneous and the category
-      // created above sits empty — the helper only honours a named category
-      // on the course itself.
-      category: "Review",
-      // A format plugin is only visible if the review course actually uses it
-      // — the exact analogue of setTheme for themes.
-      ...(type === "format" ? { format: name } : {}),
-      numsections: sections,
-    },
+      modulenames: restore.info.modulenames,
+      activityCount: restore.info.activityCount,
+    })] : []),
     {
       step: "createUsers",
       critical: true,
@@ -588,10 +630,14 @@ export function buildBlueprint({
       ` log in as <code>student1</code> for anything that owns data</li></ul>`,
   });
 
-  if (steps.filter((s) => s.step === "createCourse").length !== 1) {
-    // Every landing page hardcodes course id 2, which only holds while this
-    // blueprint creates exactly one course.
-    throw new Error("internal: landing pages assume exactly one createCourse");
+  // The invariant is "exactly one course we control", not "exactly one
+  // createCourse" — a restore makes the course too, and the original guard
+  // refused that blueprint outright.
+  const courseSteps = steps.filter((s) => s.step === "createCourse" || s.step === "restoreCourse");
+  if (courseSteps.length !== 1) {
+    throw new Error(
+      `internal: the preview assumes exactly one course, found ${courseSteps.length}`,
+    );
   }
   if (type === "theme") steps.push({ step: "setTheme", name });
   // Log in LAST, and as whoever can actually judge the landing page.
@@ -607,7 +653,7 @@ export function buildBlueprint({
   // `login` step, so this REPLACES that session rather than adding one.
   // Provisioning needs no session: the create/enrol helpers call core APIs
   // directly and never read $USER.
-  const landing = landingOverride || landingPath(type, name);
+  const landing = landingOverride || landingPath(type, name, { restored: Boolean(restore) });
   // `login-as` overrides the derived default. Derivation is a good default —
   // admin for admin pages, teacher elsewhere — but it cannot know you want to
   // see the plugin as a learner, and nothing else lets you.
@@ -954,6 +1000,61 @@ async function main() {
     );
   }
 
+  const dataHosts = (process.env.DATA_HOSTS || "")
+    .split(",")
+    .map((h) => h.trim())
+    .filter(Boolean);
+  const hosts = dataHosts.length ? dataHosts : DEFAULT_DATA_HOSTS;
+
+  // A course backup to restore instead of building an empty course. Fetched
+  // HERE, at link-build time, so a bad one is a refusal with a readable reason
+  // rather than a boot that silently produces an empty course — restoreCourse
+  // cannot report a content failure itself.
+  const restoreUrl = opt(process.env.RESTORE_COURSE_URL);
+  let restore = null;
+  if (restoreUrl) {
+    const urlProblem = checkUrl(restoreUrl, hosts);
+    if (urlProblem) {
+      problems.add("restore-course-url", urlProblem);
+    } else {
+      try {
+        const res = await fetch(restoreUrl, { signal: AbortSignal.timeout(30000), redirect: "error" });
+        if (!res.ok) {
+          problems.add("restore-course-url", `HTTP ${res.status} fetching the course backup`);
+        } else {
+          const bytes = Buffer.from(await res.arrayBuffer());
+          if (bytes.length > MAX_MBZ_BYTES) {
+            problems.add("restore-course-url", `the backup is ${bytes.length} bytes, over the ${MAX_MBZ_BYTES} cap`);
+          } else {
+            const verdict = checkCourseBackup(bytes);
+            if (!verdict.ok) problems.add("restore-course-url", verdict.reason);
+            else {
+              // A backup that carries users will CREATE them on restore, and a
+              // preview account of the same name then fails to create. Measured
+              // by booting: the restore succeeded, the assertion passed, and
+              // createUsers died with exit code 1 five steps in, leaving a
+              // half-built site. Refuse at link-build time instead.
+              const mine = ["admin", "teacher", ...studentNames(20)];
+              const clash = (verdict.info.usernames ?? []).filter((u) => mine.includes(u));
+              if (clash.length) {
+                problems.add(
+                  "restore-course-url",
+                  `the backup creates user(s) ${clash.join(", ")}, which the preview also ` +
+                    `creates — createUsers would fail mid-boot and leave a half-built site. ` +
+                    `Use a course backup whose users do not include ${clash.join(", ")}.`,
+                );
+              } else {
+                restore = { url: restoreUrl, info: verdict.info };
+              }
+            }
+          }
+        }
+      } catch (err) {
+        problems.add("restore-course-url", `could not fetch the course backup: ${err.message}`);
+      }
+    }
+  }
+
   // One throw for everything above. Annotations first, so GitHub shows a marker
   // against each offending field even though the run ends here.
   if (problems.any) {
@@ -974,14 +1075,10 @@ async function main() {
     loginAs,
     students,
     sections,
+    restore,
   });
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
-  const dataHosts = (process.env.DATA_HOSTS || "")
-    .split(",")
-    .map((h) => h.trim())
-    .filter(Boolean);
-  const hosts = dataHosts.length ? dataHosts : DEFAULT_DATA_HOSTS;
   const url = buildPreviewUrl({
     playgroundHost,
     blueprint,

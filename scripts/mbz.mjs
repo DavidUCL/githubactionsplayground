@@ -28,6 +28,7 @@ const MAX_DECOMPRESSED = 512 * 1024 * 1024;
 const MAX_MANIFEST = 32 * 1024 * 1024;
 
 const MANIFEST = "moodle_backup.xml";
+const USERS = "users.xml";
 
 /** tar: 512-byte headers, name at 0, size (octal) at 124, type flag at 156. */
 function readTar(buf) {
@@ -110,15 +111,19 @@ export function inspectMbz(bytes) {
   if (!bytes || bytes.length < 4) return { ok: false, reason: "the .mbz is empty or truncated" };
 
   let manifest = null;
+  let usersXml = null;
   let format;
   try {
     if (bytes[0] === 0x1f && bytes[1] === 0x8b) {
       format = "tar.gz";
       const tar = gunzipSync(bytes, { maxOutputLength: MAX_DECOMPRESSED });
-      manifest = readTar(tar).get(MANIFEST) ?? null;
+      const files = readTar(tar);
+      manifest = files.get(MANIFEST) ?? null;
+      usersXml = files.get(USERS) ?? null;
     } else if (bytes[0] === 0x50 && bytes[1] === 0x4b) {
       format = "zip";
       manifest = readZipEntry(bytes, MANIFEST);
+      usersXml = readZipEntry(bytes, USERS);
     } else {
       // A 404 page, an HTML error, an LFS pointer — all plausible at a URL.
       const head = bytes.subarray(0, 16).toString("utf8").replace(/[^\x20-\x7e]/g, ".");
@@ -155,9 +160,18 @@ export function inspectMbz(bytes) {
   const usersSetting = /<name>users<\/name>\s*<value>(\d+)<\/value>/.exec(xml)?.[1];
   const originalCourseShortname = /<original_course_shortname>([^<]*)<\/original_course_shortname>/.exec(xml)?.[1];
 
+  // Usernames the backup will CREATE on restore. A preview account with the
+  // same name then fails to create — measured: booting a restore of
+  // legacy_course_completion (which carries student1) killed createUsers with
+  // exit code 1 mid-boot, after the restore had already succeeded.
+  const usernames = usersXml
+    ? [...new Set([...usersXml.toString("utf8").matchAll(/<username>([^<]*)<\/username>/g)].map((m) => m[1]))].sort()
+    : [];
+
   return {
     ok: true,
     format,
+    usernames,
     type,
     modulenames,
     activityCount,
