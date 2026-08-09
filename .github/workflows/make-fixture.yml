@@ -76,6 +76,11 @@ jobs:
         with:
           php-version: "8.3"
           extensions: pgsql, gd, intl, mbstring, curl, zip, xml, soap, exif, opcache
+          # max_input_vars: Moodle's environment check REFUSES to install below
+          # 5000 ("this test must pass"), and the runner's default is 1000 — the
+          # first dispatch died here. memory_limit: a course backup builds its
+          # plan in memory and the runner default is not generous.
+          ini-values: max_input_vars=5000, memory_limit=512M
 
       - name: Check out Moodle at the pinned tag
         env:
