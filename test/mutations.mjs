@@ -402,6 +402,27 @@ const MUTATIONS = [
   ["1e: landing-path failure no longer registers", "scripts/build-preview.mjs",
     'problems.add("landing-path", `${ok.reason}: ${JSON.stringify(landingOverride)}`);', ""],
 
+  // Step 2: the post-restore assertion
+  ["assert: allow an assertion that cannot fail", "scripts/restore-assert.mjs",
+    "if (!Number.isInteger(activityCount) || activityCount < 1) {", "if (false) {"],
+  ["assert: allow asserting no module names", "scripts/restore-assert.mjs",
+    "if (!Array.isArray(modulenames) || modulenames.length === 0) {", "if (false) {"],
+  ["assert: stop validating the shortname", "scripts/restore-assert.mjs",
+    "if (!SHORTNAME.test(shortname)) {", "if (false) {"],
+  ["assert: stop validating module names", "scripts/restore-assert.mjs",
+    "if (!IDENT.test(String(m))) {", "if (false) {"],
+  // The one that makes it capable of failing at all — measured: without
+  // CLI_SCRIPT, Moodle swallows exit codes, fatals AND uncaught exceptions.
+  ["assert: drop CLI_SCRIPT so Moodle swallows the exit code", "scripts/restore-assert.mjs",
+    "`<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); global $DB; ` +",
+    "`<?php require('/www/moodle/config.php'); global $DB; ` +"],
+  ["assert: count modules queued for deletion too", "scripts/restore-assert.mjs",
+    "'course=? AND deletioninprogress=0'", "'course=?'"],
+  ["assert: stop requiring each declared module name", "scripts/restore-assert.mjs",
+    "`foreach(array(${wanted}) as $w) { if(!in_array($w,$have)) exit(23); } ` +", ""],
+  ["assert: stop checking the course exists", "scripts/restore-assert.mjs",
+    "`if(!$c) exit(21); ` +", ""],
+
   // Step 2: the .mbz reader
   ["mbz: accept an activity backup as a course", "scripts/mbz.mjs",
     'if (info.type !== "course") {', "if (false) {"],

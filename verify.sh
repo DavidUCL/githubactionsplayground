@@ -836,6 +836,63 @@ if [[ -n "${LIVE:-}" ]]; then
         && python3 -c "import json,sys; v=json.load(open('$LIVE_OUT/verdict.json')); sys.exit(0 if v['status']=='pass' else 1)"
     check $? 4 "LIVE loopback boot → pass (log: /tmp/bv-verify-live.log)"
 
+    # LIVE 6 — the post-restore assertion must be able to FAIL.
+    #
+    # This is the only proof that matters for gate 2, and nothing offline can
+    # give it: no mock of Moodle's DB would tell us whether the PHP actually
+    # detects an empty or incomplete course. Measured behaviour being pinned
+    # here — correct expectations complete the blueprint, a module name the
+    # backup does not contain exits 23, an inflated count exits 22.
+    #
+    # An assertion that passes on an empty course is worse than no assertion,
+    # so a green LIVE 6 is what licenses trusting gate 2 at all.
+    RA_MBZ="https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/completion/tests/fixtures/legacy_course_completion.mbz"
+    ra_boot() { # $1=label $2=modules-json $3=count -> echoes the observed outcome
+        local RA_OUT="$WORK/ra_$1"
+        mkdir -p "$RA_OUT"
+        RA_DIR="$RA_OUT" RA_MODS="$2" RA_CNT="$3" RA_URL="$RA_MBZ" node -e '
+import("./scripts/restore-assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const c = await import("node:crypto");
+  const step = m.buildRestoreAssertion({
+    shortname: "REVIEW",
+    modulenames: JSON.parse(process.env.RA_MODS),
+    activityCount: Number(process.env.RA_CNT),
+  });
+  const bp = { preferredVersions: { moodle: "MOODLE_404_STABLE" }, steps: [
+    { step: "installMoodle" },
+    { step: "restoreCourse", url: process.env.RA_URL, shortname: "REVIEW", category: "Review" },
+    step,
+    { step: "setLandingPage", path: "/course/view.php?name=REVIEW" }] };
+  const body = JSON.stringify(bp, null, 2);
+  fs.writeFileSync(`${process.env.RA_DIR}/blueprint.json`, body);
+  const sha = c.createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(`${process.env.RA_DIR}/preflight.json`,
+    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }));
+  fs.writeFileSync(`${process.env.RA_DIR}/expectations.json`, JSON.stringify({
+    blueprintUrl: "loopback", blueprintSha256: sha, stepCount: 4,
+    stepNames: ["installMoodle", "restoreCourse", "runPhpCode", "setLandingPage"], pluginSteps: [] }));
+});
+' >/dev/null 2>&1
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$RA_OUT"             BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/ra-$1.json"             node scripts/boot-capture.mjs >>/tmp/bv-verify-assert.log 2>&1
+        grep -oE 'failed with exit code [0-9]+|Blueprint step 4/4: setLandingPage' \
+            "$RA_OUT/boot-log.txt" 2>/dev/null | head -1
+    }
+    : >/tmp/bv-verify-assert.log
+    RA_GOOD=$(ra_boot correct '["assign"]' 1)
+    RA_BADMOD=$(ra_boot wrongmod '["quiz"]' 1)
+    RA_BADCNT=$(ra_boot wrongcount '["assign"]' 9)
+    RA_PROBLEMS=""
+    [[ "$RA_GOOD" == *"setLandingPage"* ]] || RA_PROBLEMS+="correct expectations did not complete (got: ${RA_GOOD:-nothing}); "
+    [[ "$RA_BADMOD" == *"exit code 23"* ]] || RA_PROBLEMS+="a missing activity type was not caught (got: ${RA_BADMOD:-nothing}); "
+    [[ "$RA_BADCNT" == *"exit code 22"* ]] || RA_PROBLEMS+="an inflated activity count was not caught (got: ${RA_BADCNT:-nothing}); "
+    if [[ -n "$RA_PROBLEMS" ]]; then
+        echo "CHECK 6 FAIL: the post-restore assertion is not doing its job — $RA_PROBLEMS"
+        FAILED+=("6: post-restore assertion cannot fail")
+    else
+        echo "CHECK 6 PASS: the post-restore assertion passes when right and fails when wrong"
+    fi
+
     # A mutated local blueprint must break the hash binding.
     TAMPER_OUT="$WORK/tamper"
     mkdir -p "$TAMPER_OUT"
