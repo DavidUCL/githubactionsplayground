@@ -1,0 +1,162 @@
+# Cut the review course fixture, and open a pull request committing it.
+#
+# The point is that regenerating the .mbz is a REVIEWABLE DIFF produced by
+# checked-in code, not a binary someone made on their laptop. `fixtures/seed.php`
+# is the source of truth; this workflow only runs it.
+#
+# WHY THE VERIFICATION RUNS HERE RATHER THAN ON THE PULL REQUEST.
+# GitHub's docs: when a workflow using GITHUB_TOKEN creates a pull request, the
+# resulting `pull_request` event "creates workflow runs in an approval-required
+# state" — they sit greyed behind an "Approve workflows to run" banner, which a
+# reviewer can merge straight past. That is worse than a red X. So this run
+# verifies its own output BEFORE opening the PR, and puts the verification in
+# the PR body as the record.
+#
+# WHY 4.4 AND WHY A TAG.
+# Cut on the OLDEST branch offered: restoring forward is safe, restoring
+# backward fails SILENTLY (set_missing_modules drops unknown activity types with
+# no error). The tag is pinned rather than tracking MOODLE_404_STABLE so the cut
+# is reproducible, and it sits just behind the bundle the playground boots
+# (4.4.12+), which is the safe direction.
+#
+# Dispatch-only, never scheduled: every run adds a binary to history.
+
+name: make-fixture
+
+on:
+  workflow_dispatch:
+    inputs:
+      moodle-tag:
+        description: "Moodle tag to cut the fixture on. Must be <= the release the 4.4 bundle runs (check 1h reports it)."
+        required: false
+        default: "v4.4.12"
+
+permissions:
+  contents: read
+
+jobs:
+  cut:
+    name: seed a course and cut it to .mbz
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: moodle
+          POSTGRES_PASSWORD: moodle
+          POSTGRES_DB: moodle
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+
+    steps:
+      - name: Check out the action
+        uses: actions/checkout@v5
+        with:
+          path: action
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # Moodle 4.4 requires PHP >= 8.1 and declares 8.4 unsupported
+      # (admin/environment.xml, RESTRICT restrict_php_version_84). Check 1n
+      # enforces the same bounds on the action's own tables.
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.3"
+          extensions: pgsql, gd, intl, mbstring, curl, zip, xml, soap, exif, opcache
+
+      - name: Check out Moodle at the pinned tag
+        env:
+          MOODLE_TAG: ${{ inputs.moodle-tag }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$MOODLE_TAG" \
+            https://github.com/moodle/moodle.git moodle
+          echo "moodle at $(git -C moodle describe --tags --always)"
+
+      - name: Install Moodle
+        run: |
+          set -euo pipefail
+          sudo mkdir -p /var/moodledata && sudo chmod 777 /var/moodledata
+          php moodle/admin/cli/install.php \
+            --non-interactive --agree-license \
+            --wwwroot=http://localhost \
+            --dataroot=/var/moodledata \
+            --dbtype=pgsql --dbhost=127.0.0.1 --dbname=moodle \
+            --dbuser=moodle --dbpass=moodle \
+            --fullname="Fixture cutter" --shortname="fixture" \
+            --adminuser=admin --adminpass="Fixture!1234" --adminemail=fixture@example.invalid
+          echo "installed: $(php -r 'require "moodle/version.php"; echo $release;')"
+
+      - name: Seed the course and cut the backup
+        run: |
+          set -euo pipefail
+          mkdir -p out
+          php action/fixtures/seed.php "$PWD/moodle" "$PWD/out/review-course-MOODLE_404_STABLE.mbz"
+
+      # The honesty proof. Our OWN reader, against the spec the seed script read
+      # — so "what was asked for" and "what came out" are compared by code, not
+      # by eye.
+      - name: Verify the fixture matches the spec
+        run: |
+          set -euo pipefail
+          node action/scripts/check-fixture.mjs \
+            out/review-course-MOODLE_404_STABLE.mbz \
+            action/fixtures/fixture-spec.json | tee out/verification.txt
+
+      - name: Open a pull request with the new fixture
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MOODLE_TAG: ${{ inputs.moodle-tag }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        working-directory: action
+        run: |
+          set -euo pipefail
+          BRANCH="fixture/review-course-$(date -u +%Y%m%d-%H%M%S)"
+          cp ../out/review-course-MOODLE_404_STABLE.mbz fixtures/
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$BRANCH"
+          git add fixtures/review-course-MOODLE_404_STABLE.mbz
+          if git diff --cached --quiet; then
+            echo "::notice::the regenerated fixture is byte-identical; nothing to open"
+            exit 0
+          fi
+          git commit -m "Regenerate the review course fixture"
+          git push origin "$BRANCH"
+          {
+            echo "Regenerated by \`fixtures/seed.php\` from Moodle \`$MOODLE_TAG\`."
+            echo
+            echo "Verified in the run that produced it, because a PR opened with"
+            echo "GITHUB_TOKEN gets approval-required checks that a reviewer can"
+            echo "merge past:"
+            echo
+            echo '```'
+            cat ../out/verification.txt
+            echo '```'
+            echo
+            echo "Run: $RUN_URL"
+          } > /tmp/pr-body.md
+          gh pr create --title "Regenerate the review course fixture" \
+            --body-file /tmp/pr-body.md --base main --head "$BRANCH"
+
+      - name: Upload the fixture as an artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: review-course-fixture
+          path: out/
+          if-no-files-found: warn
+          retention-days: 14

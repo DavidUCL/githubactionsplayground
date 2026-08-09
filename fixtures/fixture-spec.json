@@ -1,0 +1,28 @@
+{
+  "_comment": [
+    "The review course fixture, described ONCE. fixtures/seed.php reads this to",
+    "decide what to create; scripts/check-fixture.mjs reads it to verify what",
+    "came out. Two lists would be two sources of truth, and the one that drifts",
+    "is always the one nobody runs.",
+    "",
+    "Every module here is verified present in BOTH MOODLE_404_STABLE and",
+    "MOODLE_500_STABLE against Moodle's own lib/plugins.json. chat and survey",
+    "are deliberately absent: they are standard on 4.4 and GONE from 5.0, which",
+    "is the default branch, and would be dropped silently on restore.",
+    "",
+    "shortname is NOT 'REVIEW': phpRestoreCourse only takes the requested",
+    "shortname if no other course holds it.",
+    "",
+    "users is 0 deliberately — a backup carrying users creates them on restore,",
+    "and a preview account of the same name then fails to create. Measured."
+  ],
+  "cutOn": "MOODLE_404_STABLE",
+  "shortname": "FIXTURE",
+  "fullname": "Review course fixture",
+  "sections": 3,
+  "includesUsers": false,
+  "modules": [
+    "assign", "book", "choice", "feedback", "forum",
+    "glossary", "label", "page", "quiz", "url"
+  ]
+}

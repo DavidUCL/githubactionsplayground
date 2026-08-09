@@ -429,6 +429,21 @@ const MUTATIONS = [
   ["restore: stop checking the backup URL's host", "scripts/build-preview.mjs",
     "    const urlProblem = checkUrl(restoreUrl, hosts);", "    const urlProblem = null;"],
 
+  // Step 2: make-fixture's honesty proof
+  ["fixture: accept an activity backup as the fixture", "scripts/check-fixture.mjs",
+    'if (info.type !== "course") {', "if (false) {"],
+  ["fixture: stop comparing activities to the spec", "scripts/check-fixture.mjs",
+    "if (JSON.stringify(want) !== JSON.stringify(got)) {", "if (false) {"],
+  ["fixture: check names but not the count", "scripts/check-fixture.mjs",
+    "if (info.activityCount !== want.length) {", "if (false) {"],
+  ["fixture: allow a fixture carrying users", "scripts/check-fixture.mjs",
+    "if (Boolean(spec.includesUsers) !== Boolean(info.usernames?.length)) {", "if (false) {"],
+  ["fixture: allow a fixture that owns REVIEW", "scripts/check-fixture.mjs",
+    'if (info.originalCourseShortname === "REVIEW") {', "if (false) {"],
+  ["fixture: report ok even with problems", "scripts/check-fixture.mjs",
+    "return { ok: problems.length === 0, problems, info };",
+    "return { ok: true, problems, info };"],
+
   // Step 2: the post-restore assertion
   ["assert: allow an assertion that cannot fail", "scripts/restore-assert.mjs",
     "if (!Number.isInteger(activityCount) || activityCount < 1) {", "if (false) {"],
