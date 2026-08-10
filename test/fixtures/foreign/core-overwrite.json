@@ -1,0 +1,16 @@
+{
+  "preferredVersions": {
+    "moodle": "MOODLE_500_STABLE"
+  },
+  "steps": [
+    {
+      "step": "installMoodle"
+    },
+    {
+      "step": "installMoodlePlugin",
+      "url": "https://raw.githubusercontent.com/a/b/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/p.zip",
+      "pluginType": "mod",
+      "pluginName": "assign"
+    }
+  ]
+}

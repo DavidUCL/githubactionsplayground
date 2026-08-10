@@ -857,3 +857,88 @@ test("a backup whose users collide with the preview's is refused", async () => {
   assert.match(out, /student1/);
   assert.match(out, /createUsers would fail mid-boot/);
 });
+
+// Each restore refusal needs its own test: a mutant that stops gating the
+// BACKUP survived while the username-collision test passed, because the
+// collision check sits after the verdict check and never exercised it.
+test("a supplied backup that is not a course backup is refused", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "notcourse-"));
+  writeFileSync(join(dir, "s.md"), "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+        // A real ACTIVITY backup from core: restoring it leaves a
+        // working-looking Moodle with no course in it.
+        RESTORE_COURSE_URL:
+          "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/mod/quiz/tests/fixtures/moodle_311_quiz.mbz",
+        OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"),
+        GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+      },
+      stdio: "pipe",
+    });
+    assert.fail("an activity backup was accepted");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /::error title=restore-course-url::/, out);
+  assert.match(out, /not a course backup/, out);
+});
+
+test("a backup URL on a host we do not allow is refused", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "badhost-"));
+  writeFileSync(join(dir, "s.md"), "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+        RESTORE_COURSE_URL: "https://gitlab.com/someone/something.mbz",
+        OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"),
+        GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+      },
+      stdio: "pipe",
+    });
+    assert.fail("an off-allowlist backup host was accepted");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /not in allowlist/, out);
+});
+
+// The data-hosts input was only exercised through buildBlueprint's parameter.
+// main() decides whether to USE it, and that decision had no test.
+test("data-hosts narrows the allowlist that main() applies", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "hosts-"));
+  writeFileSync(join(dir, "s.md"), "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+        // github.com excluded, so the plugin's own archive is off-allowlist.
+        DATA_HOSTS: "raw.githubusercontent.com",
+        OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"),
+        GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+      },
+      stdio: "pipe",
+    });
+    assert.fail("a narrowed data-hosts was ignored");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /not in allowlist: github\.com/, out);
+});

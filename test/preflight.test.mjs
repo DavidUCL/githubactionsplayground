@@ -527,3 +527,46 @@ test("without a core list the gate behaves exactly as before", () => {
   b.steps.push(pluginStep("c", "d", "mod", "assign"));
   assert.deepEqual(gateBlueprint(b, HOSTS).bindErrors, []);
 });
+
+// --- the GATE must consume the ordering and reference rules ----------------
+// order-rules.test.mjs tests checkOrder/checkReferences DIRECTLY, so a mutant
+// that stops gateBlueprint CALLING them survived: the functions still worked,
+// nothing asked them anything. These test the wiring, not the rule.
+test("gateBlueprint actually runs the ordering rules", () => {
+  const b = bp();
+  // installMoodle after something else violates install-moodle-first.
+  b.steps = [{ step: "createUsers", users: [{ username: "u" }] }, { step: "installMoodle" }];
+  assert.match(gateBlueprint(b, HOSTS).bindErrors.join(";"), /must come before/);
+});
+
+test("gateBlueprint actually runs the reference rules", () => {
+  const b = bp();
+  b.steps = [{ step: "installMoodle" }, { step: "login", username: "ghost_nobody" }];
+  assert.match(
+    gateBlueprint(b, HOSTS).bindErrors.join(";"),
+    /no earlier step creates the user "ghost_nobody"/,
+  );
+});
+
+// installTheme's declared pluginType is forced to "theme" at three sites. Two
+// of them (the identifier check and expectations) had no test, so mutants
+// restoring the old `?? "theme"` survived.
+test("expectations report installTheme as a theme however it declares itself", () => {
+  const b = bp();
+  // BEFORE setTheme, which the fixture ends with — appending would trip the
+  // ordering rule, and gateBlueprint produces no expectations once it refuses.
+  const at = b.steps.findIndex((s) => s.step === "setTheme");
+  b.steps.splice(at, 0, {
+    step: "installTheme",
+    url: `https://raw.githubusercontent.com/c/d/${"a".repeat(40)}/p.zip`,
+    pluginType: "mod",
+    pluginName: "declares_mod",
+  });
+  const { bindErrors, expectations } = gateBlueprint(b, HOSTS);
+  assert.deepEqual(bindErrors, [], "the blueprint itself must be acceptable");
+  const step = expectations.pluginSteps.find((s) => s.pluginName === "declares_mod");
+  // The handler always extracts to theme/. An expectation of mod/<name> makes
+  // assert.mjs compare against a path that can never appear, so the run fails
+  // blaming the wrong thing.
+  assert.equal(step.pluginType, "theme");
+});

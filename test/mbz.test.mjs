@@ -58,6 +58,15 @@ test("reads a STORED zip entry as well as a deflated one", () => {
 // settings block — measured 3 for a backup holding ONE assign, whose restore
 // produced exactly 1 course_module. A count of 3 in the post-restore assertion
 // could never be reached.
+// Two instances of ONE module: the count must see both, the name list must
+// carry one. Every other fixture here has distinct modules, so de-duplication
+// changed nothing and looked covered when it was not.
+test("repeated activities count twice but name once", () => {
+  const r = inspectMbz(tarGz([["moodle_backup.xml", manifest({ mods: ["assign", "assign", "quiz"] })]]));
+  assert.equal(r.activityCount, 3);
+  assert.deepEqual(r.modulenames, ["assign", "quiz"]);
+});
+
 test("the activity count counts activities, not every <activity> tag", () => {
   const xml = manifest({ mods: ["assign", "quiz"] });
   assert.ok((xml.match(/<activity>/g) || []).length > 2, "fixture must contain leaf refs");

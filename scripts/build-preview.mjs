@@ -167,7 +167,8 @@ export class Problems {
   annotate(log = console.log) {
     for (const { input, message } of this.list) {
       // Annotations are one line: a newline would end the command and dump the
-      // rest as plain output.
+      // rest as plain output. Belt and braces — sanitiseForLog already strips
+      // newlines (measured), so this is the guard that survives IT changing.
       log(`::error title=${sanitiseForLog(input)}::${sanitiseForLog(message).replace(/\r?\n/g, " ")}`);
     }
   }

@@ -54,8 +54,10 @@ const BAD_SEGMENT = /^(|\.|\.\.)$/;
 
 function refIsSafe(ref) {
   if (!ref || !REF_CHARS.test(ref)) return false;
-  // No percent-encoding: a real ref has none, and `%2e%2e` would decode into a
-  // traversal after this check.
+  // Defence in depth, and REDUNDANT today: REF_CHARS has no `%` in its class,
+  // so `x%2e%2e` is already refused above (measured). Kept because it is the
+  // guard that would still hold if the charset were ever widened, and NOT
+  // mutated individually — a mutant here only proves the redundancy.
   if (ref.includes("%")) return false;
   return !ref.split("/").some((seg) => BAD_SEGMENT.test(seg));
 }

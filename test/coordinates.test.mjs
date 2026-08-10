@@ -51,6 +51,12 @@ test("a traversal in the owner, repo or ref is refused", () => {
   assert.equal(parseCoordinate("a/../b@sha#mod_x").ok, false);
   assert.equal(parseCoordinate("a/b@../../etc#mod_x").ok, false);
   assert.equal(parseCoordinate("a/b/c@sha#mod_x").ok, false);
+  // TWO segments, so a length check alone still accepts these. Every case
+  // above splits into three, which is why the charset check looked covered
+  // when it was not.
+  assert.equal(parseCoordinate("a/..@sha#mod_x").ok, false, "owner/.. accepted");
+  assert.equal(parseCoordinate("../b@sha#mod_x").ok, false, "../repo accepted");
+  assert.equal(parseCoordinate("./b@sha#mod_x").ok, false, "./repo accepted");
 });
 
 test("an unknown plugin type is refused, because nothing would look there", () => {

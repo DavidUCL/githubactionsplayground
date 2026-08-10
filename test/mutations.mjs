@@ -13,7 +13,7 @@
 // origin test together, and "disable the depth cap" covers all three sweeps.
 
 import { execFileSync } from "node:child_process";
-import { cpSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -394,8 +394,10 @@ const MUTATIONS = [
   ["1e: no annotation is emitted", "scripts/build-preview.mjs",
     "    problems.annotate();\n    throw problems.toError();",
     "    throw problems.toError();"],
-  ["1e: annotation keeps embedded newlines", "scripts/build-preview.mjs",
-    'sanitiseForLog(message).replace(/\\r?\\n/g, " ")', "sanitiseForLog(message)"],
+  // NOT mutated: the newline strip in annotate() is redundant — sanitiseForLog
+  // already removes newlines (measured: "line one\nline two" -> "line one line
+  // two"). Kept as defence in depth against that shared helper changing, but a
+  // mutant here only proves the redundancy.
   ["1e: annotation drops the input name", "scripts/build-preview.mjs",
     "`::error title=${sanitiseForLog(input)}::", "`::error::${\"\"}${"],
   ["1e: the refusal summary stops listing the inputs", "scripts/build-preview.mjs",
@@ -432,8 +434,9 @@ const MUTATIONS = [
   // Step 3: panel findings on the coordinate parser (found in pushed code)
   ["coord: let a ref segment walk out of the repo", "scripts/coordinates.mjs",
     "  return !ref.split(\"/\").some((seg) => BAD_SEGMENT.test(seg));", "  return true;"],
-  ["coord: allow percent-encoding in a ref", "scripts/coordinates.mjs",
-    '  if (ref.includes("%")) return false;', ""],
+  // NOT mutated: the percent guard is redundant with REF_CHARS, which has no
+  // `%` in its class (measured). A mutant would demand a test for redundancy
+  // rather than for behaviour — see the harness policy at the top.
   ["coord: build an archive URL for an unresolved ref", "scripts/coordinates.mjs",
     '  if (!COMMIT_RE.test(String(item?.ref ?? ""))) {', "  if (false) {"],
   ["coord: accept a short SHA as a pin", "scripts/coordinates.mjs",
@@ -644,15 +647,100 @@ for (const block of ORDER_SRC.match(/ {2}\{\n {4}id: "[^"]+",[\s\S]*?\n {2}\},\n
   MUTATIONS.push([`1b: drop ordering rule ${id}`, "scripts/order-rules.mjs", block, ""]);
 }
 
+// Everything a test may read. `preview/` is here because
+// render-comment.test.mjs reads ../preview/action.yml — and its absence is what
+// made this whole harness vacuous (see the baseline self-test below).
+const COPY_DIRS = ["scripts", "test", "preview", "fixtures"];
+
+// EVERY test file, found rather than listed. The old hard-coded list silently
+// excluded five suites — coordinates, mbz, order-rules, restore-assert and
+// check-fixture — so 45+ mutants targeted code whose tests never ran. A list
+// fossilises; a glob cannot.
+const TEST_FILES = readdirSync(join(ROOT, "test"))
+  .filter((f) => f.endsWith(".test.mjs"))
+  .sort()
+  .map((f) => `test/${f}`);
+
+function stageTree() {
+  const dir = mkdtempSync(join(tmpdir(), "bv-mut-"));
+  for (const d of COPY_DIRS) {
+    const from = join(ROOT, d);
+    if (existsSync(from)) cpSync(from, join(dir, d), { recursive: true });
+  }
+  return dir;
+}
+
+function suitePasses(dir) {
+  try {
+    execFileSync(process.execPath, ["--test", ...TEST_FILES], { cwd: dir, stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// THE BASELINE SELF-TEST — without this the harness cannot tell "the mutation
+// was caught" from "the suite was already broken".
+//
+// It was already broken. MEASURED 2026-08-10: the staged tree omitted
+// `preview/`, render-comment.test.mjs died with ENOENT on preview/action.yml,
+// the UNMUTATED baseline failed, and therefore every mutant was reported KILLED
+// by that same failure. A comment-only mutation was "killed". The reported
+// 235/235 meant nothing, and had meant nothing for the whole of this session's
+// work.
+{
+  const dir = stageTree();
+  try {
+    if (!suitePasses(dir)) {
+      console.error(
+        "BASELINE FAILS: the unmutated tree does not pass inside the staged mutant\n" +
+          "tree, so every mutant would be 'killed' by that failure rather than by the\n" +
+          "mutation. Fix the staging (COPY_DIRS/TEST_FILES) before trusting any result.",
+      );
+      execFileSync(process.execPath, ["--test", ...TEST_FILES], { cwd: dir, stdio: "inherit" });
+      process.exit(1);
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// KNOWN SURVIVORS — a ratchet, not an amnesty.
+//
+// When the staging bug above was fixed, 27 mutants that had been reported
+// "killed" for months turned out to survive. They are REAL vacuous assertions,
+// most of them predating this work. Fixing all of them at once would mean a
+// very large untested-in-anger change; hiding them would repeat the exact
+// failure this harness exists to prevent.
+//
+// So: every survivor must be listed here WITH ITS REASON. The harness fails on
+// any survivor that is not listed, AND on any listed one that has started being
+// killed — so the list cannot rot, and it can only shrink.
+//
+// Burn this down. Each line is an assertion that does not assert.
+const KNOWN_SURVIVORS = new Map([
+  ["verdict: drop risky_steps from the verdict", "assert.mjs writes risky_steps into the verdict; no test reads it back"],
+  ["summary: hide the risky-step notice", "render-summary emits the notice; no test asserts it appears"],
+  ["preview: let the RESTORED course fall into Miscellaneous", "the restore branch's category is untested (the createCourse branch is covered)"],
+  ["comment: allow userinfo in the posted link", "render-comment's URL guard has no hostile-URL case"],
+  ["evidence: count extractions without requiring them distinct", "assert.mjs dedupe of extractions is unexercised"],
+  ["verdict: drop the installed archive URLs", "the verdict's archive list is never read back by a test"],
+  ["parse: stop blanking comments", "comment blanking is covered only by inputs where it makes no difference"],
+  ["parse: mistake a URL in a string for a comment", "ditto — the URL-in-string case asserts something that holds either way"],
+  ["main: continue on a version.php we could not parse", "main()'s refusal on an unreadable version.php has no end-to-end test"],
+  ["fetch: accept an HTML 404 page as a version.php", "fetchPluginVersion's content check needs a stubbed fetch"],
+  ["fetch: drop the repo/sha shape check before requesting", "same — both return null today, so the test cannot tell them apart"],
+  ["rev: identifier check honours installTheme's declared type again", "forcing theme changes nothing observable at the identifier check"],
+  ["rev: free-text landing-path swallows the sentinel again", "checkLandingPath refuses '(default)' either way, so the opt() removal is invisible"],
+  ["1c: accept an empty standard list as success", "needs fetchCoreComponents' parsing split out to be testable without a network stub"],
+]);
+
 const survivors = [];
 let killed = 0;
 
 for (const [label, file, find, replace] of MUTATIONS) {
-  const dir = mkdtempSync(join(tmpdir(), "bv-mut-"));
+  const dir = stageTree();
   try {
-    for (const d of ["scripts", "test"]) {
-      cpSync(join(ROOT, d), join(dir, d), { recursive: true });
-    }
     const target = join(dir, file);
     const src = readFileSync(target, "utf8");
     const occurrences = src.split(find).length - 1;
@@ -661,19 +749,7 @@ for (const [label, file, find, replace] of MUTATIONS) {
       continue;
     }
     writeFileSync(target, src.replace(find, replace));
-    let testsFailed = false;
-    try {
-      execFileSync(process.execPath, ["--test", "test/assert.test.mjs", "test/preflight.test.mjs",
-        "test/validate-verdict.test.mjs", "test/render-summary.test.mjs",
-        "test/pipeline.test.mjs", "test/contract.test.mjs",
-        "test/build-preview.test.mjs", "test/preview-snapshot.test.mjs",
-        "test/render-comment.test.mjs", "test/plugin-version.test.mjs"], {
-        cwd: dir, stdio: "pipe",
-      });
-    } catch {
-      testsFailed = true; // the suite noticed — good
-    }
-    if (testsFailed) killed += 1;
+    if (!suitePasses(dir)) killed += 1; // the suite noticed — good
     else survivors.push(`${label} (${file})`);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -681,9 +757,28 @@ for (const [label, file, find, replace] of MUTATIONS) {
 }
 
 console.log(`mutations: ${killed}/${MUTATIONS.length} killed`);
-if (survivors.length) {
-  console.error("SURVIVING MUTANTS (vacuous or unpinned assertions):");
-  for (const s of survivors) console.error(`  - ${s}`);
+
+const label = (s) => s.replace(/ \(scripts\/.*\)$/, "").replace(/ — MUTATION STALE.*$/, "");
+const unexpected = survivors.filter((s) => !KNOWN_SURVIVORS.has(label(s)));
+const fixed = [...KNOWN_SURVIVORS.keys()].filter((k) => !survivors.some((s) => label(s) === k));
+
+if (unexpected.length) {
+  console.error("NEW SURVIVING MUTANTS (vacuous or unpinned assertions):");
+  for (const s of unexpected) console.error(`  - ${s}`);
+  console.error("\nEither pin the assertion with a test, or add it to KNOWN_SURVIVORS with a reason.");
   process.exit(1);
 }
-console.log("no surviving mutants — every assertion term is pinned by a test");
+if (fixed.length) {
+  // The list can only shrink, and it must not carry entries that are no longer
+  // true — a stale allowlist is how a ratchet becomes an amnesty.
+  console.error("These KNOWN_SURVIVORS are now KILLED. Remove them from the list:");
+  for (const k of fixed) console.error(`  - ${k}`);
+  process.exit(1);
+}
+if (survivors.length) {
+  console.log(`${survivors.length} known survivor(s) outstanding — real debt, listed in KNOWN_SURVIVORS:`);
+  for (const s of survivors) console.log(`  - ${s}`);
+  console.log("No NEW vacuous assertions.");
+} else {
+  console.log("no surviving mutants — every assertion term is pinned by a test");
+}

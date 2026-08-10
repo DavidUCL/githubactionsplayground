@@ -36,10 +36,14 @@ test("the generated step is one line and passes our own gate", () => {
 // that makes the assertion capable of failing at all.
 test("the PHP defines CLI_SCRIPT before loading Moodle", () => {
   const code = buildRestoreAssertion(ok).code;
-  assert.ok(
-    code.indexOf("CLI_SCRIPT") < code.indexOf("config.php"),
-    "CLI_SCRIPT must be defined BEFORE config.php or exit codes are swallowed",
-  );
+  // `indexOf` returns -1 when absent, and -1 < n is TRUE — so the obvious
+  // ordering assertion PASSES when CLI_SCRIPT is missing entirely, which is
+  // exactly the mutant it exists to catch. Assert presence first.
+  const cli = code.indexOf("CLI_SCRIPT");
+  const cfg = code.indexOf("config.php");
+  assert.ok(cli >= 0, "CLI_SCRIPT is absent; without it Moodle swallows the exit code");
+  assert.ok(cfg >= 0, "config.php is never required");
+  assert.ok(cli < cfg, "CLI_SCRIPT must be defined BEFORE config.php");
   assert.match(code, /exit\(0\);$/);
 });
 
