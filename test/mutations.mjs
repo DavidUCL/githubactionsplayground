@@ -442,6 +442,17 @@ const MUTATIONS = [
   ["coord: accept a short SHA as a pin", "scripts/coordinates.mjs",
     "export const COMMIT_RE = /^[0-9a-f]{40}$/;", "export const COMMIT_RE = /^[0-9a-f]{7,40}$/;"],
 
+  // The sample-content menu
+  ["sample: the menu resolves to nothing", "scripts/build-preview.mjs",
+    '    typedUrl || (sampleContent === "review-course" ? SAMPLE_COURSE_URL : "");',
+    "    typedUrl;"],
+  ["sample: the menu wins over a typed address instead of being refused", "scripts/build-preview.mjs",
+    "  if (sampleContent && typedUrl) {", "  if (false) {"],
+  ["sample: the default restores the sample course anyway", "scripts/build-preview.mjs",
+    'sampleContent === "review-course" ? SAMPLE_COURSE_URL : ""', "SAMPLE_COURSE_URL"],
+  ["sample: point the sample course at a branch instead of a commit", "scripts/build-preview.mjs",
+    "/4a0e7afcec0298462b9b28f5a93a65b164f84a56/fixtures/", "/main/fixtures/"],
+
   // A restored course brings its own sections and format
   ["restore: claim sections a restore ignored", "scripts/build-preview.mjs",
     "      course: restore\n        ? `${students} student(s), restored from a backup (${restore.info.activityCount} activities)`\n        : `${students} student(s), ${sections} section(s)`,",

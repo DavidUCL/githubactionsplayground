@@ -111,6 +111,20 @@ const PR_NUMBER_RE = /^\d+$/;
 export const MAX_MBZ_BYTES = 64 * 1024 * 1024;
 
 /**
+ * The sample review course, pinned to the commit that introduced it.
+ *
+ * Pinned rather than tracking a branch on purpose: a link is read weeks after
+ * it is posted, and a branch address would quietly start serving a different
+ * course — or stop serving one at all when the branch is deleted. This exact
+ * file was produced by `make-fixture`, checked against
+ * `fixtures/fixture-spec.json` in the run that produced it, and a preview
+ * restoring it has been booted (4.4 backup into a 5.0 site, all ten activities
+ * present).
+ */
+export const SAMPLE_COURSE_URL =
+  "https://raw.githubusercontent.com/DavidUCL/githubactionsplayground/4a0e7afcec0298462b9b28f5a93a65b164f84a56/fixtures/review-course-MOODLE_404_STABLE.mbz";
+
+/**
  * The reserved token a `choice` input uses to mean "leave this unset".
  *
  * `workflow_dispatch` has no unset state for a choice: every dropdown always
@@ -1011,7 +1025,21 @@ async function main() {
   // HERE, at link-build time, so a bad one is a refusal with a readable reason
   // rather than a boot that silently produces an empty course — restoreCourse
   // cannot report a content failure itself.
-  const restoreUrl = opt(process.env.RESTORE_COURSE_URL);
+  // `sample-content` is a menu; `restore-course-url` is the escape hatch. They
+  // feed ONE setting, because two names for one thing is how a form ends up
+  // with a menu saying one course and a box saying another.
+  const sampleContent = opt(process.env.SAMPLE_CONTENT);
+  const typedUrl = opt(process.env.RESTORE_COURSE_URL);
+  if (sampleContent && typedUrl) {
+    problems.add(
+      "sample-content",
+      `both a sample course ("${sampleContent}") and a course backup address were ` +
+        `given, and only one course can be restored. Pick the menu or the address, ` +
+        `not both.`,
+    );
+  }
+  const restoreUrl =
+    typedUrl || (sampleContent === "review-course" ? SAMPLE_COURSE_URL : "");
   let restore = null;
   if (restoreUrl) {
     const urlProblem = checkUrl(restoreUrl, hosts);

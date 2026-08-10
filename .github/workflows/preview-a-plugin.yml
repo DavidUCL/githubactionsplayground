@@ -39,6 +39,17 @@ on:
           - MOODLE_500_STABLE
           - MOODLE_405_STABLE
           - MOODLE_404_STABLE
+      sample-content:
+        description: >-
+          Put a ready-made course into the preview so it looks like a real site.
+          "review-course" restores a sample course with ten ordinary activities.
+          Leave as (default) for the small course the preview builds itself.
+        required: false
+        type: choice
+        default: "(default)"
+        options:
+          - "(default)"
+          - review-course
       restore-course-url:
         description: >-
           Fill the preview with a real course instead of an empty one. Paste the
@@ -146,6 +157,7 @@ jobs:
           head-repo: ${{ inputs.plugin-repo }}
           head-sha: ${{ steps.ref.outputs.sha }}
           moodle-branch: ${{ inputs.moodle-branch }}
+          sample-content: ${{ inputs.sample-content }}
           restore-course-url: ${{ inputs.restore-course-url }}
           landing-path: ${{ inputs.landing-path }}
           plugin-component: ${{ inputs.plugin-component }}

@@ -92,6 +92,15 @@ inputs:
       MOODLE_500_STABLE. The link does not yet pin this (see README).
     required: false
     default: "MOODLE_500_STABLE"
+  sample-content:
+    description: >-
+      Put a ready-made review course into the preview. "review-course" restores
+      a sample course with ten ordinary Moodle activities in it, so a reviewer
+      sees a realistic site rather than an empty one. Left at "(default)" the
+      preview builds its own small course. Use restore-course-url instead if
+      you want to supply your own backup.
+    required: false
+    default: "(default)"
   restore-course-url:
     description: >-
       A Moodle course backup (.mbz) to restore as the review course, instead of
@@ -195,6 +204,7 @@ runs:
         LOGIN_AS: ${{ inputs.login-as }}
         STUDENTS: ${{ inputs.students }}
         SECTIONS: ${{ inputs.sections }}
+        SAMPLE_CONTENT: ${{ inputs.sample-content }}
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}

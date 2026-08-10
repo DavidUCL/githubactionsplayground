@@ -30,7 +30,8 @@
     "PLUGIN_ROOT": ".",
     "MOODLE_BRANCH": "MOODLE_500_STABLE",
     "DATA_HOSTS": "",
-    "PLAYGROUND_HOST": "https://daviducl.github.io/moodle-playground"
+    "PLAYGROUND_HOST": "https://daviducl.github.io/moodle-playground",
+    "SAMPLE_CONTENT": "(default)"
   },
   "probes": [
     {
@@ -226,6 +227,20 @@
       "expect_steps_removed": [
         "createCourse"
       ]
+    },
+    {
+      "input": "sample-content",
+      "env": "SAMPLE_CONTENT",
+      "probe": "review-course",
+      "target": "shape",
+      "expect_steps_added": [
+        "restoreCourse",
+        "runPhpCode"
+      ],
+      "expect_steps_removed": [
+        "createCourse"
+      ],
+      "note": "A menu, resolved to the pinned sample-course address inside the builder, so the form never carries a long URL. Same shape change as restore-course-url because it feeds the same setting \u2014 that is deliberate: two names for one thing is how a menu and a box end up disagreeing."
     }
   ]
 }

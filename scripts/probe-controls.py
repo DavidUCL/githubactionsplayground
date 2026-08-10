@@ -190,7 +190,21 @@ def main():
                 fail(f"{name}: removed steps {removed}, declared {sorted(row.get('expect_steps_removed', []))}")
             if not added and not removed:
                 fail(f"{name}: the step list is unchanged — the input reaches nothing")
-            signatures[name] = (frozenset(added + removed), tuple(added + removed))
+            # Two controls may deliberately feed ONE setting — a menu and a
+            # free-text box for the same thing. Their step-name change is then
+            # identical by design, so the signature must include the CONTENT of
+            # the steps they add.
+            #
+            # changed_values() is not enough here: it only compares keys present
+            # in BOTH blueprints, and the distinguishing field (`url`) exists
+            # only in the added step. Two probes restoring completely different
+            # courses came out identical.
+            added_steps = [
+                json.dumps(x, sort_keys=True)
+                for x in res["blueprint"]["steps"]
+                if x.get("step") in set(added)
+            ]
+            signatures[name] = (frozenset(added + removed), tuple(sorted(added_steps)))
         elif target == "url":
             if preview_url(res["output"]) == preview_url(base["output"]):
                 fail(f"{name}: preview-url is unchanged — the input reaches nothing")

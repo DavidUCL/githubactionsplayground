@@ -1032,3 +1032,95 @@ test("a course-format plugin cannot be previewed against a restored course", asy
   assert.match(out, /::error title=restore-course-url::/, out);
   assert.match(out, /brings its own format/, out);
 });
+
+// --- the sample-content menu ------------------------------------------------
+// A menu and a free-text box feeding ONE setting, on purpose: two separate
+// settings is how a form ends up with a menu saying one course and a box
+// saying another.
+
+test("the sample course address is pinned to a commit, not a branch", async () => {
+  const { SAMPLE_COURSE_URL } = await import("../scripts/build-preview.mjs");
+  // A branch address quietly starts serving a different course, and stops
+  // serving one at all when the branch is deleted. Links are read weeks later.
+  assert.match(SAMPLE_COURSE_URL, /\/[0-9a-f]{40}\//, SAMPLE_COURSE_URL);
+  assert.match(SAMPLE_COURSE_URL, /^https:\/\/raw\.githubusercontent\.com\//);
+  assert.ok(SAMPLE_COURSE_URL.endsWith(".mbz"));
+});
+
+test("the pinned sample course is the one the spec describes", async () => {
+  const { readFileSync } = await import("node:fs");
+  const { checkFixture } = await import("../scripts/check-fixture.mjs");
+  const spec = JSON.parse(readFileSync("fixtures/fixture-spec.json", "utf8"));
+  // The committed file, not the network: this asserts what we SHIP.
+  const r = checkFixture(readFileSync("fixtures/review-course-MOODLE_404_STABLE.mbz"), spec);
+  assert.deepEqual(r.problems, []);
+});
+
+test("choosing the menu restores the sample course", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const { SAMPLE_COURSE_URL } = await import("../scripts/build-preview.mjs");
+  const dir = mkdtempSync(join(tmpdir(), "menu-"));
+  writeFileSync(join(dir, "s.md"), "");
+  execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+    env: {
+      ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+      SAMPLE_CONTENT: "review-course",
+      OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"), GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+    },
+    stdio: "pipe",
+  });
+  const bp = JSON.parse(readFileSync(join(dir, "out", "preview-blueprint.json"), "utf8"));
+  const restore = bp.steps.find((s) => s.step === "restoreCourse");
+  assert.ok(restore, "the menu did not produce a restore");
+  assert.equal(restore.url, SAMPLE_COURSE_URL);
+});
+
+test("the menu left at its default builds the small course as before", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "none-"));
+  writeFileSync(join(dir, "s.md"), "");
+  execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+    env: {
+      ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+      SAMPLE_CONTENT: "(default)",
+      OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"), GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+    },
+    stdio: "pipe",
+  });
+  const bp = JSON.parse(readFileSync(join(dir, "out", "preview-blueprint.json"), "utf8"));
+  assert.ok(bp.steps.some((s) => s.step === "createCourse"));
+  assert.ok(!bp.steps.some((s) => s.step === "restoreCourse"));
+});
+
+test("asking for the menu AND an address at once is refused", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "both-"));
+  writeFileSync(join(dir, "s.md"), "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+        SAMPLE_CONTENT: "review-course",
+        RESTORE_COURSE_URL:
+          "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
+        OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"), GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+      },
+      stdio: "pipe",
+    });
+    assert.fail("both a menu choice and an address were accepted");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /::error title=sample-content::/, out);
+  assert.match(out, /only one course can be restored/, out);
+});
