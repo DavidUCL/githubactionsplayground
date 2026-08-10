@@ -429,6 +429,16 @@ const MUTATIONS = [
   ["restore: stop checking the backup URL's host", "scripts/build-preview.mjs",
     "    const urlProblem = checkUrl(restoreUrl, hosts);", "    const urlProblem = null;"],
 
+  // Step 3: panel findings on the coordinate parser (found in pushed code)
+  ["coord: let a ref segment walk out of the repo", "scripts/coordinates.mjs",
+    "  return !ref.split(\"/\").some((seg) => BAD_SEGMENT.test(seg));", "  return true;"],
+  ["coord: allow percent-encoding in a ref", "scripts/coordinates.mjs",
+    '  if (ref.includes("%")) return false;', ""],
+  ["coord: build an archive URL for an unresolved ref", "scripts/coordinates.mjs",
+    '  if (!COMMIT_RE.test(String(item?.ref ?? ""))) {', "  if (false) {"],
+  ["coord: accept a short SHA as a pin", "scripts/coordinates.mjs",
+    "export const COMMIT_RE = /^[0-9a-f]{40}$/;", "export const COMMIT_RE = /^[0-9a-f]{7,40}$/;"],
+
   // Step 3: the plugin coordinate parser
   ["coord: make #type_name optional again", "scripts/coordinates.mjs",
     "  if (hash < 0) {", "  if (false) {"],
@@ -438,7 +448,7 @@ const MUTATIONS = [
     'if (parts.length !== 2 || !parts.every((p) => OWNER_REPO.test(p) && p !== "." && p !== "..")) {',
     "if (parts.length !== 2) {"],
   ["coord: accept any ref shape", "scripts/coordinates.mjs",
-    "if (!ref || !REF.test(ref)) {", "if (false) {"],
+    "  if (!refIsSafe(ref)) {", "  if (false) {"],
   ["coord: accept a plugin type Moodle has no directory for", "scripts/coordinates.mjs",
     "if (!Object.hasOwn(PLUGIN_TYPE_DIRS, type)) {", "if (false) {"],
   ["coord: split type_name at the LAST underscore", "scripts/coordinates.mjs",

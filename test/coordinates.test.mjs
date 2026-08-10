@@ -99,6 +99,48 @@ test("every problem is reported, not just the first", () => {
 });
 
 test("the archive URL is built from the parsed parts", () => {
-  const item = parseCoordinate("a/b@deadbeef#mod_x");
-  assert.equal(coordinateZipUrl(item), "https://github.com/a/b/archive/deadbeef.zip");
+  const sha = "a".repeat(40);
+  const item = parseCoordinate(`a/b@${sha}#mod_x`);
+  assert.equal(coordinateZipUrl(item), `https://github.com/a/b/archive/${sha}.zip`);
+});
+
+// --- found by the panel, in code already pushed ----------------------------
+// MEASURED before the fix:
+//   ucl-isd/moodle-mod_coursework@x/../../../../evil/moodle-mod_coursework/archive/main
+//     -> https://github.com/evil/moodle-mod_coursework/archive/main.zip
+// and checkUrl passes it, because the host is still github.com. The host
+// allowlist constrains the HOST and has never constrained the OWNER.
+test("a ref cannot walk the archive URL into another owner", () => {
+  const evil =
+    "ucl-isd/moodle-mod_coursework@x/../../../../evil/moodle-mod_coursework/archive/main#mod_coursework";
+  const r = parseCoordinate(evil);
+  assert.equal(r.ok, false, "a traversal ref was accepted");
+  assert.match(r.reason, /different\s+owner/);
+});
+
+test("every traversal shape is refused, not just the literal one", () => {
+  for (const ref of ["..", "a/../b", "a/./b", "/lead", "trail/", "a//b", "x/..%2f..%2fevil"]) {
+    assert.equal(parseCoordinate(`a/b@${ref}#mod_x`).ok, false, `ref ${ref} was accepted`);
+  }
+});
+
+// Branch names legitimately contain slashes; refusing them would be a false
+// refusal, which is what makes the charset-only approach tempting and wrong.
+test("an ordinary slashed branch name still works", () => {
+  for (const ref of ["feature/foo", "release/4.4", "dependabot/npm_and_yarn/x-1.2.3"]) {
+    assert.equal(parseCoordinate(`a/b@${ref}#mod_x`).ok, true, `ref ${ref} was refused`);
+  }
+});
+
+// A prefix is not a pin: GitHub serves an archive for a 7-char SHA quite
+// happily. What ships in a link must be a full commit, enforced where the URL
+// is built so no caller can forget.
+test("the archive URL refuses anything that is not a full commit", () => {
+  for (const ref of ["1764f02", "main", "v4.4.12", "", "A".repeat(40)]) {
+    assert.throws(
+      () => coordinateZipUrl({ owner: "a", repo: "b", ref, component: "mod_x" }),
+      /not a 40-character commit/,
+      `ref ${JSON.stringify(ref)} produced a URL`,
+    );
+  }
 });

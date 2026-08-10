@@ -33,9 +33,32 @@ export const MAX_COORDINATES = 5;
 
 const OWNER_REPO = /^[A-Za-z0-9_][A-Za-z0-9._-]*$/;
 const IDENT = /^[a-z][a-z0-9_]*$/;
-// Refs are resolved later, so this only has to exclude what cannot be a ref.
-// Deliberately no `..`, no leading/trailing slash, no whitespace, no `~^:?*[`.
-const REF = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
+// Ref CHARACTERS. Branch names legitimately contain `/` (`feature/foo`), so the
+// separator has to be allowed — and that is exactly what made the first version
+// of this dangerous. Its comment claimed "deliberately no `..`" while the regex
+// permitted it, which is the same lie-in-a-comment this repo has already been
+// bitten by. Measured, before the fix:
+//
+//   ucl-isd/moodle-mod_coursework@x/../../../../evil/moodle-mod_coursework/archive/main
+//     -> https://github.com/evil/moodle-mod_coursework/archive/main.zip
+//
+// and `checkUrl` waves it through, because the host is still github.com. The
+// host allowlist constrains the HOST; it has never constrained the OWNER.
+//
+// So the charset stays a regex and the traversal is decided STRUCTURALLY, on
+// segments — decide the shape, not the character.
+const REF_CHARS = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
+
+/** A ref segment that walks up, stays put, or is empty. */
+const BAD_SEGMENT = /^(|\.|\.\.)$/;
+
+function refIsSafe(ref) {
+  if (!ref || !REF_CHARS.test(ref)) return false;
+  // No percent-encoding: a real ref has none, and `%2e%2e` would decode into a
+  // traversal after this check.
+  if (ref.includes("%")) return false;
+  return !ref.split("/").some((seg) => BAD_SEGMENT.test(seg));
+}
 
 /**
  * @param {string} raw one coordinate
@@ -75,8 +98,14 @@ export function parseCoordinate(raw) {
   if (parts.length !== 2 || !parts.every((p) => OWNER_REPO.test(p) && p !== "." && p !== "..")) {
     return { ok: false, reason: `has no usable "owner/repo" (got ${JSON.stringify(slug)})` };
   }
-  if (!ref || !REF.test(ref)) {
-    return { ok: false, reason: `has an unusable ref ${JSON.stringify(ref)}` };
+  if (!refIsSafe(ref)) {
+    return {
+      ok: false,
+      reason:
+        `has an unusable ref ${JSON.stringify(ref)} — a ref segment of "." or ".." ` +
+        `walks the archive URL out of the repository it names, into a different ` +
+        `owner entirely, and the host allowlist cannot see that`,
+    };
   }
 
   // `type_name` splits at the FIRST underscore: `mod_coursework`, but also
@@ -150,7 +179,25 @@ export function parseCoordinateList(raw, { max = MAX_COORDINATES, label = "coord
   return { ok: problems.length === 0, items, problems };
 }
 
-/** Where a resolved coordinate's archive lives. One definition, so the builder
- * and anything that checks it cannot disagree. */
-export const coordinateZipUrl = (item) =>
-  `https://github.com/${item.owner}/${item.repo}/archive/${item.ref}.zip`;
+/** A commit, exactly. Not a short SHA: GitHub serves an archive for a 7-char
+ * prefix quite happily, and a prefix is not a pin. */
+export const COMMIT_RE = /^[0-9a-f]{40}$/;
+
+/**
+ * Where a RESOLVED coordinate's archive lives.
+ *
+ * Refuses anything that is not a full commit. What ships in a link must be a
+ * commit — a branch boots later code than the link claims and 404s once the
+ * branch is deleted — and enforcing it at the point the URL is built means no
+ * caller can forget. It is also the second wall against a traversal ref: even
+ * if one reached here, it is not 40 hex characters.
+ */
+export function coordinateZipUrl(item) {
+  if (!COMMIT_RE.test(String(item?.ref ?? ""))) {
+    throw new Error(
+      `refusing to build an archive URL for ${item?.component ?? "?"}: ref ` +
+        `${JSON.stringify(item?.ref)} is not a 40-character commit. Resolve it first.`,
+    );
+  }
+  return `https://github.com/${item.owner}/${item.repo}/archive/${item.ref}.zip`;
+}
