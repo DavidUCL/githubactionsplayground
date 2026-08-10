@@ -442,6 +442,16 @@ const MUTATIONS = [
   ["coord: accept a short SHA as a pin", "scripts/coordinates.mjs",
     "export const COMMIT_RE = /^[0-9a-f]{40}$/;", "export const COMMIT_RE = /^[0-9a-f]{7,40}$/;"],
 
+  // A restored course brings its own sections and format
+  ["restore: claim sections a restore ignored", "scripts/build-preview.mjs",
+    "      course: restore\n        ? `${students} student(s), restored from a backup (${restore.info.activityCount} activities)`\n        : `${students} student(s), ${sections} section(s)`,",
+    "      course: `${students} student(s), ${sections} section(s)`,"],
+  ["restore: summary names a landing page the link does not open", "scripts/build-preview.mjs",
+    '      "landing page": landingOverride || landingPath(type, name, { restored: Boolean(restore) }),',
+    '      "landing page": landingOverride || landingPath(type, name),'],
+  ["restore: allow a format plugin against a restored course", "scripts/build-preview.mjs",
+    '  if (restoreUrl && type === "format") {', "  if (false) {"],
+
   // Step 3: the plugin coordinate parser
   ["coord: make #type_name optional again", "scripts/coordinates.mjs",
     "  if (hash < 0) {", "  if (false) {"],

@@ -39,6 +39,15 @@ on:
           - MOODLE_500_STABLE
           - MOODLE_405_STABLE
           - MOODLE_404_STABLE
+      restore-course-url:
+        description: >-
+          Fill the preview with a real course instead of an empty one. Paste the
+          address of a Moodle course backup (.mbz). It is downloaded and checked
+          when the link is built, so a wrong file is refused with a reason
+          rather than booting a Moodle with nothing in it. Leave blank for an
+          empty course.
+        required: false
+        default: ""
       landing-path:
         description: "Optional: site-relative page to land on, e.g. /course/view.php?id=2. Blank = the default for the plugin type."
         required: false
@@ -137,6 +146,7 @@ jobs:
           head-repo: ${{ inputs.plugin-repo }}
           head-sha: ${{ steps.ref.outputs.sha }}
           moodle-branch: ${{ inputs.moodle-branch }}
+          restore-course-url: ${{ inputs.restore-course-url }}
           landing-path: ${{ inputs.landing-path }}
           plugin-component: ${{ inputs.plugin-component }}
           # The two sentinel options mean "leave it to the action", which is

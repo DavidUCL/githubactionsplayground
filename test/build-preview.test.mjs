@@ -942,3 +942,93 @@ test("data-hosts narrows the allowlist that main() applies", async () => {
   }
   assert.match(out, /not in allowlist: github\.com/, out);
 });
+
+// --- a restored course brings its own sections and format ------------------
+// Found independently by two reviewers. restoreCourse accepts fullname,
+// shortname, category, createCategory and visible — NOT numsections or format.
+// Both were dropped in silence while the summary still claimed them.
+
+test("the summary does not claim sections a restore ignored", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "sections-"));
+  const summary = join(dir, "s.md");
+  writeFileSync(summary, "");
+  execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+    env: {
+      ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+      SECTIONS: "10",
+      RESTORE_COURSE_URL:
+        "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
+      OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"), GITHUB_STEP_SUMMARY: summary,
+    },
+    stdio: "pipe",
+  });
+  const md = readFileSync(summary, "utf8");
+  assert.ok(!/10 section\(s\)/.test(md), `the summary claimed sections it never applied:\n${md}`);
+  assert.match(md, /restored from a backup/);
+});
+
+// The summary named the add-form path while the link opened the course.
+//
+// The first version of this test compared landingPath() with the blueprint —
+// two things the bug does not touch — so it passed on the very mutant it
+// existed to catch. Read the SUMMARY THE RUN WROTE and compare it with the
+// LINK THAT RUN BUILT. Nothing else proves they agree.
+test("the summary's landing page is the one the link opens", async () => {
+  const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "landing-"));
+  const summary = join(dir, "s.md");
+  writeFileSync(summary, "");
+  execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+    env: {
+      ...process.env, HEAD_REPO: "DavidUCL/moodle-mod_attendance", HEAD_SHA: SHA,
+      RESTORE_COURSE_URL:
+        "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
+      OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"), GITHUB_STEP_SUMMARY: summary,
+    },
+    stdio: "pipe",
+  });
+  const blueprint = JSON.parse(readFileSync(join(dir, "out", "preview-blueprint.json"), "utf8"));
+  const inLink = blueprint.steps.find((s) => s.step === "setLandingPage").path;
+  const row = readFileSync(summary, "utf8").split("\n").find((l) => l.startsWith("| landing page |"));
+  assert.ok(row, "no landing page row in the summary");
+  assert.ok(
+    row.includes(inLink),
+    `the summary names a different page than the link opens.\n  link: ${inLink}\n  row : ${row}`,
+  );
+});
+
+// A format plugin's whole point is the format. A restored course brings its
+// own, so the plugin would never be applied and the reviewer would conclude it
+// is broken. Refuse rather than mislead.
+test("a course-format plugin cannot be previewed against a restored course", async () => {
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "fmt-"));
+  writeFileSync(join(dir, "s.md"), "");
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env, HEAD_REPO: "DavidUCL/moodle-format_thing", HEAD_SHA: SHA,
+        RESTORE_COURSE_URL:
+          "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
+        OUT_DIR: join(dir, "out"), GITHUB_OUTPUT: join(dir, "g"), GITHUB_STEP_SUMMARY: join(dir, "s.md"),
+      },
+      stdio: "pipe",
+    });
+    assert.fail("a format plugin with a restored course was accepted");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /::error title=restore-course-url::/, out);
+  assert.match(out, /brings its own format/, out);
+});

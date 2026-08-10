@@ -1056,6 +1056,25 @@ async function main() {
     }
   }
 
+  // A restored course arrives with its own sections and its own format —
+  // restoreCourse takes neither (moodle-restore.js accepts fullname, shortname,
+  // category, createCategory, visible). Both were being dropped in silence
+  // while the summary still printed "10 section(s)", and a course-format plugin
+  // previewed this way showed an ordinary topics course, so the reviewer
+  // concluded the plugin was broken. Found independently by two reviewers.
+  //
+  // Sections are merely ignored, so the summary is corrected below. A FORMAT
+  // plugin is different: the whole point of the preview is to see the format,
+  // and a restored course cannot show it. Refuse rather than mislead.
+  if (restoreUrl && type === "format") {
+    problems.add(
+      "restore-course-url",
+      `a course-format plugin cannot be previewed against a restored course: the ` +
+        `backup brings its own format, so "${name}" would never be applied and the ` +
+        `reviewer would see an ordinary course and conclude the plugin is broken`,
+    );
+  }
+
   // One throw for everything above. Annotations first, so GitHub shows a marker
   // against each offending field even though the run ends here.
   if (problems.any) {
@@ -1107,7 +1126,10 @@ async function main() {
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
   setOutput("plugin-component", declared?.component || `${type}_${name}`);
-  setOutput("preview-user", loginAs || previewUser(landingOverride || landingPath(type, name)));
+  setOutput(
+    "preview-user",
+    loginAs || previewUser(landingOverride || landingPath(type, name, { restored: Boolean(restore) })),
+  );
   setOutput("risky-steps", risky.join(","));
   setOutput("preview-url", url);
   if (risky.length) {
@@ -1129,10 +1151,17 @@ async function main() {
       commit: headSha,
       repository: headRepo,
       Moodle: moodleBranch,
-      "signed in as": loginAs || previewUser(landingOverride || landingPath(type, name)),
+      // The landing page MUST be computed the same way the link was, restore
+      // included — otherwise the summary names the add-form path while the link
+      // opens the course.
+      "signed in as":
+        loginAs || previewUser(landingOverride || landingPath(type, name, { restored: Boolean(restore) })),
       PHP: phpOverride || phpForBranch(moodleBranch),
-      "course": `${students} student(s), ${sections} section(s)`,
-      "landing page": landingOverride || landingPath(type, name),
+      // Do not claim a section count that a restore ignored.
+      course: restore
+        ? `${students} student(s), restored from a backup (${restore.info.activityCount} activities)`
+        : `${students} student(s), ${sections} section(s)`,
+      "landing page": landingOverride || landingPath(type, name, { restored: Boolean(restore) }),
       "version.php": declared ? declared.path : "not checked out — compatibility NOT checked",
       "core components": core.ok
         ? `${core.standard.size} from lib/plugins.json`
