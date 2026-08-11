@@ -111,6 +111,27 @@ inputs:
       empty course.
     required: false
     default: ""
+  extra-plugins:
+    description: >-
+      Other plugins to install alongside the one under review, comma separated,
+      each written owner/repo@ref#type_name — for example
+      ucl-isd/moodle-local_sitsgradepush@main#local_sitsgradepush. Up to five.
+
+      Every part is required. Without #type_name nothing can name what is being
+      installed, and a ZIP declaring itself to be one of Moodle's own plugins is
+      written over Moodle's copy file by file. Without @ref the preview would
+      boot whatever that branch points at on the day it is opened, which is not
+      what the link claims and 404s once the branch is deleted; a branch or tag
+      name is resolved to a commit before the link is built.
+
+      Each one is checked when the LINK is built: the commit must exist, the
+      archive must exist, and its version.php must declare the component named
+      here and run on the chosen Moodle. Dependencies are read from the same
+      file and INSTALLED FIRST — Moodle enforces none of that during a scripted
+      install, so a missing dependency would otherwise install quietly and fail
+      later, in front of the reviewer.
+    required: false
+    default: ""
   data-hosts:
     description: >-
       Comma-separated hosts that URLs inside the blueprint may point at —
@@ -206,6 +227,7 @@ runs:
         SECTIONS: ${{ inputs.sections }}
         SAMPLE_CONTENT: ${{ inputs.sample-content }}
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
+        EXTRA_PLUGINS: ${{ inputs.extra-plugins }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out

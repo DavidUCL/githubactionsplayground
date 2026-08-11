@@ -154,8 +154,9 @@ const MUTATIONS = [
   ["preview: let the CREATED course fall into Miscellaneous", "scripts/build-preview.mjs",
     '          category: "Review",\n          // A format plugin', "          // A format plugin"],
   ["preview: drop critical:true from the plugin install", "scripts/build-preview.mjs",
-    "      // clean Moodle and the reviewer concludes the plugin does nothing.\n      critical: true,",
-    "      // clean Moodle and the reviewer concludes the plugin does nothing."],
+    "      pluginName: p.pluginName,\n      critical: true,", "      pluginName: p.pluginName,"],
+  ["preview: build a link whose install list lost the commit under review", "scripts/build-preview.mjs",
+    "if (!pluginInstalls.some((p) => p.url === selfUrl)) {", "if (false) {"],
   ["preview: drop the top-level landingPage", "scripts/build-preview.mjs",
     "    landingPage,\n", ""],
   ["preview: allow an underscore in an activity module name", "scripts/build-preview.mjs",
@@ -655,6 +656,97 @@ const MUTATIONS = [
   // wording. Per the redundant-guard policy above, mutating it alone would
   // demand a test for redundancy rather than for behaviour. The gate side is
   // covered by "1c: gate stops refusing core components".
+
+  // extras.mjs — the ref advertisement, the two existence proofs, and the
+  // dependency ordering Moodle will not do for us.
+  ["extras: decode the ref advertisement as UTF-8", "scripts/extras.mjs",
+    'const text = Buffer.from(bytes).toString("latin1");',
+    'const text = Buffer.from(bytes).toString("utf8");'],
+  ["extras: accept anything as a ref advertisement", "scripts/extras.mjs",
+    "if (!/^[0-9a-f]{4}$/i.test(head)) {", "if (false) {"],
+  ["extras: read on past a truncated packet", "scripts/extras.mjs",
+    "if (payload.length < len - 4) {", "if (false) {"],
+  ["extras: treat a repo advertising nothing as resolvable", "scripts/extras.mjs",
+    "if (!refs.size) {", "if (false) {"],
+  ["extras: take an annotated tag's tag object, not the commit", "scripts/extras.mjs",
+    "const tagSha = refs.get(peeled) ?? refs.get(tag);",
+    "const tagSha = refs.get(tag) ?? refs.get(peeled);"],
+  ["extras: resolve a branch/tag ambiguity by precedence", "scripts/extras.mjs",
+    "if (branchSha && tagSha && branchSha !== tagSha) {", "if (false) {"],
+  ["extras: look up a ref that is already a commit", "scripts/extras.mjs",
+    "if (COMMIT_RE.test(item.ref)) {", "if (false) {"],
+  // GitHub answers 401, not 404, for a repository that does not exist. The
+  // 404-only form of this line never fired.
+  ["extras: only treat 404 as a missing repository", "scripts/extras.mjs",
+    "const missing = res.status === 401 || res.status === 404;",
+    "const missing = res.status === 404;"],
+  ["extras: follow a rename when resolving a ref", "scripts/extras.mjs",
+    'const res = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: "error" });',
+    "const res = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });"],
+  // The archive URL answers 302 to codeload first; without following, every
+  // real commit looks missing — and with `error`, every one is a refusal.
+  ["extras: stop following the archive redirect", "scripts/extras.mjs",
+    '        redirect: "follow",', '        redirect: "error",'],
+  ["extras: accept a 404 archive", "scripts/extras.mjs",
+    "      if (!res.ok) {\n        problems.push(", "      if (false) {\n        problems.push("],
+  ["extras: swallow an unreachable archive host", "scripts/extras.mjs",
+    "problems.push(`${label} ${item.component}: could not reach ${url} — ${err.message}`);", ";"],
+  ["extras: accept a missing version.php", "scripts/extras.mjs",
+    "  if (!res.ok) {\n    return {\n      ok: false,\n      reason:\n        `has no version.php",
+    "  if (false) {\n    return {\n      ok: false,\n      reason:\n        `has no version.php"],
+  // Quinn's case: a styled 404 page served with status 200 parses to a
+  // version.php with every field empty, and empty passes everything below.
+  ["extras: accept a version.php with no readable fields", "scripts/extras.mjs",
+    "if (declared.component == null && declared.version == null && declared.requires == null) {",
+    "if (false) {"],
+  ["extras: ignore an unparseable extra version.php", "scripts/extras.mjs",
+    "if (!declared.ok) return { ok: false, reason: declared.reason };",
+    "if (false) return { ok: false, reason: declared.reason };"],
+  ["extras: accept an extra that is not the plugin named", "scripts/extras.mjs",
+    "if (declared.component && declared.component !== item.component) {", "if (false) {"],
+  ["extras: skip the extra's Moodle compatibility", "scripts/extras.mjs",
+    "if (!compat.ok) say(compat.reason);", "if (false) say(compat.reason);"],
+  ["extras: stop counting core components as satisfying a dependency", "scripts/extras.mjs",
+    "if (core.standard.has(dep)) continue;", "if (false) continue;"],
+  ["extras: let a missing dependency through", "scripts/extras.mjs",
+    "      if (!supplier) {\n        problems.push(",
+    "      if (!supplier) { continue; }\n      if (false) {\n        problems.push("],
+  ["extras: ignore a dependency pinned too old", "scripts/extras.mjs",
+    "supplier.version < want", "false"],
+  ["extras: guess dependencies with no core component list", "scripts/extras.mjs",
+    "if (!core?.ok) return [];", "if (false) return [];"],
+  ["extras: drop the extras-before-the-plugin-under-review tie-break", "scripts/extras.mjs",
+    "const next = ready.find((n) => !n.isSelf) ?? ready[0];", "const next = ready[0];"],
+  // A cycle left alone silently DROPS whichever plugins the sort could not
+  // place: a preview quietly missing exactly what was asked for.
+  ["extras: return a partial order instead of refusing a cycle", "scripts/extras.mjs",
+    "      return {\n        ok: false,\n        reason:\n          `these plugins depend on each other",
+    "      return {\n        ok: true,\n        order,\n        reason:\n          `these plugins depend on each other"],
+  ["extras: treat a self-referential dependency as a cycle", "scripts/extras.mjs",
+    "byComponent.has(d) && d !== n.component", "byComponent.has(d)"],
+  ["extras: wait forever for a dependency outside the preview", "scripts/extras.mjs",
+    "byComponent.has(d) && d !== n.component", "d !== n.component"],
+
+  // $plugin->dependencies. An empty list is the value that satisfies every
+  // dependency check there is, so every unreadable shape must refuse instead.
+  ["deps: read $plugin->dependencies only, not $module->", "scripts/plugin-version.mjs",
+    "/\\$(?:plugin|module)\\s*->\\s*dependencies\\s*=/", "/\\$plugin\\s*->\\s*dependencies\\s*=/"],
+  ["deps: treat a non-literal dependencies list as no dependencies", "scripts/plugin-version.mjs",
+    "  if (!open) {", "  if (!open) { return { ok: true, dependencies: {} }; }\n  if (false) {"],
+  ["deps: accept an unterminated dependencies array", "scripts/plugin-version.mjs",
+    "  if (end < 0) {", "  if (false) {"],
+  ["deps: accept a partly-understood dependencies list", "scripts/plugin-version.mjs",
+    "  if (residue) {", "  if (false) {"],
+  ["deps: turn ANY_VERSION into a number", "scripts/plugin-version.mjs",
+    'dependencies[m[2]] = m[3] === "ANY_VERSION" ? "ANY_VERSION" : Number(m[3]);',
+    "dependencies[m[2]] = Number(m[3]);"],
+  ["deps: let an unreadable list pass parseVersionPhp", "scripts/plugin-version.mjs",
+    "  if (!deps.ok) {", "  if (false) {"],
+  // NOT mutated: the `want !== "ANY_VERSION"` guard in checkDependenciesSatisfied.
+  // MEASURED — with it removed the comparison is `number < "ANY_VERSION"`, which
+  // JS evaluates against NaN and is false, so the behaviour is identical. It
+  // documents the intent and protects the day the comparison changes; a mutant
+  // for it would demand a test asserting something that does not happen.
 ];
 
 // One mutation per ORDER_RULES entry, sliced out of the source file: deleting
@@ -746,8 +838,10 @@ const KNOWN_SURVIVORS = new Map([
   ["comment: allow userinfo in the posted link", "render-comment's URL guard has no hostile-URL case"],
   ["evidence: count extractions without requiring them distinct", "assert.mjs dedupe of extractions is unexercised"],
   ["verdict: drop the installed archive URLs", "the verdict's archive list is never read back by a test"],
-  ["parse: stop blanking comments", "comment blanking is covered only by inputs where it makes no difference"],
-  ["parse: mistake a URL in a string for a comment", "ditto — the URL-in-string case asserts something that holds either way"],
+  // "parse: stop blanking comments" was here until the dependency tests
+  // arrived: a commented-out $plugin->dependencies is the first input where
+  // blanking changes the answer. One line off the ratchet.
+  ["parse: mistake a URL in a string for a comment", "the URL-in-string case asserts something that holds either way"],
   ["main: continue on a version.php we could not parse", "main()'s refusal on an unreadable version.php has no end-to-end test"],
   ["fetch: accept an HTML 404 page as a version.php", "fetchPluginVersion's content check needs a stubbed fetch"],
   ["fetch: drop the repo/sha shape check before requesting", "same — both return null today, so the test cannot tell them apart"],

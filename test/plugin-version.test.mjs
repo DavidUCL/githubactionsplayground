@@ -20,6 +20,7 @@ import {
   checkNotCoreComponent,
   fetchCoreComponents,
   fetchPluginVersion,
+  parseDependencies,
   MOODLE_BRANCH_VERSIONS,
   DEFAULT_MOODLE_BRANCH,
 } from "../scripts/plugin-version.mjs";
@@ -429,4 +430,69 @@ test("an oversized version.php is refused, not silently truncated", () => {
   // AND the "not checked" note was suppressed.
   assert.equal(r.ok, false);
   assert.match(r.reason, /refusing to guess/);
+});
+
+// ---------------------------------------------------------------------------
+// $plugin->dependencies. Moodle DISCARDS this field during a scripted install
+// (lib/upgradelib.php:828, :992), so it is only ever enforced by us — which
+// makes reading it wrongly indistinguishable from not reading it at all.
+
+test("both array syntaxes are read, and ANY_VERSION stays a string", () => {
+  const short = parseDependencies("$plugin->dependencies = ['mod_forum' => 2022041900, 'block_x' => ANY_VERSION];");
+  assert.equal(short.ok, true, short.reason);
+  assert.deepEqual(short.dependencies, { mod_forum: 2022041900, block_x: "ANY_VERSION" });
+
+  const long = parseDependencies("$plugin->dependencies = array('mod_forum' => ANY_VERSION,);");
+  assert.equal(long.ok, true, long.reason);
+  // A number would be silently comparable against a version and always false.
+  assert.equal(long.dependencies.mod_forum, "ANY_VERSION");
+});
+
+test("no dependencies assignment at all is not an error", () => {
+  assert.deepEqual(parseDependencies("<?php\n$plugin->version = 1;\n"), { ok: true, dependencies: {} });
+});
+
+test("$module->dependencies is read too", () => {
+  const r = parseDependencies("$module->dependencies = ['mod_forum' => 1];");
+  assert.deepEqual(r.dependencies, { mod_forum: 1 });
+});
+
+// The whole point: an empty map means "depends on nothing", which passes every
+// dependency check there is. A shape we cannot read must never collapse into it.
+test("a dependencies list we cannot read is a refusal, never an empty list", () => {
+  for (const [src, pattern] of [
+    ["$plugin->dependencies = $DEPS;", /not a literal array/],
+    ["$plugin->dependencies = get_deps();", /not a literal array/],
+    ["$plugin->dependencies = ['mod_forum' => 1", /unterminated/],
+    // Partly understood is the dangerous middle state: mod_forum reads fine and
+    // the constant does not, so a lenient parser returns a SHORTER list that
+    // still looks complete.
+    ["$plugin->dependencies = ['mod_forum' => 1, 'block_x' => BLOCK_X_VERSION];", /in a form this cannot read/],
+    ["$plugin->dependencies = ['mod_forum' => 1, $extra];", /in a form this cannot read/],
+  ]) {
+    const r = parseDependencies(src);
+    assert.equal(r.ok, false, src);
+    assert.match(r.reason, pattern, src);
+    assert.deepEqual(r.dependencies, {}, src);
+  }
+});
+
+test("an unreadable dependencies list fails the whole version.php", () => {
+  const r = parseVersionPhp("<?php\n$plugin->component = 'mod_x';\n$plugin->dependencies = $DEPS;\n");
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /dependencies/);
+});
+
+test("a readable dependencies list reaches parseVersionPhp's result", () => {
+  const r = parseVersionPhp("<?php\n$plugin->component = 'mod_x';\n$plugin->dependencies = ['block_y' => 2024010100];\n");
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual(r.dependencies, { block_y: 2024010100 });
+});
+
+// A commented-out dependency is not a dependency. Comments are blanked before
+// parsing, so this is really a test that the blanking happens FIRST.
+test("a commented-out dependency is not read", () => {
+  const r = parseVersionPhp("<?php\n$plugin->component = 'mod_x';\n// $plugin->dependencies = ['block_y' => 1];\n");
+  assert.equal(r.ok, true, r.reason);
+  assert.deepEqual(r.dependencies, {});
 });

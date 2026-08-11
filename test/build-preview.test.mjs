@@ -1124,3 +1124,52 @@ test("asking for the menu AND an address at once is refused", async () => {
   assert.match(out, /::error title=sample-content::/, out);
   assert.match(out, /only one course can be restored/, out);
 });
+
+// ---- more than one plugin (extra-plugins) --------------------------------
+
+const SELF_URL = `https://github.com/${base.headRepo}/archive/${SHA}.zip`;
+const extra = (component, sha = "e".repeat(40)) => ({
+  url: `https://github.com/x/moodle-${component}/archive/${sha}.zip`,
+  pluginType: component.split("_")[0],
+  pluginName: component.split("_").slice(1).join("_"),
+});
+
+test("an install list becomes one installMoodlePlugin step per plugin, in order", () => {
+  const installs = [extra("block_b"), extra("local_a"), { url: SELF_URL, pluginType: "mod", pluginName: "attendance", isSelf: true }];
+  const steps = buildBlueprint({ ...base, installs }).steps.filter((s) => s.step === "installMoodlePlugin");
+  assert.deepEqual(steps.map((s) => s.url), installs.map((i) => i.url));
+  // Ordering is the whole point: a dependency installed second is a plugin
+  // installed against something that is not there yet.
+  assert.deepEqual(steps.map((s) => `${s.pluginType}_${s.pluginName}`), [
+    "block_b",
+    "local_a",
+    "mod_attendance",
+  ]);
+});
+
+// Every extra is `critical` too. An extra that fails silently is the plugin
+// under review installing against a dependency that is not there.
+test("every plugin install is critical, not just the first", () => {
+  const bp = buildBlueprint({
+    ...base,
+    installs: [extra("block_b"), { url: SELF_URL, pluginType: "mod", pluginName: "attendance", isSelf: true }],
+  });
+  const steps = bp.steps.filter((s) => s.step === "installMoodlePlugin");
+  assert.equal(steps.length, 2);
+  assert.ok(steps.every((s) => s.critical === true), "an install step was left non-critical");
+});
+
+// The link's whole claim is that it boots THIS commit. A list that lost it —
+// through a sort, a filter, or a mis-set flag — must not produce a link at all.
+test("an install list without the commit under review is refused", () => {
+  assert.throws(
+    () => buildBlueprint({ ...base, installs: [extra("block_b")] }),
+    /does not contain the commit under review/,
+  );
+});
+
+test("no install list at all still installs exactly the commit under review", () => {
+  const steps = buildBlueprint(base).steps.filter((s) => s.step === "installMoodlePlugin");
+  assert.equal(steps.length, 1);
+  assert.equal(steps[0].url, SELF_URL);
+});

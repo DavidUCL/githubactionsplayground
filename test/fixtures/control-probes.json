@@ -200,6 +200,17 @@
       "expect_in_summary": true
     },
     {
+      "input": "extra-plugins",
+      "env": "EXTRA_PLUGINS",
+      "probe": "ucl-isd/moodle-mod_coursework@bafa3ed5f12f339b492c9e73f2bec13304920588#mod_coursework",
+      "target": "shape",
+      "expect_steps_added": [
+        "installMoodlePlugin"
+      ],
+      "expect_steps_removed": [],
+      "note": "Changes the step LIST: one installMoodlePlugin per plugin, so a second one appears. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because the coordinate is checked against reality — the commit, the archive and the version.php all have to be there. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
+    },
+    {
       "input": "data-hosts",
       "env": "DATA_HOSTS",
       "probe": "gitlab.com",

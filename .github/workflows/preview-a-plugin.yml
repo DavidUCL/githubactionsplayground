@@ -8,13 +8,17 @@
 # single form with a "source" selector would show eight irrelevant boxes. The
 # Actions sidebar is the selector, for free.
 #
-# NINE FIELDS. A review panel cut an earlier draft to five; David restored
-# `login-as`, the counts, and `php-version` — the last one restricted to the
-# versions each Moodle branch actually accepts, and REFUSED rather than
-# silently substituted when the pair is invalid, which is what the playground
-# would otherwise do. Every control is still a failure surface: blueprint
-# failure is invisible in this runtime, so each one is validated before a link
-# is built rather than discovered in the reviewer's browser.
+# THIRTEEN FIELDS, of a planned twenty. A review panel cut an earlier draft to
+# five; David restored `login-as`, the counts, and `php-version` — the last one
+# restricted to the versions each Moodle branch actually accepts, and REFUSED
+# rather than silently substituted when the pair is invalid, which is what the
+# playground would otherwise do. Every control is still a failure surface:
+# blueprint failure is invisible in this runtime, so each one is validated
+# before a link is built rather than discovered in the reviewer's browser.
+#
+# Declaration order IS the layout — GitHub renders the fields in the order they
+# appear here and gives no other grouping. Required first, then the ones that
+# change what the reviewer sees, then the narrow ones.
 
 name: Preview a plugin
 
@@ -58,6 +62,27 @@ on:
           rather than booting a Moodle with nothing in it. Leave blank for an
           empty course.
         required: false
+        default: ""
+      extra-plugins:
+        description: >-
+          Other plugins this one needs, comma separated, each written
+          owner/repo@ref#type_name (e.g.
+          ucl-isd/moodle-local_sitsgradepush@main#local_sitsgradepush). Up to
+          five. They are installed BEFORE the plugin under review, in dependency
+          order. A plugin whose dependency is missing installs silently and
+          fails later, so the reviewer sees a broken plugin instead of a missing
+          one.
+        required: false
+        type: string
+        default: ""
+      data-hosts:
+        description: >-
+          Hosts the preview may download plugins from, comma separated. Blank
+          means github.com,raw.githubusercontent.com. Widen it only if an extra
+          plugin lives somewhere else — a university host, GitLab, the Moodle
+          plugins directory.
+        required: false
+        type: string
         default: ""
       landing-path:
         description: "Optional: site-relative page to land on, e.g. /course/view.php?id=2. Blank = the default for the plugin type."
@@ -159,6 +184,13 @@ jobs:
           moodle-branch: ${{ inputs.moodle-branch }}
           sample-content: ${{ inputs.sample-content }}
           restore-course-url: ${{ inputs.restore-course-url }}
+          extra-plugins: ${{ inputs.extra-plugins }}
+          # Blank is meaningful, and NOT the same as omitting the key: an input
+          # passed explicitly as "" stays "", so the action's own default never
+          # applies. The builder reads an empty list as "use DEFAULT_DATA_HOSTS",
+          # which is the same pair — one definition, in the script, rather than
+          # a second copy of the list frozen into this form.
+          data-hosts: ${{ inputs.data-hosts }}
           landing-path: ${{ inputs.landing-path }}
           plugin-component: ${{ inputs.plugin-component }}
           # The two sentinel options mean "leave it to the action", which is

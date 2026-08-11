@@ -209,16 +209,22 @@ function blankComments(src) {
  *
  * @returns {{ok: boolean, reason?: string, component: string|null,
  *            version: number|null, requires: number|null,
- *            incompatible: number|null}}
+ *            incompatible: number|null,
+ *            dependencies: Object<string, number|"ANY_VERSION">}}
  */
 export function parseVersionPhp(src) {
   const text = String(src);
   const code = blankComments(text);
+  const deps = parseDependencies(code);
   const out = {
     ok: true,
     component: lastString(code, "component"),
     version: lastNumber(code, "version"),
     requires: lastNumber(code, "requires"),
+    // Moodle throws this away — `unset($module->dependencies)`,
+    // lib/upgradelib.php:828 — so nothing in a scripted install enforces it.
+    // See extras.mjs, which is where the enforcing has to happen instead.
+    dependencies: deps.dependencies,
     // Moodle enforces this in the same loop as `requires`
     // (lib/upgradelib.php:707-711, plugin_incompatible_exception): a plugin
     // with `incompatible = 500` is REFUSED on Moodle 5.x however low its
@@ -226,6 +232,15 @@ export function parseVersionPhp(src) {
     // ignores it builds a link Moodle then refuses to install.
     incompatible: lastNumber(code, "incompatible"),
   };
+
+  // An unreadable dependencies list is the same failure as an unreadable
+  // `requires`, and worse in one way: an empty list is not merely "unknown", it
+  // is the value that satisfies every dependency check there is.
+  if (!deps.ok) {
+    out.ok = false;
+    out.reason = deps.reason;
+    return out;
+  }
 
   // A field that IS assigned but whose value we could not read is the
   // dangerous case: a constant, a concatenation, a conditional. Silently
@@ -247,6 +262,77 @@ export function parseVersionPhp(src) {
   }
   return out;
 }
+
+/**
+ * `$plugin->dependencies` as Moodle declares it.
+ *
+ *   $plugin->dependencies = ['mod_forum' => 2022041900, 'block_x' => ANY_VERSION];
+ *   $plugin->dependencies = array('mod_forum' => ANY_VERSION);
+ *
+ * ANY_VERSION is a Moodle constant meaning "any release will do". It is
+ * returned as the STRING "ANY_VERSION" rather than a number, so a caller cannot
+ * compare it against a version by accident and get a silent `false`.
+ *
+ * An assignment this cannot read is `ok: false`, NOT an empty map — the rule
+ * the rest of this file follows. "No dependencies" satisfies every dependency
+ * check there is, so a shape we do not understand must never collapse into it.
+ *
+ * Takes COMMENT-BLANKED code: a commented-out dependency line is not a
+ * dependency, and a `//` inside a quoted string is not a comment.
+ *
+ * @returns {{ok: boolean, reason?: string, dependencies: Object<string, number|"ANY_VERSION">}}
+ */
+export function parseDependencies(code) {
+  const assigned = /\$(?:plugin|module)\s*->\s*dependencies\s*=/.exec(String(code));
+  if (!assigned) return { ok: true, dependencies: {} };
+
+  const rest = String(code).slice(assigned.index + assigned[0].length);
+  const open = /^\s*(?:array\s*\(|\[)/.exec(rest);
+  if (!open) {
+    return {
+      ok: false,
+      reason:
+        `version.php assigns $plugin->dependencies in a form this cannot read (it is ` +
+        `not a literal array). Refusing rather than treating it as "no dependencies", ` +
+        `because no dependencies passes every check`,
+      dependencies: {},
+    };
+  }
+  const closer = open[0].trim().endsWith("(") ? ")" : "]";
+  const body = rest.slice(open[0].length);
+  const end = body.indexOf(closer);
+  if (end < 0) {
+    return {
+      ok: false,
+      reason: "version.php has an unterminated $plugin->dependencies array",
+      dependencies: {},
+    };
+  }
+  const inner = body.slice(0, end);
+  const dependencies = {};
+  for (const m of inner.matchAll(DEPENDENCY_ENTRY)) {
+    dependencies[m[2]] = m[3] === "ANY_VERSION" ? "ANY_VERSION" : Number(m[3]);
+  }
+  // Whatever the entry pattern did not account for must be whitespace.
+  // Anything else — a nested array, a constant, a variable, a version this
+  // cannot read — means the list was only PARTLY understood, which is the
+  // dangerous middle state: a file that looks read and is not.
+  const residue = inner.replace(DEPENDENCY_ENTRY, "").trim();
+  if (residue) {
+    return {
+      ok: false,
+      reason:
+        `version.php lists a dependency in a form this cannot read ` +
+        `(${JSON.stringify(residue.slice(0, 60))}). Refusing rather than previewing a ` +
+        `plugin whose requirements are unknown`,
+      dependencies: {},
+    };
+  }
+  return { ok: true, dependencies };
+}
+
+const DEPENDENCY_ENTRY =
+  /(['"])([a-z][a-z0-9]*_[a-z][a-z0-9_]*)\1\s*=>\s*(ANY_VERSION|[0-9]+)\s*,?/g;
 
 const assignmentsOf = (code, field) => [
   ...code.matchAll(new RegExp(`\\$(?:plugin|module)\\s*->\\s*${field}\\s*=`, "g")),
@@ -300,6 +386,7 @@ export function readPluginVersion(pluginRoot) {
       version: null,
       requires: null,
       incompatible: null,
+      dependencies: {},
       path,
     };
   }

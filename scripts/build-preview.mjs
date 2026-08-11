@@ -30,6 +30,15 @@ import { checkCourseBackup } from "./mbz.mjs";
 // verify half fetches foreign blueprints and never had it), but this stays the
 // import site for preview concerns.
 export { assertNoPlaceholders };
+import { parseCoordinateList, coordinateZipUrl } from "./coordinates.mjs";
+import {
+  resolveCoordinates,
+  checkArchives,
+  fetchExtraVersion,
+  checkExtraPlugin,
+  checkDependenciesSatisfied,
+  orderInstalls,
+} from "./extras.mjs";
 import {
   readPluginVersion,
   checkMoodleCompatibility,
@@ -478,6 +487,14 @@ export function buildBlueprint({
   sections = 3,
   // {url, info} from mbz.mjs when a course backup is being restored.
   restore = null,
+  // Every plugin this preview installs, ALREADY IN INSTALL ORDER, one entry per
+  // installMoodlePlugin step. Exactly one must be the commit under review.
+  //
+  // A list rather than a single step because `extra-plugins` exists: a plugin
+  // that needs another plugin does not install, and Moodle enforces no
+  // dependency during a scripted install (see extras.mjs). Ordering is decided
+  // by the caller, which is the only place that knows what depends on what.
+  installs = null,
 }) {
   if (!isRepo(headRepo)) throw new Error(`bad repo: ${headRepo}`);
   if (!SHA_RE.test(String(headSha))) {
@@ -509,6 +526,24 @@ export function buildBlueprint({
     .filter(Boolean)
     .join(" · ");
 
+  // The default is the shape every preview had before extras existed: install
+  // exactly the commit under review. Stated here rather than in the parameter
+  // list because it is derived from two other parameters.
+  const pluginInstalls = installs ?? [
+    { url: pluginZipUrl(headRepo, headSha), pluginType: type, pluginName: name, isSelf: true },
+  ];
+  // The link's whole claim is that it boots THIS commit. A caller-supplied list
+  // that lost it — through a sort, a filter, or a mis-set flag — must not
+  // produce a link at all. The gate checks the same thing from the finished
+  // blueprint (requireSelfUrl); this catches it at the point the mistake is
+  // made, where the message can name the list.
+  const selfUrl = pluginZipUrl(headRepo, headSha);
+  if (!pluginInstalls.some((p) => p.url === selfUrl)) {
+    throw new Error(
+      `internal: the install list does not contain the commit under review (${selfUrl})`,
+    );
+  }
+
   const steps = [
     { step: "installMoodle" },
     {
@@ -532,20 +567,23 @@ export function buildBlueprint({
         { name: "sendcoursewelcomemessage", value: "0", plugin: "enrol_manual" },
       ],
     },
-    {
+    // One installMoodlePlugin per plugin, in the order the caller decided.
+    // `critical` on ALL of them, including the extras — verified against the
+    // DEPLOYED executor, which says: "step failures are non-fatal by default
+    // (ADR-0005). A step with `critical: true` aborts the remaining blueprint
+    // on failure." The moodle-playground checkout in this tree is OLDER and
+    // aborts on any throw, so reading only that source makes this look like a
+    // no-op. It is not: without it, a failed install on the live host boots a
+    // clean Moodle and the reviewer concludes the plugin does nothing. An
+    // extra that fails is the same story one step removed — the plugin under
+    // review then installs against a dependency that is not there.
+    ...pluginInstalls.map((p) => ({
       step: "installMoodlePlugin",
-      url: pluginZipUrl(headRepo, headSha),
-      pluginType: type,
-      pluginName: name,
-      // NOT redundant — verified against the DEPLOYED executor, which says:
-      // "step failures are non-fatal by default (ADR-0005). A step with
-      // `critical: true` aborts the remaining blueprint on failure."
-      // The moodle-playground checkout in this tree is OLDER and aborts on
-      // any throw, so reading only that source makes this look like a no-op.
-      // It is not: without it, a failed install on the live host boots a
-      // clean Moodle and the reviewer concludes the plugin does nothing.
+      url: p.url,
+      pluginType: p.pluginType,
+      pluginName: p.pluginName,
       critical: true,
-    },
+    })),
     // From here on every step is `critical`. A reload of the same link
     // re-runs the whole blueprint against the EXISTING database: createCourse
     // then fails `shortnametaken` while enrolUsers and addModule still
@@ -877,6 +915,147 @@ function factRows(facts) {
     .map(([k, v]) => `| ${k} | \`${sanitiseForLog(String(v))}\` |`);
 }
 
+/**
+ * Turn the `extra-plugins` box into an ordered list of installs, or into
+ * refusals that name the coordinate at fault.
+ *
+ * Nothing here is deferrable. A plugin that fails to install produces a boot
+ * that looks entirely successful (installMoodlePlugin catches php.run errors
+ * and returns success, moodle-plugins.js:322-345), and a dependency that is
+ * simply absent produces a plugin that installs and then fails at whatever
+ * moment it first calls the code that is not there. Both read to a reviewer as
+ * "this pull request is broken".
+ *
+ * @returns {Promise<{installs: object[], list: string}>}
+ */
+export async function planExtraPlugins({
+  raw,
+  self,
+  headRepo,
+  headSha,
+  moodleBranch,
+  core,
+  problems,
+  fetchImpl = fetch,
+}) {
+  const selfComponent = `${self.type}_${self.name}`;
+  const selfInstall = {
+    url: pluginZipUrl(headRepo, headSha),
+    pluginType: self.type,
+    pluginName: self.name,
+    isSelf: true,
+  };
+  const only = { installs: [selfInstall], list: "" };
+  const value = String(raw ?? "").trim();
+  if (!value) return only;
+
+  // Counted rather than read off `problems.any`: this function must not stop
+  // because some OTHER input was wrong, and it must not carry on because
+  // another input's problem made `any` true before it started.
+  const before = problems.list.length;
+  const failed = () => problems.list.length > before;
+  const add = (message) => problems.add("extra-plugins", message);
+
+  const parsed = parseCoordinateList(value, { label: "extra plugin" });
+  for (const p of parsed.problems) add(p);
+  if (failed()) return only;
+
+  // Everything decidable from the coordinate ALONE, before a single request.
+  // Ordering measured, not assumed: with these below the network work, asking
+  // for `moodle/moodle@MOODLE_500_STABLE#mod_assign` was refused for having no
+  // plugin-shaped version.php — true, but the wrong reason, and the right one
+  // (it is Moodle's own component) would never have been printed.
+  for (const item of parsed.items) {
+    if (item.component === selfComponent) {
+      // The gate refuses this too, as a duplicate install target. Said here as
+      // well because the gate's message is about a blueprint the user never
+      // wrote, while this one names the box they typed it into.
+      add(
+        `extra plugin ${item.component} is the plugin under review. The second archive ` +
+          `would be extracted over the first file by file, and the page would still be ` +
+          `headed with your commit while running the other one`,
+      );
+    }
+    const notCore = checkNotCoreComponent(item.type, item.name, core);
+    if (!notCore.ok) add(`extra plugin ${item.component}: ${notCore.reason}`);
+  }
+  if (failed()) return only;
+
+  const resolved = await resolveCoordinates(parsed.items, { fetchImpl, label: "extra plugin" });
+  for (const p of resolved.problems) add(p);
+  if (failed()) return only;
+
+  for (const p of await checkArchives(resolved.items, { fetchImpl, label: "extra plugin" })) add(p);
+  if (failed()) return only;
+
+  const nodes = [];
+  for (const item of resolved.items) {
+    const v = await fetchExtraVersion(item, { fetchImpl });
+    if (!v.ok) {
+      add(`extra plugin ${item.component} ${v.reason}`);
+      continue;
+    }
+    for (const p of checkExtraPlugin(item, v.declared, { moodleBranch, core, label: "extra plugin" })) {
+      add(p);
+    }
+    nodes.push({
+      component: item.component,
+      version: v.declared.version,
+      dependencies: v.declared.dependencies,
+      item,
+    });
+  }
+  if (failed()) return only;
+
+  // The plugin under review is part of the dependency graph, not a special
+  // case: it can depend on an extra, and an extra can depend on it.
+  //
+  // When its version.php could not be read, its dependencies are UNKNOWN, and
+  // an empty list would quietly mean "none" — the state that satisfies every
+  // check. Say so instead; the extras are still checked against each other.
+  if (!self.declared) {
+    console.log(
+      "note: no version.php for the plugin under review, so ITS OWN dependencies " +
+        "were not checked — only the extras' were",
+    );
+  }
+  const selfNode = {
+    component: selfComponent,
+    version: self.declared?.version ?? null,
+    dependencies: self.declared?.dependencies ?? {},
+    isSelf: true,
+    item: selfInstall,
+  };
+  const graph = [...nodes, selfNode];
+
+  if (!core.ok) {
+    // checkDependenciesSatisfied cannot tell a core component from a missing
+    // one without Moodle's list, so it returns nothing. A skipped check must
+    // never look like a passed one.
+    console.log("note: dependencies NOT checked — Moodle's own component list did not load");
+  }
+  for (const p of checkDependenciesSatisfied(graph, core)) add(p);
+
+  const ordered = orderInstalls(graph);
+  if (!ordered.ok) add(ordered.reason);
+  if (failed()) return only;
+
+  return {
+    installs: ordered.order.map((n) =>
+      n.isSelf
+        ? selfInstall
+        : { url: coordinateZipUrl(n.item), pluginType: n.item.type, pluginName: n.item.name },
+    ),
+    // Commits, not the refs that were typed: what the link boots is the commit,
+    // and a reviewer comparing the summary against the plugin's history needs
+    // the same thing the URL carries.
+    list: ordered.order
+      .filter((n) => !n.isSelf)
+      .map((n) => `${n.component}@${n.item.ref.slice(0, 7)}`)
+      .join(", "),
+  };
+}
+
 async function main() {
   const headRepo = process.env.HEAD_REPO || "";
   const headSha = process.env.HEAD_SHA || "";
@@ -1021,6 +1200,22 @@ async function main() {
     .filter(Boolean);
   const hosts = dataHosts.length ? dataHosts : DEFAULT_DATA_HOSTS;
 
+  // Other plugins to install before the one under review. Everything about
+  // them is decided HERE, at link-build time: the ref becomes a commit, the
+  // archive is proved to exist, its version.php is read, and the install order
+  // is derived from what depends on what. None of it can be checked later —
+  // a plugin that fails to install is invisible in the boot, and a missing
+  // dependency is invisible until the moment the plugin uses it.
+  const extras = await planExtraPlugins({
+    raw: process.env.EXTRA_PLUGINS,
+    self: { type, name, declared },
+    headRepo,
+    headSha,
+    moodleBranch,
+    core,
+    problems,
+  });
+
   // A course backup to restore instead of building an empty course. Fetched
   // HERE, at link-build time, so a bad one is a refusal with a readable reason
   // rather than a boot that silently produces an empty course — restoreCourse
@@ -1124,6 +1319,7 @@ async function main() {
     students,
     sections,
     restore,
+    installs: extras.installs,
   });
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
@@ -1178,6 +1374,11 @@ async function main() {
       plugin: declared?.component || `${type}_${name}`,
       commit: headSha,
       repository: headRepo,
+      // In INSTALL ORDER, which is the fact a reviewer cannot see any other
+      // way: a dependency that arrived second is the difference between a
+      // plugin that works and one that installed against nothing. Pinned to
+      // commits, because that is what the link actually boots.
+      "extra plugins": extras.list,
       Moodle: moodleBranch,
       // The landing page MUST be computed the same way the link was, restore
       // included — otherwise the summary names the add-form path while the link
