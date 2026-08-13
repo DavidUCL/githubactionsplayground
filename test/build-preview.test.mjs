@@ -1306,15 +1306,21 @@ test("the warm-up aborts on both silent-Boost failures and on neither visible on
     "../scripts/theme-assert.mjs"
   );
   const { code } = buildThemeWarmup("boost_union");
-  // 31: no theme directory. 32: the site is not on the theme we set. Both are
-  // invisible to a reviewer, so both must take the boot down.
-  assert.match(code, /exit\(31\)/);
-  assert.match(code, /exit\(32\)/);
-  for (const c of [31, 32]) assert.ok(THEME_CODES[c], `code ${c} has no explanation`);
+  // Four silent-Boost failures, all invisible to a reviewer, so all four must
+  // take the boot down. 33 is the one that catches a MISSING PARENT THEME:
+  // theme_config::load() falls back and returns a config named something else.
+  for (const c of [31, 32, 33, 34]) {
+    assert.match(code, new RegExp(`exit\\(${c}\\)`), `no exit(${c})`);
+    assert.ok(THEME_CODES[c], `code ${c} has no explanation`);
+  }
+  // The fallback is detected by NAME, not by assuming load() throws — it does
+  // not throw for a non-default theme, it quietly returns a different one.
+  assert.match(code, /\$th->name !== \$t/);
   // A CSS build that throws leaves a working, unstyled site — visible on sight,
   // and better than no preview. It must NOT be an exit code.
   assert.match(code, new RegExp(`echo '${THEME_CSS_FAILURE_MARKER}`));
-  assert.equal(Object.keys(THEME_CODES).includes("33"), false);
+  // ...and it is the ONLY thing in the step that does not exit non-zero.
+  assert.equal(code.includes(`${THEME_CSS_FAILURE_MARKER}'); exit(`), false);
 });
 
 test("the warm-up reads the theme from $CFG, never the literal the runtime hardcodes", async () => {

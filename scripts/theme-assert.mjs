@@ -34,18 +34,20 @@ export const THEME_CODES = {
   0: "the theme is installed and active",
   31: "no theme directory of that name exists — the install did not produce one, so the site is showing stock Boost",
   32: "the site's theme setting is not the theme we activated — something later overwrote it",
+  33: "Moodle could not initialise the theme and fell back to another one — most often a parent theme that is not installed",
+  34: "loading the theme threw — its config.php is broken",
 };
 
 /**
  * The CSS build failing is NOT in the table above, deliberately, and this is
  * the one asymmetry worth stating out loud.
  *
- * 31 and 32 are the silent-Boost class: the reviewer cannot see them, so they
- * have to take the boot down. A CSS build that throws is different — the site
- * works, it is merely unstyled, and that is visible to the reviewer on sight. A
- * preview with ugly CSS is strictly better than no preview, so this echoes into
- * the boot log and exits 0. It is a log line, not an exit code, and giving it a
- * number would imply a failure mode it does not have.
+ * 31-34 are the silent-Boost class: the reviewer cannot see any of them, so
+ * they have to take the boot down. A CSS build that throws is different — the
+ * site works, it is merely unstyled, and that is visible to the reviewer on
+ * sight. A preview with ugly CSS is strictly better than no preview, so this
+ * echoes into the boot log and exits 0. It is a log line, not an exit code, and
+ * giving it a number would imply a failure mode it does not have.
  */
 export const THEME_CSS_FAILURE_MARKER = "theme-css-build-failed";
 
@@ -75,11 +77,25 @@ export function buildThemeWarmup(name) {
     `require_once($CFG->libdir.'/outputlib.php'); $t='${theme}'; ` +
     `if(!is_dir($CFG->dirroot.'/theme/'.$t)) exit(31); ` +
     `if((string)($CFG->theme ?? '') !== $t) exit(32); ` +
+    // The strongest of the four, and the only one that catches a MISSING PARENT
+    // THEME. Measured in Moodle 5.0's theme_config: find_theme_config() returns
+    // null both when $THEME->parents is not an array (:2107) and when any
+    // parent's own config cannot be found (:2114), and load() then falls back —
+    // to the site theme, and failing that to Boost (:454-463) — announcing it
+    // with a debugging(DEBUG_NORMAL) this runtime does not display. The
+    // returned object carries `public $name` (:281, set at :490), so comparing
+    // it is how you tell "the theme loaded" from "something loaded".
+    //
+    // load() itself can throw on a broken config.php, and an uncaught throw
+    // reports SUCCESS in this runtime — hence the try around it with an exit,
+    // not merely around the build below.
+    `try { $th = theme_config::load($t); } catch (Throwable $e) { exit(34); } ` +
+    `if($th->name !== $t) exit(33); ` +
     // The build is best-effort by design — see THEME_CSS_FAILURE_MARKER. The
     // arguments mirror the runtime's own warm-up so the sheet lands exactly
     // where theme/styles.php serves it from; hand-rolling that path is a
     // documented way to warm a file nothing reads.
-    `try { theme_build_css_for_themes(array(theme_config::load($t)), ` +
+    `try { theme_build_css_for_themes(array($th), ` +
     `array(right_to_left() ? 'rtl' : 'ltr')); } ` +
     `catch (Throwable $e) { echo '${THEME_CSS_FAILURE_MARKER}: '.$e->getMessage(); } ` +
     `exit(0);`;

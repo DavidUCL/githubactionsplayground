@@ -104,7 +104,7 @@
     },
     {
       "step": "runPhpCode",
-      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; if(!is_dir($CFG->dirroot.'/theme/'.$t)) exit(31); if((string)($CFG->theme ?? '') !== $t) exit(32); try { theme_build_css_for_themes(array(theme_config::load($t)), array(right_to_left() ? 'rtl' : 'ltr')); } catch (Throwable $e) { echo 'theme-css-build-failed: '.$e->getMessage(); } exit(0);",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; if(!is_dir($CFG->dirroot.'/theme/'.$t)) exit(31); if((string)($CFG->theme ?? '') !== $t) exit(32); try { $th = theme_config::load($t); } catch (Throwable $e) { exit(34); } if($th->name !== $t) exit(33); try { theme_build_css_for_themes(array($th), array(right_to_left() ? 'rtl' : 'ltr')); } catch (Throwable $e) { echo 'theme-css-build-failed: '.$e->getMessage(); } exit(0);",
       "critical": true
     },
     {
