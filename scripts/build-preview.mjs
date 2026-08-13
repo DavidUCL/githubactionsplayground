@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
 import { gateBlueprint, assertNoPlaceholders, checkUrl } from "./preflight.mjs";
 import { buildRestoreAssertion } from "./restore-assert.mjs";
+import { buildThemeWarmup } from "./theme-assert.mjs";
 import { checkCourseBackup } from "./mbz.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
@@ -38,6 +39,7 @@ import {
   checkExtraPlugin,
   checkDependenciesSatisfied,
   orderInstalls,
+  fetchThemeParents,
 } from "./extras.mjs";
 import {
   readPluginVersion,
@@ -495,6 +497,10 @@ export function buildBlueprint({
   // dependency during a scripted install (see extras.mjs). Ordering is decided
   // by the caller, which is the only place that knows what depends on what.
   installs = null,
+  // The theme to switch the site to, as a plugin NAME (`boost_union`). Empty
+  // means "whatever the plugin under review implies" — which is the theme
+  // itself when a theme is under review, and Boost otherwise.
+  themeName = "",
 }) {
   if (!isRepo(headRepo)) throw new Error(`bad repo: ${headRepo}`);
   if (!SHA_RE.test(String(headSha))) {
@@ -692,7 +698,20 @@ export function buildBlueprint({
       `internal: the preview assumes exactly one course, found ${courseSteps.length}`,
     );
   }
-  if (type === "theme") steps.push({ step: "setTheme", name });
+  // Which theme the site ends up on. Two ways in, ONE step: the plugin under
+  // review is itself a theme, or the `theme` box named one. They cannot both
+  // apply — `planThemeControl` refuses that combination, because `set_config`
+  // is last-write-wins and the loser is invisible.
+  //
+  // The warm-up rides with it in both cases. The self-theme path has been
+  // missing it since the day it was written: the runtime warms `boost` and only
+  // `boost` at boot, before the blueprint runs, so a theme activated here is
+  // compiled lazily on the reviewer's first page view.
+  const activeTheme = themeName || (type === "theme" ? name : "");
+  if (activeTheme) {
+    steps.push({ step: "setTheme", name: activeTheme });
+    steps.push(buildThemeWarmup(activeTheme));
+  }
   // Log in LAST, and as whoever can actually judge the landing page.
   //
   // The reviewer used to arrive as admin, and admin bypasses capability checks
@@ -916,8 +935,8 @@ function factRows(facts) {
 }
 
 /**
- * Turn the `extra-plugins` box into an ordered list of installs, or into
- * refusals that name the coordinate at fault.
+ * Turn the `extra-plugins` and `theme` boxes into an ordered list of installs,
+ * or into refusals that name the coordinate at fault.
  *
  * Nothing here is deferrable. A plugin that fails to install produces a boot
  * that looks entirely successful (installMoodlePlugin catches php.run errors
@@ -926,10 +945,19 @@ function factRows(facts) {
  * moment it first calls the code that is not there. Both read to a reviewer as
  * "this pull request is broken".
  *
- * @returns {Promise<{installs: object[], list: string}>}
+ * THE THEME IS A PLUGIN AND GOES THROUGH THE SAME PIPELINE. It is the same
+ * coordinate, the same ref resolution, the same archive check, the same
+ * version.php read, the same core-component refusal and the same dependency
+ * sort — the only differences are that it installs into `theme/`, that it is
+ * limited to one, and that it has a second file to read (config.php, for the
+ * parents version.php never declares). A second pipeline for it is how the two
+ * would drift, and every refusal above is one this repo has already paid for.
+ *
+ * @returns {Promise<{installs: object[], list: string, themeName: string, themeSummary: string}>}
  */
-export async function planExtraPlugins({
+export async function planInstalls({
   raw,
+  theme = null,
   self,
   headRepo,
   headSha,
@@ -945,19 +973,28 @@ export async function planExtraPlugins({
     pluginName: self.name,
     isSelf: true,
   };
-  const only = { installs: [selfInstall], list: "" };
+  const only = { installs: [selfInstall], list: "", themeName: "", themeSummary: "" };
   const value = String(raw ?? "").trim();
-  if (!value) return only;
+  if (!value && !theme) return only;
 
   // Counted rather than read off `problems.any`: this function must not stop
   // because some OTHER input was wrong, and it must not carry on because
   // another input's problem made `any` true before it started.
   const before = problems.list.length;
   const failed = () => problems.list.length > before;
-  const add = (message) => problems.add("extra-plugins", message);
 
-  const parsed = parseCoordinateList(value, { label: "extra plugin" });
-  for (const p of parsed.problems) add(p);
+  // Each coordinate carries the FORM FIELD it came from, so a theme's refusal
+  // is annotated against the theme box rather than against `extra-plugins`.
+  // Sharing the pipeline must not mean sharing the blame.
+  const groups = [];
+  if (value) {
+    const parsed = parseCoordinateList(value, { label: "extra plugin" });
+    for (const p of parsed.problems) problems.add("extra-plugins", p);
+    groups.push({ field: "extra-plugins", label: "extra plugin", items: parsed.items });
+  }
+  // Already parsed, and already refused for everything decidable from the
+  // coordinate alone — see planThemeControl.
+  if (theme) groups.push({ field: "theme", label: "theme", items: [theme] });
   if (failed()) return only;
 
   // Everything decidable from the coordinate ALONE, before a single request.
@@ -965,45 +1002,81 @@ export async function planExtraPlugins({
   // for `moodle/moodle@MOODLE_500_STABLE#mod_assign` was refused for having no
   // plugin-shaped version.php — true, but the wrong reason, and the right one
   // (it is Moodle's own component) would never have been printed.
-  for (const item of parsed.items) {
-    if (item.component === selfComponent) {
-      // The gate refuses this too, as a duplicate install target. Said here as
-      // well because the gate's message is about a blueprint the user never
-      // wrote, while this one names the box they typed it into.
-      add(
-        `extra plugin ${item.component} is the plugin under review. The second archive ` +
-          `would be extracted over the first file by file, and the page would still be ` +
-          `headed with your commit while running the other one`,
-      );
+  for (const g of groups) {
+    for (const item of g.items) {
+      if (item.component === selfComponent) {
+        // The gate refuses this too, as a duplicate install target. Said here as
+        // well because the gate's message is about a blueprint the user never
+        // wrote, while this one names the box they typed it into.
+        problems.add(
+          g.field,
+          `${g.label} ${item.component} is the plugin under review. The second archive ` +
+            `would be extracted over the first file by file, and the page would still be ` +
+            `headed with your commit while running the other one`,
+        );
+      }
+      // Redundant for the theme, which planThemeControl already checked, and
+      // kept anyway: this is the loop that runs for every coordinate, and a
+      // guard wired into only some of its callers is the mistake this repo
+      // made with 1c.
+      const notCore = checkNotCoreComponent(item.type, item.name, core);
+      if (!notCore.ok) problems.add(g.field, `${g.label} ${item.component}: ${notCore.reason}`);
     }
-    const notCore = checkNotCoreComponent(item.type, item.name, core);
-    if (!notCore.ok) add(`extra plugin ${item.component}: ${notCore.reason}`);
   }
   if (failed()) return only;
 
-  const resolved = await resolveCoordinates(parsed.items, { fetchImpl, label: "extra plugin" });
-  for (const p of resolved.problems) add(p);
+  for (const g of groups) {
+    const resolved = await resolveCoordinates(g.items, { fetchImpl, label: g.label });
+    for (const p of resolved.problems) problems.add(g.field, p);
+    g.items = resolved.items;
+  }
   if (failed()) return only;
 
-  for (const p of await checkArchives(resolved.items, { fetchImpl, label: "extra plugin" })) add(p);
+  for (const g of groups) {
+    for (const p of await checkArchives(g.items, { fetchImpl, label: g.label })) {
+      problems.add(g.field, p);
+    }
+  }
   if (failed()) return only;
 
   const nodes = [];
-  for (const item of resolved.items) {
-    const v = await fetchExtraVersion(item, { fetchImpl });
-    if (!v.ok) {
-      add(`extra plugin ${item.component} ${v.reason}`);
-      continue;
+  let themeNode = null;
+  for (const g of groups) {
+    for (const item of g.items) {
+      const v = await fetchExtraVersion(item, { fetchImpl });
+      if (!v.ok) {
+        problems.add(g.field, `${g.label} ${item.component} ${v.reason}`);
+        continue;
+      }
+      for (const p of checkExtraPlugin(item, v.declared, { moodleBranch, core, label: g.label })) {
+        problems.add(g.field, p);
+      }
+      const node = {
+        component: item.component,
+        version: v.declared.version,
+        dependencies: { ...v.declared.dependencies },
+        item,
+      };
+      // A child theme's parent is NOT in version.php — it is `$THEME->parents`
+      // in the theme's own config.php, which nothing above has read. Without
+      // this, a theme whose parent is absent passes every check and renders
+      // stock Boost.
+      if (g.field === "theme") {
+        const parents = await fetchThemeParents(item, { fetchImpl });
+        if (!parents.ok) {
+          problems.add("theme", `theme ${item.component} ${parents.reason}`);
+          continue;
+        }
+        if (parents.note) console.log(`note: ${parents.note}`);
+        for (const parent of parents.parents) {
+          // ANY_VERSION: a parent theme carries no version requirement anywhere
+          // we can read, so comparing one would be invented rather than measured.
+          node.dependencies[`theme_${parent}`] = "ANY_VERSION";
+        }
+        themeNode = node;
+      }
+      nodes.push(node);
     }
-    for (const p of checkExtraPlugin(item, v.declared, { moodleBranch, core, label: "extra plugin" })) {
-      add(p);
-    }
-    nodes.push({
-      component: item.component,
-      version: v.declared.version,
-      dependencies: v.declared.dependencies,
-      item,
-    });
   }
   if (failed()) return only;
 
@@ -1034,10 +1107,13 @@ export async function planExtraPlugins({
     // never look like a passed one.
     console.log("note: dependencies NOT checked — Moodle's own component list did not load");
   }
-  for (const p of checkDependenciesSatisfied(graph, core)) add(p);
+  // A missing dependency is reported against the box that can fix it: adding
+  // the parent theme is an `extra-plugins` edit even when the theme box is what
+  // needed it.
+  for (const p of checkDependenciesSatisfied(graph, core)) problems.add("extra-plugins", p);
 
   const ordered = orderInstalls(graph);
-  if (!ordered.ok) add(ordered.reason);
+  if (!ordered.ok) problems.add("extra-plugins", ordered.reason);
   if (failed()) return only;
 
   return {
@@ -1046,11 +1122,20 @@ export async function planExtraPlugins({
         ? selfInstall
         : { url: coordinateZipUrl(n.item), pluginType: n.item.type, pluginName: n.item.name },
     ),
+    // The NAME, never the component and never the repository: `setTheme` writes
+    // it straight into set_config('theme', ...) and Moodle then looks for a
+    // directory of exactly that name.
+    themeName: themeNode ? themeNode.item.name : "",
+    // At FULL length, on its own line in the summary. The 7-character
+    // abbreviation used for the extras list is shared formatting and is being
+    // dealt with separately; a theme is the one install whose effect is visible
+    // on every page, so its provenance is worth the width.
+    themeSummary: themeNode ? `${themeNode.component}@${themeNode.item.ref}` : "",
     // Commits, not the refs that were typed: what the link boots is the commit,
     // and a reviewer comparing the summary against the plugin's history needs
     // the same thing the URL carries.
     list: ordered.order
-      .filter((n) => !n.isSelf)
+      .filter((n) => !n.isSelf && n !== themeNode)
       .map((n) => `${n.component}@${n.item.ref.slice(0, 7)}`)
       .join(", "),
   };
@@ -1271,8 +1356,20 @@ async function main() {
   // is derived from what depends on what. None of it can be checked later —
   // a plugin that fails to install is invisible in the boot, and a missing
   // dependency is invisible until the moment the plugin uses it.
-  const extras = await planExtraPlugins({
+  // The theme to switch the site to. Parsed and refused FIRST, with no request
+  // made: a theme box on a theme pull request, a non-theme component and a core
+  // theme are all decidable from the text alone, and all three otherwise end as
+  // a green run showing stock Boost.
+  const themePlan = planThemeControl({
+    raw: process.env.THEME,
+    self: { type, name },
+    core,
+    problems,
+  });
+
+  const extras = await planInstalls({
     raw: process.env.EXTRA_PLUGINS,
+    theme: themePlan.item,
     self: { type, name, declared },
     headRepo,
     headSha,
@@ -1385,6 +1482,7 @@ async function main() {
     sections,
     restore,
     installs: extras.installs,
+    themeName: extras.themeName,
   });
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
@@ -1444,6 +1542,11 @@ async function main() {
       // plugin that works and one that installed against nothing. Pinned to
       // commits, because that is what the link actually boots.
       "extra plugins": extras.list,
+      // Its own row, at full length. A theme changes every page the reviewer
+      // looks at, so "which theme, from which commit" is not a detail — and
+      // without it there is nothing on the page saying a theme was applied at
+      // all, which is indistinguishable from the failure where it was not.
+      theme: extras.themeSummary,
       Moodle: moodleBranch,
       // The landing page MUST be computed the same way the link was, restore
       // included — otherwise the summary names the add-form path while the link

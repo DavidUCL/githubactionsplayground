@@ -1271,3 +1271,58 @@ test("the core-theme refusal is skipped, not guessed, when Moodle's list is abse
   assert.deepEqual(problems, []);
   assert.equal(item.component, "theme_boost");
 });
+
+// ---------------------------------------------------------------------------
+// The theme warm-up. Its whole job is to make two invisible failures visible,
+// so the tests are about what it REFUSES and what it exits with.
+
+test("the warm-up refuses a name it cannot safely put in PHP", async () => {
+  const { buildThemeWarmup } = await import("../scripts/theme-assert.mjs");
+  for (const bad of ["", "Boost", "boost-union", "boost union", "1boost", "boost';DROP", null, undefined]) {
+    assert.throws(() => buildThemeWarmup(bad), /unusable theme name/, `accepted ${JSON.stringify(bad)}`);
+  }
+});
+
+test("the warm-up can only fail the boot the one way this runtime allows", async () => {
+  const { buildThemeWarmup } = await import("../scripts/theme-assert.mjs");
+  const step = buildThemeWarmup("boost_union");
+  assert.equal(step.step, "runPhpCode");
+  assert.equal(step.critical, true);
+  // Measured: without CLI_SCRIPT defined BEFORE config.php is required, a
+  // non-zero exit reports SUCCESS. Asserting the ORDER, not just presence —
+  // indexOf comparisons pass when the term is absent, since -1 is less than
+  // everything.
+  const define = step.code.indexOf("define('CLI_SCRIPT',true)");
+  const config = step.code.indexOf("config.php");
+  assert.ok(define >= 0, "CLI_SCRIPT is not defined at all");
+  assert.ok(config >= 0, "config.php is never required");
+  assert.ok(define < config, "CLI_SCRIPT is defined after config.php is required");
+  // One line, or preflight refuses the blueprint.
+  assert.equal(step.code.includes("\n"), false);
+});
+
+test("the warm-up aborts on both silent-Boost failures and on neither visible one", async () => {
+  const { buildThemeWarmup, THEME_CODES, THEME_CSS_FAILURE_MARKER } = await import(
+    "../scripts/theme-assert.mjs"
+  );
+  const { code } = buildThemeWarmup("boost_union");
+  // 31: no theme directory. 32: the site is not on the theme we set. Both are
+  // invisible to a reviewer, so both must take the boot down.
+  assert.match(code, /exit\(31\)/);
+  assert.match(code, /exit\(32\)/);
+  for (const c of [31, 32]) assert.ok(THEME_CODES[c], `code ${c} has no explanation`);
+  // A CSS build that throws leaves a working, unstyled site — visible on sight,
+  // and better than no preview. It must NOT be an exit code.
+  assert.match(code, new RegExp(`echo '${THEME_CSS_FAILURE_MARKER}`));
+  assert.equal(Object.keys(THEME_CODES).includes("33"), false);
+});
+
+test("the warm-up reads the theme from $CFG, never the literal the runtime hardcodes", async () => {
+  const { buildThemeWarmup } = await import("../scripts/theme-assert.mjs");
+  const { code } = buildThemeWarmup("boost_union");
+  // bootstrap.js warms `boost` and only `boost`, before the blueprint runs.
+  // Repeating that literal here would warm the wrong theme and leave the
+  // reviewer's first page compiling SCSS in WASM.
+  assert.match(code, /\$CFG->theme/);
+  assert.equal(/'boost'/.test(code), false, "the warm-up hardcodes a theme name");
+});

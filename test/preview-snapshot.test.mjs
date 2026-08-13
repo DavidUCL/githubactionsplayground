@@ -23,6 +23,9 @@ import { buildBlueprint, landingPath } from "../scripts/build-preview.mjs";
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "preview");
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
+// A real boost_union commit. Full length, because coordinateZipUrl refuses
+// anything shorter and a 7-character prefix is not a pin.
+const THEME_SHA = "1cf4a2e39ab1b46b1e0c1e0b64a0e19f6f0f7a21";
 
 const CASES = {
   mod: {
@@ -38,6 +41,32 @@ const CASES = {
     prNumber: "7",
     type: "theme",
     name: "boost_union",
+  },
+  // The `theme` control: a theme installed from its own coordinate and made
+  // active, on a pull request that is NOT itself a theme. This is the only
+  // place that pins setTheme's name to the plugin NAME (never the component),
+  // that there is exactly one setTheme, and where the warm-up sits relative to
+  // login — none of which a membership assertion would hold.
+  "theme-control": {
+    headRepo: "DavidUCL/moodle-mod_attendance",
+    headSha: SHA,
+    prNumber: "42",
+    type: "mod",
+    name: "attendance",
+    themeName: "boost_union",
+    installs: [
+      {
+        url: `https://github.com/moodle-an-hochschulen/moodle-theme_boost_union/archive/${THEME_SHA}.zip`,
+        pluginType: "theme",
+        pluginName: "boost_union",
+      },
+      {
+        url: `https://github.com/DavidUCL/moodle-mod_attendance/archive/${SHA}.zip`,
+        pluginType: "mod",
+        pluginName: "attendance",
+        isSelf: true,
+      },
+    ],
   },
   unknown: {
     headRepo: "DavidUCL/local_myplugin",
@@ -206,12 +235,34 @@ test("a tiny subplugin lands on the TinyMCE settings page, not the plugin list",
   assert.equal(landingPath("tiny", "myplug"), "/admin/settings.php?section=editorsettingstiny");
 });
 
-test("the action's own blueprint uses no risky steps", () => {
-  // If this ever fails, the preview started doing something that makes its own
-  // result unprovable — worth noticing deliberately rather than in passing.
-  for (const c of Object.values(CASES)) {
-    const risky = buildBlueprint(c).steps.map((s) => s.step).filter((s) => RISKY_STEPS.has(s));
-    assert.deepEqual(risky, []);
+// NARROWED, deliberately, and not deleted. The original read "no risky steps at
+// all", which stopped being true the moment the builder started generating its
+// own PHP. Two steps do that, both of them written in this repository and both
+// reviewable here:
+//
+//   restore-assert.mjs   proves the restored course is not empty
+//   theme-assert.mjs     proves the theme is really active, and builds its CSS
+//
+// Neither rewrites Moodle; they are in RISKY_STEPS because `runPhpCode` as a
+// STEP TYPE can. What the test still forbids is the thing it was written for: a
+// risky step the builder did not generate itself — restoreDatabase, an
+// arbitrary runPhpCode from an input, anything that makes the preview's own
+// result unprovable.
+const BUILDER_GENERATED_PHP = new Set(["runPhpCode"]);
+
+test("the action's own blueprint uses no risky step it did not generate itself", () => {
+  for (const [name, c] of Object.entries(CASES)) {
+    const steps = buildBlueprint(c).steps;
+    const risky = steps.filter((s) => RISKY_STEPS.has(s.step));
+    const foreign = risky.filter((s) => !BUILDER_GENERATED_PHP.has(s.step));
+    assert.deepEqual(foreign.map((s) => s.step), [], name);
+    // ...and every one that IS allowed must be ours: our PHP is one line and
+    // starts with the CLI_SCRIPT define, without which the step cannot report
+    // failure at all. An input-supplied runPhpCode would not look like this.
+    for (const s of risky) {
+      assert.match(s.code, /^<\?php define\('CLI_SCRIPT',true\);/, `${name}: ${s.step}`);
+      assert.equal(s.code.includes("\n"), false, `${name}: ${s.step} is multi-line`);
+    }
   }
 });
 
