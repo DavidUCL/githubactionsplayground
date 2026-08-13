@@ -92,6 +92,34 @@ Everything in it exists to stop the link lying about which code it opens:
 - **The review course is named `PR #42 · <sha> · <plugin>`**, so the
   reviewer's own screen confirms the commit rather than the comment doing it.
 
+### Looking at the plugin under a real theme (`theme`)
+
+Stock Boost is not what anybody's site looks like, and a plugin that reads
+correctly under Boost can be unusable under a real institutional theme. The
+`theme` input takes ONE coordinate — `owner/repo@ref#theme_name` — installs
+that theme alongside the plugin, and switches the site to it.
+
+Three things about it are worth knowing before you use it:
+
+- **The repository must be public.** The reviewer's browser downloads the
+  archive with no credentials, so a private institutional theme cannot be
+  previewed here at all. There is no workaround short of publishing the theme.
+- **Not needed when the plugin under review is itself a theme** — the preview
+  already switches to it. Filling the box as well is refused rather than
+  silently obeyed: `set_config` is last-write-wins, so one of the two would be
+  applied and nothing would say which.
+- **A theme must set `$THEME->parents`,** and this is checked. Moodle finds a
+  theme by testing for `theme/<name>/config.php` and reads its parents from
+  that file; when they are absent it falls back to Boost with a `debugging()`
+  message the playground does not display. Every failure in this area looks
+  identical from the reviewer's chair — a normal-looking Moodle wearing stock
+  Boost — which is why the preview proves the theme is really active before you
+  arrive, rather than assuming the activation step worked.
+
+A theme whose parent is decided at runtime (boost_union sets its parents in
+both arms of a Workplace check) is a WARNING, not a refusal: the preview cannot
+tell which parent will be needed, says so, and carries on.
+
 Why the public playground is the default host: a preview runs unreviewed PHP
 in the visitor's browser, and the playground renders the site in an
 unsandboxed iframe with a service worker that outlives the tab. Browser

@@ -344,3 +344,38 @@ playground, tamper check). What the build changed about the plan:
 - **Phase 2 has a hard precondition** the plan did not state: `uses: ./`
   means a fork PR supplies the verifier's own code, so consumers must move
   to `owner/repo@<sha>` before any `pull_request` trigger is enabled.
+
+## 11. The `theme` control (2026-08-13)
+
+Two decisions here depart from what was written down beforehand, and both are
+recorded because the written version looks more correct than it is.
+
+**It emits `installMoodlePlugin` with `pluginType: "theme"`, not `installTheme`.**
+The control table said `installTheme`. The runtime's `handleInstallTheme` is
+`handleInstallMoodlePlugin` with the type forced to `"theme"` and
+`step.pluginType` ignored — the same `installPluginFiles`, the same
+`runMoodleUpgrade` — so the two are one code path wearing two names. The
+builder already emits the second form for a theme under review, mchef emits it
+for every theme it converts, and it is the only one any booted artifact in
+either repository exercises. Emitting `installTheme` for the box theme would
+put two spellings of one job into one blueprint for no behavioural difference.
+
+**It generates a `runPhpCode` step, and accepts the "modifies Moodle" badge
+that comes with it.** The objection was that `runPhpCode` is in `RISKY_STEPS`,
+so every theme preview now carries a warning, and a warning that fires on
+everything stops being read. That is true and it is still the right trade,
+because the alternative was worse: the two failures this step catches — no
+theme directory of that name, and a site whose theme setting is not the one we
+set — are both invisible. `setTheme` never checks that the theme exists, and
+Moodle falls back to Boost with a `debugging()` this runtime does not display.
+An unbadged preview that silently shows the wrong theme is a worse outcome than
+a badged one that cannot. The badge WORDING is wrong for a step that only reads
+and rebuilds a stylesheet, and that is a separate fix; a builder-generated
+`runPhpCode` already exists for the post-restore assertion, so the badge fires
+on sample-content previews today and this control does not create the problem.
+
+The step also rebuilds the active theme's CSS. The runtime warms exactly one
+stylesheet at boot and the name is hardcoded to `boost`, before the blueprint
+runs — so any theme activated by a blueprint is compiled lazily, in WASM, on
+the reviewer's first page view. That applied to a theme *under review* long
+before this control existed; both paths are fixed together.
