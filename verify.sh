@@ -12,6 +12,9 @@ set -uo pipefail
 #   4. LIVE (opt-in, LIVE=1): loopback boot of the known-good blueprint
 #      against the production playground ends status=pass
 #   5. LIVE: a swapped local blueprint is refused by the hash binding
+#   6. LIVE: the post-restore assertion passes when right and fails when wrong
+#   7. LIVE: a real theme installs, activates and builds its CSS — and all
+#      three silent-Boost failures are caught
 #
 # Local env note (WSL, no sudo): chromium needs NSS libs; point
 # NSS_LIBS at a dir of symlinks (see README "Local testing").
@@ -977,6 +980,89 @@ import("./scripts/restore-assert.mjs").then(async (m) => {
         echo "CHECK 6 PASS: the post-restore assertion passes when right and fails when wrong"
     fi
 
+    # LIVE 7 — the theme control, in a real browser.
+    #
+    # Nothing offline can prove any of this. The failures the `theme` control
+    # exists to prevent are all invisible: `setTheme` never checks the theme
+    # exists, Moodle falls back to Boost with a debugging() this runtime does
+    # not display, and whether a third-party theme's SCSS compiles at all in
+    # WASM is a question only a boot can answer. A unit test asserts the PHP we
+    # generate; this asserts what Moodle does with it.
+    #
+    # Measured 2026-08-13, each row a separate boot of the real host:
+    #   theme installed + activated   5/5 steps, no CSS-failure marker   ~34s
+    #   theme never installed         exit 31 at step 4/4                ~39s
+    #   site left on another theme    exit 32 at step 4/5                ~34s
+    #   theme dir with no parents     exit 33 at step 4/5                ~35s
+    #
+    # The first row is the acceptance evidence for the control: it is the only
+    # thing showing a real theme's SCSS builds here rather than crashing or
+    # timing out. The last is the one no cheap test reaches — the directory
+    # exists, it has a config.php, and $CFG->theme names it. Only asking Moodle
+    # what it actually loaded reveals that it loaded Boost.
+    tb_boot() { # $1=case -> echoes the observed outcome
+        local TB_OUT="$WORK/tb_$1"
+        mkdir -p "$TB_OUT"
+        TB_DIR="$TB_OUT" TB_CASE="$1" node -e '
+import("./scripts/theme-assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const c = await import("node:crypto");
+  const kase = process.env.TB_CASE;
+  // A real, public theme pinned to a full commit. boost_union deliberately: it
+  // is the most-installed third-party theme there is, and the one whose parent
+  // themes are decided at runtime.
+  const zip = "https://github.com/moodle-an-hochschulen/moodle-theme_boost_union/archive/649c2d7b22fee1de767d145b7ec5a95543e9a305.zip";
+  const steps = [{ step: "installMoodle" }];
+  if (kase === "badparents") {
+    // The PHP lives in a fixture because it needs single quotes and this whole
+    // script is a single-quoted shell argument. See that file for what it does.
+    const { _comment, ...step } = JSON.parse(fs.readFileSync("test/fixtures/preview/faketheme-step.json", "utf8"));
+    steps.push(step);
+  } else if (kase !== "notinstalled") {
+    steps.push({ step: "installMoodlePlugin", url: zip, pluginType: "theme", pluginName: "boost_union", critical: true });
+  }
+  const want = kase === "badparents" ? "faketheme" : "boost_union";
+  steps.push({ step: "setTheme", name: kase === "wrongtheme" ? "classic" : want });
+  steps.push(m.buildThemeWarmup(want));
+  steps.push({ step: "setLandingPage", path: "/" });
+  const body = JSON.stringify({ preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps }, null, 2);
+  fs.writeFileSync(`${process.env.TB_DIR}/blueprint.json`, body);
+  const sha = c.createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(`${process.env.TB_DIR}/preflight.json`,
+    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }));
+  fs.writeFileSync(`${process.env.TB_DIR}/expectations.json`, JSON.stringify({
+    blueprintUrl: "loopback", blueprintSha256: sha, stepCount: steps.length,
+    stepNames: steps.map((s) => s.step),
+    pluginSteps: (kase === "notinstalled" || kase === "badparents") ? []
+      : [{ url: zip, pluginType: "theme", pluginName: "boost_union" }] }));
+});
+' >/dev/null 2>&1
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$TB_OUT" \
+            BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/tb-$1.json" \
+            node scripts/boot-capture.mjs >>/tmp/bv-verify-theme.log 2>&1
+        # The CSS-failure marker is grepped too: it exits 0 by design, so
+        # without looking for it a boot that produced an unstyled site would
+        # read here as a clean pass.
+        grep -oE 'failed with exit code [0-9]+|Blueprint step 5/5: setLandingPage|theme-css-build-failed' \
+            "$TB_OUT/boot-log.txt" 2>/dev/null | head -1
+    }
+    : >/tmp/bv-verify-theme.log
+    TB_GOOD=$(tb_boot correct)
+    TB_MISSING=$(tb_boot notinstalled)
+    TB_WRONG=$(tb_boot wrongtheme)
+    TB_PARENTS=$(tb_boot badparents)
+    TB_PROBLEMS=""
+    [[ "$TB_GOOD" == *"setLandingPage"* ]] || TB_PROBLEMS+="an installed, activated theme did not complete (got: ${TB_GOOD:-nothing}); "
+    [[ "$TB_MISSING" == *"exit code 31"* ]] || TB_PROBLEMS+="a theme that was never installed was not caught (got: ${TB_MISSING:-nothing}); "
+    [[ "$TB_WRONG" == *"exit code 32"* ]] || TB_PROBLEMS+="a site left on another theme was not caught (got: ${TB_WRONG:-nothing}); "
+    [[ "$TB_PARENTS" == *"exit code 33"* ]] || TB_PROBLEMS+="a theme Moodle silently refused to initialise was not caught (got: ${TB_PARENTS:-nothing}); "
+    if [[ -n "$TB_PROBLEMS" ]]; then
+        echo "CHECK 7 FAIL: the theme check is not doing its job — $TB_PROBLEMS"
+        FAILED+=("7: theme activation check cannot fail")
+    else
+        echo "CHECK 7 PASS: a real theme installs, activates and builds its CSS — and all three silent failures are caught"
+    fi
+
     # A mutated local blueprint must break the hash binding.
     TAMPER_OUT="$WORK/tamper"
     mkdir -p "$TAMPER_OUT"
@@ -996,7 +1082,7 @@ json.dump(bp, open('$TAMPER_OUT/blueprint.json', 'w'))
         && python3 -c "import json,sys; v=json.load(open('$TAMPER_OUT/verdict.json')); sys.exit(0 if v['status'] != 'pass' else 1)"
     check $? 5 "swapped local blueprint is refused by the hash binding (log: /tmp/bv-verify-tamper.log)"
 else
-    echo "CHECK 4-5 SKIP: live boot (set LIVE=1 to include — required for the gate)"
+    echo "CHECK 4-7 SKIP: live boot (set LIVE=1 to include — required for the gate)"
 fi
 
 # Prove the isolation held. Without this the fix is invisible: a future edit

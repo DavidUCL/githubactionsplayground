@@ -1,0 +1,20 @@
+{
+  "_comment": [
+    "Test-only. Builds a directory that IS a theme by every cheap test — it",
+    "exists, it has a config.php, and the site setting can name it — but sets no",
+    "$THEME->parents. Moodle's find_theme_config() returns null on that",
+    "(theme_config.php:2107), load() falls back to Boost, and it says so only to",
+    "a debugging(DEBUG_NORMAL) this runtime does not display.",
+    "",
+    "Used by LIVE check 7 to prove exit code 33 really fires. No REAL theme is",
+    "broken this way, so it has to be built; it lives in a fixture rather than",
+    "inline in verify.sh because the PHP needs single quotes and the check runs",
+    "inside a single-quoted shell argument.",
+    "",
+    "It is never reachable from a preview link: the builder cannot emit an",
+    "arbitrary runPhpCode, and nothing reads this file outside the gate."
+  ],
+  "step": "runPhpCode",
+  "critical": true,
+  "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); $d=$CFG->dirroot.'/theme/faketheme'; @mkdir($d,0777,true); file_put_contents($d.'/config.php', '<?php $THEME->name = \"faketheme\";'); file_put_contents($d.'/version.php', '<?php $plugin->component=\"theme_faketheme\"; $plugin->version=2024010100;'); exit(is_dir($d) ? 0 : 1);"
+}
