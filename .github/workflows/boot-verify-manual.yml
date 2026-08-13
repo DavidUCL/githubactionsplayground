@@ -45,7 +45,13 @@ on:
           ZIPs, database snapshots), comma separated. A blueprint pulling
           from anywhere else is refused before the browser starts.
         required: false
-        default: "raw.githubusercontent.com"
+        # github.com as well, and this is not cosmetic: every plugin install
+        # the preview builder emits points at github.com/<o>/<r>/archive/<sha>.zip
+        # (coordinates.mjs), so the old default refused every blueprint this
+        # repository produces. This is the one workflow that can BOOT a preview
+        # link by hand — the acceptance evidence for a control like `theme` —
+        # and it was refusing them before the browser started.
+        default: "github.com,raw.githubusercontent.com"
         type: string
       accepted-origins:
         description: >-
