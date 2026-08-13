@@ -1112,11 +1112,25 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
     # "Blueprint failed at step 2:installMoodlePlugin: Failed to download plugin
     # ZIP from https://github-proxy.exelearning.dev/...: 502".
     #
-    # So those two arms WAIVE on a download failure, loudly, and never silently:
-    # a waiver prints what was not checked. The other two arms need no network
-    # at all and are NOT waivable — they are what proves the assertion can fail,
-    # and they still run when the proxy is down.
-    tb_download_died() { [[ "$1" == *"Failed to download plugin ZIP"* ]]; }
+    # So those two arms WAIVE when the INSTALL STEP dies, loudly, and never
+    # silently: a waiver prints what was not checked. The other two arms need no
+    # network at all and are NOT waivable — they are what proves the assertion
+    # can fail, and they still run when the proxy is down.
+    #
+    # The predicate is the STEP, not the error text, and that is deliberate. It
+    # was written against the error wording first and missed on the very next
+    # run: a workstation reproduction said "Failed to download plugin ZIP …:
+    # 502" while the runner said "Failed to fetch", and matching the first
+    # wording turned a proxy outage into a red gate for a second time. Matching
+    # the step covers every wording there will ever be.
+    #
+    # It cannot hide a bug of ours. The URL this arm installs is a constant a
+    # few lines above, not something the builder produced — nothing about it is
+    # under test here. What IS under test is the assertion that runs afterwards,
+    # and the two arms proving that need no download at all.
+    tb_download_died() {
+        [[ "$1" == *"Blueprint failed at step"* && "$1" == *"installMoodlePlugin"* ]]
+    }
     TB_PROBLEMS=""
     TB_WAIVED=""
     if tb_download_died "$TB_GOOD"; then
@@ -1138,7 +1152,7 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
         echo "CHECK 7 FAIL: the theme check is not doing its job — $TB_PROBLEMS"
         FAILED+=("7: theme activation check cannot fail")
     elif [[ -n "$TB_WAIVED" ]]; then
-        echo "CHECK 7 WAIVED IN PART: the ZIP proxy would not serve the theme, so $TB_WAIVED"
+        echo "CHECK 7 WAIVED IN PART: the theme ZIP would not install, so $TB_WAIVED"
         echo "                       were UNCHECKED in this run. The two arms needing no"
         echo "                       download still passed, so the assertion can still fail."
     else
