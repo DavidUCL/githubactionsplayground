@@ -7,6 +7,7 @@
 
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   parseRefAdvertisement,
   resolveRefIn,
@@ -17,7 +18,10 @@ import {
   checkDependenciesSatisfied,
   orderInstalls,
   clearAdvertisementCache,
+  fetchThemeParents,
+  parseThemeParents,
 } from "../scripts/extras.mjs";
+import { MAX_VERSION_PHP_BYTES } from "../scripts/plugin-version.mjs";
 
 // ---------------------------------------------------------------------------
 // pkt-line helpers. The advertisement is built here rather than captured as a
@@ -452,4 +456,101 @@ test("a circular dependency is refused, naming every plugin in the circle", () =
 
 test("a plugin depending on itself is not a cycle", () => {
   assert.deepEqual(order([node("local_a", { local_a: 1 })]), ["local_a"]);
+});
+
+// ---------------------------------------------------------------------------
+// $THEME->parents — the dependency version.php cannot see.
+//
+// Both fixtures are the REAL config.php from the theme's own repository (see
+// COPYRIGHT). A hand-written fixture is how this parse gets to be wrong and
+// green at the same time.
+
+const themeFixture = (f) =>
+  readFileSync(new URL(`./fixtures/themes/${f}`, import.meta.url), "utf8");
+
+test("moove: one literal assignment is read exactly", () => {
+  const v = parseThemeParents(themeFixture("moove-config.php"), "theme_moove");
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.parents, ["boost"]);
+  assert.equal(v.note, undefined);
+});
+
+// The case that decides the whole design. boost_union assigns parents in both
+// arms of a Workplace check, so the union would make every preview of it depend
+// on theme_workplace — a refusal with no fix, on the most-installed third-party
+// theme there is.
+test("boost_union: parents decided at runtime warn, and never refuse", () => {
+  const v = parseThemeParents(themeFixture("boost_union-config.php"), "theme_boost_union");
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.parents, []);
+  assert.match(v.note, /runtime/);
+  // Specifically NOT theme_workplace, which is what a union would have produced.
+  assert.ok(!/workplace/i.test(v.parents.join(",")));
+});
+
+test("a config.php that never sets parents is refused", () => {
+  const v = parseThemeParents("<?php\n$THEME->name = 'x';\n$THEME->sheets = [];\n", "theme_x");
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /never sets \$THEME->parents/);
+  // The reason must name what the reviewer would otherwise see.
+  assert.match(v.reason, /stock Boost/);
+});
+
+// `$THEME->parents[] = 'boost';` APPENDS. It is unusual but valid, and reading
+// it as "no parents at all" would refuse a theme that works.
+test("an appended parent is not read as an absent one", () => {
+  const v = parseThemeParents("<?php\n$THEME->parents = [];\n$THEME->parents[] = 'boost';\n", "theme_x");
+  assert.equal(v.ok, true);
+});
+
+test("array() spelling is read the same as []", () => {
+  const v = parseThemeParents("<?php\n$THEME->parents = array('boost');\n", "theme_x");
+  assert.deepEqual(v.parents, ["boost"]);
+});
+
+test("a computed parents value warns rather than being read as empty", () => {
+  const v = parseThemeParents("<?php\n$THEME->parents = theme_x_parents();\n", "theme_x");
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.parents, []);
+  assert.match(v.note, /add the parent theme to extra-plugins/);
+});
+
+// A 404 over raw.githubusercontent.com is a REAL 404 (measured), so this is a
+// refusal and not a parse of a styled error page.
+test("a theme with no config.php at all is refused", async () => {
+  const v = await fetchThemeParents(
+    { owner: "a", repo: "b", ref: "c", name: "x", component: "theme_x" },
+    { fetchImpl: async () => ({ ok: false, status: 404 }) },
+  );
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /no config.php/);
+  assert.match(v.reason, /stock\s+\n?\s*Boost|stock Boost/);
+});
+
+test("the config.php fetch refuses redirects", async () => {
+  let seen = null;
+  await fetchThemeParents(
+    { owner: "a", repo: "b", ref: "c", name: "x", component: "theme_x" },
+    {
+      fetchImpl: async (url, opts) => {
+        seen = { url, opts };
+        return { ok: true, text: async () => "<?php $THEME->parents = ['boost'];" };
+      },
+    },
+  );
+  assert.match(seen.url, /^https:\/\/raw\.githubusercontent\.com\/a\/b\/c\/config\.php$/);
+  assert.equal(seen.opts.redirect, "error");
+});
+
+// The cap is asserted by its EFFECT, not by reading the constant back: a
+// parents assignment beyond it must be invisible. Without a real cap this test
+// passes trivially, so the assignment is placed just past the boundary.
+test("the config.php body is capped, and what is past the cap is not read", async () => {
+  const padding = "// x\n".repeat(Math.ceil(MAX_VERSION_PHP_BYTES / 5) + 10);
+  const v = await fetchThemeParents(
+    { owner: "a", repo: "b", ref: "c", name: "x", component: "theme_x" },
+    { fetchImpl: async () => ({ ok: true, text: async () => `<?php\n${padding}$THEME->parents = ['boost'];` }) },
+  );
+  assert.equal(v.ok, false, "read a parents assignment past the byte cap");
+  assert.match(v.reason, /never sets \$THEME->parents/);
 });

@@ -305,6 +305,123 @@ export async function fetchExtraVersion(item, { fetchImpl = fetch } = {}) {
 }
 
 /**
+ * A theme's parents, read from its `config.php`.
+ *
+ * WHY THIS IS A SECOND FETCH AND NOT PART OF version.php. A child theme does
+ * NOT declare its parent in `$plugin->dependencies`. It declares it in
+ * `$THEME->parents` in the theme's own `config.php`, which `version.php` has
+ * never seen. So `parseVersionPhp` returns `{}` for a theme, `{}` satisfies
+ * `checkDependenciesSatisfied`, and a child theme whose parent is absent passes
+ * every check we have.
+ *
+ * What that costs on screen: `find_theme_config()` returns null when
+ * `$THEME->parents` is not an array (`lib/classes/output/theme_config.php:2114`)
+ * and `theme_config::load()` then falls back to Boost with only a
+ * `debugging(DEBUG_NORMAL)` — which the playground's config never displays. The
+ * reviewer gets stock Boost, a green run, and nothing anywhere saying why.
+ *
+ * THREE OUTCOMES, and the middle one is the one that took measuring:
+ *
+ *  - no `$THEME->parents` anywhere -> REFUSE. Guaranteed silent Boost.
+ *  - exactly ONE literal array     -> those are the parents; they become
+ *                                     ANY_VERSION edges in the same graph the
+ *                                     extras use.
+ *  - anything else                 -> WARN, contribute NO edges.
+ *
+ * The third branch exists because of a real theme, not a hypothetical.
+ * `moodle-an-hochschulen/moodle-theme_boost_union`'s config.php assigns parents
+ * TWICE, in the two arms of an `if` on whether Moodle Workplace is present
+ * (its `config.php:211` and `:216`): `['workplace', 'boost']` or `['boost']`.
+ * Taking the union would make every preview of the most-installed third-party
+ * theme in the ecosystem depend on `theme_workplace`, which is not core and
+ * which nobody can install — a refusal with no fix. Taking either arm would be
+ * a guess. Saying "I could not tell" is the only honest answer, and a warning
+ * is the right shape for it: the failure it would have caught is rare, and the
+ * false refusal it avoids is certain.
+ *
+ * The file is READ, never executed, capped, and fetched with redirects refused.
+ *
+ * @returns {Promise<{ok: boolean, reason?: string, parents?: string[], note?: string}>}
+ */
+export async function fetchThemeParents(item, { fetchImpl = fetch } = {}) {
+  const url = `https://raw.githubusercontent.com/${item.owner}/${item.repo}/${item.ref}/config.php`;
+  let res;
+  try {
+    res = await fetchImpl(url, { signal: AbortSignal.timeout(TIMEOUT_MS), redirect: "error" });
+  } catch (err) {
+    return { ok: false, reason: `could not read ${url} — ${err.message}` };
+  }
+  if (!res.ok) {
+    return {
+      ok: false,
+      reason:
+        `has no config.php at the root of ${item.owner}/${item.repo} at that commit ` +
+        `(HTTP ${res.status}). Moodle finds a theme by testing for ` +
+        `theme/<name>/config.php and nothing else, so this would install into ` +
+        `theme/${item.name}/ and still not be a theme — the site would render stock ` +
+        `Boost with no error`,
+    };
+  }
+  const text = (await res.text()).slice(0, MAX_VERSION_PHP_BYTES);
+  return parseThemeParents(text, item.component);
+}
+
+/** `$THEME->parents = ['boost'];` — the value is everything up to the `;`. */
+const PARENTS_ASSIGNMENT = /\$THEME\s*->\s*parents\s*=\s*([^;]*);/g;
+/** A literal list of theme names, `[...]` or `array(...)`, nothing computed. */
+const LITERAL_NAME_LIST = /^\s*(?:array\s*\(|\[)\s*((?:['"][a-z][a-z0-9_]*['"]\s*,\s*)*(?:['"][a-z][a-z0-9_]*['"]\s*,?\s*)?)(?:\)|\])\s*$/;
+
+/**
+ * Split out from the fetch so it can be tested against a real vendored
+ * config.php rather than a hand-written one. A hand-written fixture is how this
+ * parse gets to be wrong and green at the same time.
+ *
+ * @returns {{ok: boolean, reason?: string, parents?: string[], note?: string}}
+ */
+export function parseThemeParents(text, component = "the theme") {
+  // Counted separately from the literal parse: `$THEME->parents[] = 'boost';`
+  // appends rather than assigns, and would otherwise read as "no parents at
+  // all" and be refused. Mentioning the property at all is enough to clear the
+  // refusal; naming the parents is a stricter question, answered below.
+  const mentioned = /\$THEME\s*->\s*parents\b/.test(text);
+  if (!mentioned) {
+    return {
+      ok: false,
+      reason:
+        `${component}'s config.php never sets $THEME->parents. Moodle's ` +
+        `find_theme_config() returns null when that is not an array and falls back ` +
+        `to Boost with a debugging() message this runtime does not display — so the ` +
+        `theme would install, the run would go green, and the site would render ` +
+        `stock Boost`,
+    };
+  }
+
+  const literal = [];
+  let unparsed = 0;
+  for (const [, value] of text.matchAll(PARENTS_ASSIGNMENT)) {
+    const m = LITERAL_NAME_LIST.exec(value);
+    if (!m) {
+      unparsed += 1;
+      continue;
+    }
+    literal.push([...m[1].matchAll(/['"]([a-z][a-z0-9_]*)['"]/g)].map((n) => n[1]));
+  }
+
+  if (literal.length === 1 && unparsed === 0) {
+    return { ok: true, parents: literal[0] };
+  }
+  return {
+    ok: true,
+    parents: [],
+    note:
+      `${component} decides its parent theme at runtime (its config.php sets ` +
+      `$THEME->parents in more than one place, or not as a plain list), so this ` +
+      `preview cannot tell which parent it will need. If the site renders stock ` +
+      `Boost, add the parent theme to extra-plugins`,
+  };
+}
+
+/**
  * Everything decidable about ONE extra once its version.php has been read.
  *
  * @returns {string[]} problems, each naming the coordinate

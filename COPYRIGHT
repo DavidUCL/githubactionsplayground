@@ -48,3 +48,19 @@ test/fixtures/mbz/*.mbz
   Kept so the .mbz reader is tested against archives Moodle really produced,
   in both container formats, including an activity-type backup that must be
   refused — offline, rather than only when check 1t can reach the network.
+
+test/fixtures/themes/*.php
+  Theme config.php files taken unmodified from their upstream repositories, so
+  the $THEME->parents parse is tested against files real themes really ship
+  rather than hand-written ones. A hand-written fixture is how a parse gets to
+  be wrong and green at the same time.
+    boost_union-config.php  moodle-an-hochschulen/moodle-theme_boost_union,
+                            branch MOODLE_405_STABLE. Copyright (C) Alexander
+                            Bias, Ulm University and contributors. GPLv3+.
+                            Assigns $THEME->parents twice, in the two arms of a
+                            Workplace-detection `if` — the case the parse must
+                            warn about rather than refuse.
+    moove-config.php        willianmano/moodle-theme_moove, branch
+                            MOODLE_405_STABLE. Copyright (C) Willian Mano and
+                            contributors. GPLv3+. One plain literal assignment —
+                            the case the parse must read exactly.
