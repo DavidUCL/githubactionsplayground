@@ -597,6 +597,51 @@ if bad:
 PY_YAML
 check $? 1g "every action/workflow parses and declares the outputs it emits"
 
+# A box on a dispatch form is declared in one place and consumed in another, by
+# hand. Drop the consuming line and the box still renders, the run still goes
+# green, and what the reviewer typed is discarded without a word — the same
+# normal-looking-Moodle symptom that every other silent failure here produces.
+# Nothing read .github/workflows/ for this before: probe-controls.py opens
+# preview/action.yml and stops, and 1g checks OUTPUTS. See the script header for
+# why the rule is "referenced somewhere" rather than "forwarded as a `with:` key
+# of the same name" — the narrow rule needs an exempt list on day one.
+FWD_OUT=$(python3 scripts/check-forwarding.py 2>&1); FWD_RC=$?
+echo "$FWD_OUT"
+check $FWD_RC 1u "every box on a dispatch form is read by its workflow"
+
+# ...and prove 1u itself fires. Plant a copy of the plugin form with one
+# forwarding line deleted and require the check to FAIL NAMING that input.
+# Asserting on what it says, not merely on a non-zero exit: a syntax error also
+# exits non-zero and would read as "the check fires" while it was broken.
+FWD_TMP=$(mktemp -d)
+python3 - "$FWD_TMP/planted.yml" <<'PY_FWD'
+import sys
+src = open(".github/workflows/preview-a-plugin.yml").read()
+# `sections` is forwarded in exactly one place, so deleting that line leaves the
+# box declared and read by nothing — the precise bug 1u exists to catch.
+planted = src.replace("          sections: ${{ inputs.sections }}\n", "", 1)
+if planted == src:
+    sys.exit("1u-self: could not plant — the sections forwarding line has moved")
+open(sys.argv[1], "w").write(planted)
+PY_FWD
+if [[ $? -ne 0 ]]; then
+    echo "CHECK 1u-self FAIL: the plant could not be built"
+    FAILED+=("1u-self: the plant could not be built")
+else
+    SELF_FWD=$(FORWARD_WORKFLOWS="$FWD_TMP/planted.yml" python3 scripts/check-forwarding.py 2>&1)
+    SELF_FWD_RC=$?
+    if [[ $SELF_FWD_RC -eq 0 ]]; then
+        echo "CHECK 1u-self FAIL: 1u PASSED a form whose input is wired to nothing"
+        FAILED+=("1u-self: the forwarding check does not fire")
+    elif [[ "$SELF_FWD" != *'"sections"'* ]]; then
+        echo "CHECK 1u-self FAIL: it failed for the WRONG reason — $SELF_FWD"
+        FAILED+=("1u-self: failed for an unrelated reason")
+    else
+        echo "CHECK 1u-self PASS: 1u names the input that is wired to nothing"
+    fi
+fi
+rm -rf "$FWD_TMP"
+
 # A push workflow that defines ONLY tags/tags-ignore never runs on a branch
 # push. GitHub: "If you define only tags/tags-ignore or only branches/
 # branches-ignore, the workflow won't run for events affecting the undefined
