@@ -1173,3 +1173,101 @@ test("no install list at all still installs exactly the commit under review", ()
   assert.equal(steps.length, 1);
   assert.equal(steps[0].url, SELF_URL);
 });
+
+// ---------------------------------------------------------------------------
+// The `theme` control, parse-and-refuse half. Every case below is one that
+// otherwise boots a green run showing stock Boost: setTheme never verifies the
+// theme exists, and find_theme_location() is a bare filesystem test.
+
+const CORE_THEMES = {
+  ok: true,
+  standard: new Set(["theme_boost", "theme_classic", "mod_assign"]),
+  removedTypes: new Set(),
+};
+const themePlan = async (raw, self = { type: "mod", name: "attendance" }, core = CORE_THEMES) => {
+  const { Problems, planThemeControl } = await import("../scripts/build-preview.mjs");
+  const problems = new Problems();
+  const { item } = planThemeControl({ raw, self, core, problems });
+  return { item, problems: problems.list.map((p) => `${p.input}: ${p.message}`) };
+};
+
+test("an empty theme box is not a refusal and plans nothing", async () => {
+  for (const raw of ["", "   ", undefined, null]) {
+    const { item, problems } = await themePlan(raw);
+    assert.equal(item, null);
+    assert.deepEqual(problems, []);
+  }
+});
+
+test("a full theme coordinate is accepted, unresolved", async () => {
+  const { item, problems } = await themePlan(
+    "moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_405_STABLE#theme_boost_union",
+  );
+  assert.deepEqual(problems, []);
+  assert.equal(item.component, "theme_boost_union");
+  assert.equal(item.name, "boost_union");
+  // Still the ref that was TYPED. Resolving it to a commit is the extras
+  // pipeline's job, and a test asserting otherwise here would be asserting
+  // that this function does something it must not.
+  assert.equal(item.ref, "MOODLE_405_STABLE");
+});
+
+test("a theme box on a theme pull request is refused, naming both", async () => {
+  const { item, problems } = await themePlan(
+    "someone/moodle-theme_moove@abc#theme_moove",
+    { type: "theme", name: "boost_union" },
+  );
+  assert.equal(item, null);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /theme_boost_union/);
+  assert.match(problems[0], /theme_moove/);
+  // The reason has to be the one the reviewer would otherwise never see.
+  assert.match(problems[0], /last one wins/);
+});
+
+test("a non-theme component in the theme box is refused", async () => {
+  const { item, problems } = await themePlan("someone/moodle-mod_thing@abc#mod_thing");
+  assert.equal(item, null);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /is not a theme/);
+  // Names the directory it would land in, which is the whole reason it fails.
+  assert.match(problems[0], /mod\//);
+});
+
+test("two themes are refused — only one can be active", async () => {
+  const { item, problems } = await themePlan(
+    "a/b@abc#theme_one,c/d@def#theme_two",
+  );
+  assert.equal(item, null);
+  assert.ok(problems.some((p) => /maximum is 1/.test(p)), problems.join("; "));
+});
+
+test("a theme box naming a CORE theme is refused", async () => {
+  const { item, problems } = await themePlan("someone/moodle-theme_boost@abc#theme_boost");
+  assert.equal(item, null);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /theme_boost/);
+});
+
+// The coordinate parser's own refusals must reach the reviewer under the name
+// of the box they typed into, not as an internal message.
+test("an incomplete theme coordinate is refused under the theme field", async () => {
+  for (const raw of ["someone/moodle-theme_moove", "someone/moodle-theme_moove@abc", "@abc#theme_moove"]) {
+    const { item, problems } = await themePlan(raw);
+    assert.equal(item, null, `accepted ${raw}`);
+    assert.ok(problems.length >= 1, `no refusal for ${raw}`);
+    assert.ok(problems.every((p) => p.startsWith("theme:")), problems.join("; "));
+  }
+});
+
+// A skipped check must never look like a passed one — but it must also not
+// invent a refusal. With no core list, the collision check simply does not run.
+test("the core-theme refusal is skipped, not guessed, when Moodle's list is absent", async () => {
+  const { item, problems } = await themePlan(
+    "someone/moodle-theme_boost@abc#theme_boost",
+    { type: "mod", name: "attendance" },
+    { ok: false, reason: "offline" },
+  );
+  assert.deepEqual(problems, []);
+  assert.equal(item.component, "theme_boost");
+});

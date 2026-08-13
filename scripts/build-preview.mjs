@@ -1056,6 +1056,71 @@ export async function planExtraPlugins({
   };
 }
 
+/**
+ * Turn the `theme` box into ONE coordinate, or into refusals that name it.
+ *
+ * Everything decidable without a request lives here; the network work rides the
+ * extras pipeline, because a theme is a plugin and duplicating that pipeline is
+ * how the two would drift.
+ *
+ * WHY EVERY REFUSAL BELOW IS A REFUSAL AND NOT A WARNING. All three failures
+ * land on the same screen: a Moodle rendering stock Boost, with a green run and
+ * nothing in the log. `handleSetTheme` is `if (!step.name) throw` and then
+ * `php.run(set_config('theme', name))` — it never checks the theme exists — and
+ * `find_theme_location()` is a bare filesystem test for `theme/<name>/config.php`
+ * (`lib/classes/output/theme_config.php:2107`). A name that resolves to nothing
+ * falls back to Boost with a `debugging()` the playground's config never shows.
+ *
+ * @returns {{item: object|null}} an UNRESOLVED coordinate — its ref is still
+ *   whatever was typed. Resolution, the archive check and the version.php read
+ *   are the extras pipeline's job.
+ */
+export function planThemeControl({ raw, self, core, problems }) {
+  const value = String(raw ?? "").trim();
+  if (!value) return { item: null };
+
+  // Counted, not read off `problems.any`: this must not stop because some other
+  // input was wrong, and must not continue because another input's problem made
+  // `any` true before it started.
+  const before = problems.list.length;
+  const failed = () => problems.list.length > before;
+  const add = (message) => problems.add("theme", message);
+
+  // The plugin under review is ITSELF a theme. The builder already emits
+  // `setTheme` for it, so a second one would run too and `set_config` is
+  // last-write-wins: the page stays headed with this pull request while the
+  // site renders somebody else's theme. Refused here, where the intent is ours,
+  // rather than in the gate — `preview-a-blueprint` runs foreign blueprints
+  // through the same preflight and we do not own their intent.
+  if (self.type === "theme") {
+    add(
+      `the plugin under review is itself a theme (theme_${self.name}), and the preview ` +
+        `already switches to it. Setting the theme box as well would activate ` +
+        `${JSON.stringify(value)} INSTEAD — last one wins — so the page would still be ` +
+        `headed with your commit while showing a different theme. Leave the box empty.`,
+    );
+  }
+
+  const parsed = parseCoordinateList(value, { max: 1, label: "theme" });
+  for (const p of parsed.problems) add(p);
+  if (failed()) return { item: null };
+
+  const item = parsed.items[0];
+  if (item.type !== "theme") {
+    add(
+      `${item.component} is not a theme. The archive would be extracted into ` +
+        `${PLUGIN_TYPE_DIRS[item.type]}/, nothing would appear under theme/, and the ` +
+        `activation step would succeed while the site kept stock Boost — no error, ` +
+        `nothing in the log. Give a theme_* component.`,
+    );
+  }
+  const notCore = checkNotCoreComponent(item.type, item.name, core);
+  if (!notCore.ok) add(`theme ${item.component}: ${notCore.reason}`);
+
+  if (failed()) return { item: null };
+  return { item };
+}
+
 async function main() {
   const headRepo = process.env.HEAD_REPO || "";
   const headSha = process.env.HEAD_SHA || "";
