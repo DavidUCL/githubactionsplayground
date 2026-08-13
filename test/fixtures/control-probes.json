@@ -31,7 +31,8 @@
     "MOODLE_BRANCH": "MOODLE_500_STABLE",
     "DATA_HOSTS": "",
     "PLAYGROUND_HOST": "https://daviducl.github.io/moodle-playground",
-    "SAMPLE_CONTENT": "(default)"
+    "SAMPLE_CONTENT": "(default)",
+    "THEME": ""
   },
   "probes": [
     {
@@ -208,7 +209,20 @@
         "installMoodlePlugin"
       ],
       "expect_steps_removed": [],
-      "note": "Changes the step LIST: one installMoodlePlugin per plugin, so a second one appears. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because the coordinate is checked against reality — the commit, the archive and the version.php all have to be there. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
+      "note": "Changes the step LIST: one installMoodlePlugin per plugin, so a second one appears. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because the coordinate is checked against reality \u2014 the commit, the archive and the version.php all have to be there. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
+    },
+    {
+      "input": "theme",
+      "env": "THEME",
+      "probe": "moodle-an-hochschulen/moodle-theme_boost_union@649c2d7b22fee1de767d145b7ec5a95543e9a305#theme_boost_union",
+      "target": "shape",
+      "expect_steps_added": [
+        "installMoodlePlugin",
+        "runPhpCode",
+        "setTheme"
+      ],
+      "expect_steps_removed": [],
+      "note": "Changes the step LIST three ways at once: the theme is installed like any other plugin, setTheme activates it, and a runPhpCode proves it really is active before the reviewer arrives. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because everything about the coordinate is checked against reality - the commit, the archive, version.php AND config.php's $THEME->parents all have to be there. boost_union deliberately: it sets parents in both arms of a Workplace check, which is the case the parse must warn about rather than refuse, so this row would fail if that branch were ever tightened. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
     },
     {
       "input": "data-hosts",

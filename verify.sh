@@ -558,6 +558,45 @@ else
 fi
 rm -rf "$PROBE_TMP"
 
+# ...and prove the SHAPE branch of the harness fires, which is a different code
+# path from the one above. 1o-self plants an uncovered control and proves the
+# table is complete; this plants a WRONG expectation in a row that exists, and
+# proves the comparison behind it. Three controls now depend on that branch
+# (extra-plugins, sample-content, theme) and until this it had never been seen
+# to fail. Uses PROBE_TABLE, which was already there and unused.
+SHAPE_TMP=$(mktemp -d)
+python3 - "$SHAPE_TMP/probes.json" <<'PY_SHAPE'
+import json, sys
+table = json.load(open("test/fixtures/control-probes.json"))
+for row in table["probes"]:
+    if row["input"] == "theme":
+        # The theme is installed, activated, and proved active. Claim it is
+        # merely installed: a harness that is not really comparing the step
+        # list will accept that.
+        row["expect_steps_added"] = ["installMoodlePlugin"]
+        break
+else:
+    sys.exit("1u/shape plant: no theme row to break")
+json.dump(table, open(sys.argv[1], "w"))
+PY_SHAPE
+if [[ $? -ne 0 ]]; then
+    echo "CHECK 1o-shape FAIL: the plant could not be built"
+    FAILED+=("1o-shape: the plant could not be built")
+else
+    SHAPE_OUT=$(PROBE_TABLE="$SHAPE_TMP/probes.json" python3 scripts/probe-controls.py 2>&1)
+    SHAPE_RC=$?
+    if [[ $SHAPE_RC -eq 0 ]]; then
+        echo "CHECK 1o-shape FAIL: the harness ACCEPTED a row declaring the wrong steps"
+        FAILED+=("1o-shape: the step-list comparison does not fire")
+    elif [[ "$SHAPE_OUT" != *"theme"* || "$SHAPE_OUT" != *"setTheme"* ]]; then
+        echo "CHECK 1o-shape FAIL: it failed for the WRONG reason — $SHAPE_OUT"
+        FAILED+=("1o-shape: failed for an unrelated reason")
+    else
+        echo "CHECK 1o-shape PASS: the step-list comparison names the row and the missing step"
+    fi
+fi
+rm -rf "$SHAPE_TMP"
+
 # Every action/workflow file must parse, and every output the preview script
 # sets must be DECLARED by the action — an undeclared output silently arrives
 # as an empty string in the caller's comment. (The action itself is only truly

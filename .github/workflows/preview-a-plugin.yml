@@ -8,7 +8,7 @@
 # single form with a "source" selector would show eight irrelevant boxes. The
 # Actions sidebar is the selector, for free.
 #
-# THIRTEEN FIELDS, of a planned twenty. A review panel cut an earlier draft to
+# FOURTEEN FIELDS, of a planned twenty. A review panel cut an earlier draft to
 # five; David restored `login-as`, the counts, and `php-version` — the last one
 # restricted to the versions each Moodle branch actually accepts, and REFUSED
 # rather than silently substituted when the pair is invalid, which is what the
@@ -75,12 +75,23 @@ on:
         required: false
         type: string
         default: ""
+      theme:
+        description: >-
+          Look at the plugin under a real theme instead of stock Boost. ONE
+          theme, written owner/repo@ref#theme_name (e.g.
+          moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_405_STABLE#theme_boost_union).
+          Blank = Boost. Leave it blank when the plugin under review IS a theme;
+          the preview already switches to it. The repository must be PUBLIC —
+          the reviewer's browser downloads it with no credentials.
+        required: false
+        type: string
+        default: ""
       data-hosts:
         description: >-
           Hosts the preview may download plugins from, comma separated. Blank
           means github.com,raw.githubusercontent.com. Widen it only if an extra
-          plugin lives somewhere else — a university host, GitLab, the Moodle
-          plugins directory.
+          plugin or the theme lives somewhere else — a university host, GitLab,
+          the Moodle plugins directory.
         required: false
         type: string
         default: ""
@@ -185,6 +196,7 @@ jobs:
           sample-content: ${{ inputs.sample-content }}
           restore-course-url: ${{ inputs.restore-course-url }}
           extra-plugins: ${{ inputs.extra-plugins }}
+          theme: ${{ inputs.theme }}
           # Blank is meaningful, and NOT the same as omitting the key: an input
           # passed explicitly as "" stays "", so the action's own default never
           # applies. The builder reads an empty list as "use DEFAULT_DATA_HOSTS",

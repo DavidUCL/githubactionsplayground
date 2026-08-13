@@ -1326,3 +1326,107 @@ test("the warm-up reads the theme from $CFG, never the literal the runtime hardc
   assert.match(code, /\$CFG->theme/);
   assert.equal(/'boost'/.test(code), false, "the warm-up hardcodes a theme name");
 });
+
+// ---------------------------------------------------------------------------
+// planInstalls, with the network stubbed. The golden snapshots pin what
+// buildBlueprint does with a themeName; these pin what planInstalls DECIDES the
+// themeName is — which is a different question and the one Phil warned about.
+// `setTheme` writes its value straight into set_config('theme', ...), and
+// Moodle then looks for a directory of exactly that name, so a component or a
+// repository name there is silent stock Boost.
+
+const THEME_COMMIT = "649c2d7b22fee1de767d145b7ec5a95543e9a305";
+const THEME_COORD = `moodle-an-hochschulen/moodle-theme_boost_union@${THEME_COMMIT}#theme_boost_union`;
+
+/** Serves the three files the pipeline reads, and 404s anything else, so a
+ * request nobody expected is a visible failure rather than a silent undefined. */
+const stubHost = ({ version, config } = {}) => async (url, opts = {}) => {
+  if (opts.method === "HEAD") return { ok: true, status: 200 };
+  if (url.endsWith("/version.php")) {
+    return {
+      ok: true,
+      text: async () =>
+        version ?? "<?php\n$plugin->component = 'theme_boost_union';\n$plugin->version = 2025041477;\n",
+    };
+  }
+  if (url.endsWith("/config.php")) {
+    return { ok: true, text: async () => config ?? "<?php\n$THEME->parents = ['boost'];\n" };
+  }
+  return { ok: false, status: 404 };
+};
+
+const planned = async (opts = {}) => {
+  const { Problems, planInstalls, planThemeControl } = await import("../scripts/build-preview.mjs");
+  const problems = new Problems();
+  const core = { ok: true, standard: new Set(["theme_boost"]), removedTypes: new Set() };
+  const self = { type: "mod", name: "attendance", declared: null };
+  const { item } = planThemeControl({ raw: opts.raw ?? THEME_COORD, self, core, problems });
+  const out = await planInstalls({
+    raw: "",
+    theme: item,
+    self,
+    headRepo: "DavidUCL/moodle-mod_attendance",
+    headSha: SHA,
+    moodleBranch: "MOODLE_500_STABLE",
+    core,
+    problems,
+    fetchImpl: stubHost(opts),
+  });
+  return { ...out, problems: problems.list.map((p) => `${p.input}: ${p.message}`) };
+};
+
+test("planInstalls hands setTheme the plugin NAME, not the component", async () => {
+  const out = await planned();
+  assert.deepEqual(out.problems, []);
+  assert.equal(out.themeName, "boost_union");
+});
+
+test("the theme is installed like any other plugin, into theme/", async () => {
+  const out = await planned();
+  const theme = out.installs.find((i) => i.pluginType === "theme");
+  assert.ok(theme, "no theme install step was planned");
+  assert.equal(theme.pluginName, "boost_union");
+  assert.match(theme.url, new RegExp(`/archive/${THEME_COMMIT}\\.zip$`));
+  // Before the plugin under review, which is what the ordering exists for.
+  assert.ok(out.installs.indexOf(theme) < out.installs.findIndex((i) => i.isSelf));
+});
+
+test("the theme is reported at full commit length, and not in the extras list", async () => {
+  const out = await planned();
+  assert.equal(out.themeSummary, `theme_boost_union@${THEME_COMMIT}`);
+  // Listing it twice would read as two plugins; the extras list is for extras.
+  assert.equal(out.list, "");
+});
+
+test("a theme whose config.php sets no parents is refused, and plans nothing", async () => {
+  const out = await planned({ config: "<?php\n$THEME->name = 'boost_union';\n" });
+  assert.equal(out.themeName, "");
+  assert.ok(out.problems.some((p) => /never sets \$THEME->parents/.test(p)), out.problems.join("; "));
+  // The refusal is annotated against the box that caused it.
+  assert.ok(out.problems.every((p) => p.startsWith("theme:")), out.problems.join("; "));
+});
+
+test("a theme declaring a different component to the one named is refused", async () => {
+  const out = await planned({
+    version: "<?php\n$plugin->component = 'theme_something_else';\n$plugin->version = 1;\n",
+  });
+  assert.equal(out.themeName, "");
+  assert.ok(out.problems.some((p) => /theme_something_else/.test(p)), out.problems.join("; "));
+});
+
+test("a theme whose parent is neither core nor installed is refused", async () => {
+  const out = await planned({ config: "<?php\n$THEME->parents = ['some_missing_parent'];\n" });
+  assert.equal(out.themeName, "");
+  assert.ok(
+    out.problems.some((p) => /theme_some_missing_parent/.test(p)),
+    out.problems.join("; "),
+  );
+});
+
+test("no theme box plans no theme at all", async () => {
+  const out = await planned({ raw: "" });
+  assert.deepEqual(out.problems, []);
+  assert.equal(out.themeName, "");
+  assert.equal(out.themeSummary, "");
+  assert.equal(out.installs.length, 1);
+});

@@ -132,6 +132,28 @@ inputs:
       later, in front of the reviewer.
     required: false
     default: ""
+  theme:
+    description: >-
+      Look at the plugin under a real theme instead of stock Boost. ONE theme,
+      written owner/repo@ref#theme_name — for example
+      moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_405_STABLE#theme_boost_union.
+      Leave blank for Boost.
+
+      Not needed when the plugin under review IS a theme: the preview already
+      switches to it, and filling this box as well is refused rather than
+      silently overriding it, because only one theme can be active.
+
+      The repository must be PUBLIC. The reviewer's browser downloads the
+      archive with no credentials, so a private institutional theme cannot be
+      previewed here at all.
+
+      Checked when the link is built: the commit and archive must exist, the
+      component must be a theme and not one of Moodle's own, and its config.php
+      must set $THEME->parents — a theme that does not is not a theme to
+      Moodle, and would render stock Boost with nothing in the log. The
+      preview then proves the theme is really active before you arrive.
+    required: false
+    default: ""
   data-hosts:
     description: >-
       Comma-separated hosts that URLs inside the blueprint may point at —
@@ -228,6 +250,7 @@ runs:
         SAMPLE_CONTENT: ${{ inputs.sample-content }}
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
         EXTRA_PLUGINS: ${{ inputs.extra-plugins }}
+        THEME: ${{ inputs.theme }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out
