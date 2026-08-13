@@ -79,7 +79,7 @@ on:
         description: >-
           Look at the plugin under a real theme instead of stock Boost. ONE
           theme, written owner/repo@ref#theme_name (e.g.
-          moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_405_STABLE#theme_boost_union).
+          moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_500_STABLE#theme_boost_union).
           Blank = Boost. Leave it blank when the plugin under review IS a theme;
           the preview already switches to it. The repository must be PUBLIC —
           the reviewer's browser downloads it with no credentials.
@@ -89,9 +89,10 @@ on:
       data-hosts:
         description: >-
           Hosts the preview may download plugins from, comma separated. Blank
-          means github.com,raw.githubusercontent.com. Widen it only if an extra
-          plugin or the theme lives somewhere else — a university host, GitLab,
-          the Moodle plugins directory.
+          means github.com,raw.githubusercontent.com. Extra plugins and themes
+          are GitHub-only whatever this says — their address is a GitHub
+          coordinate — so widen it only for a URL you paste in full, such as a
+          course backup on a university host.
         required: false
         type: string
         default: ""

@@ -682,6 +682,38 @@ else
         echo "CHECK 1u-self PASS: 1u names the input that is wired to nothing"
     fi
 fi
+
+# ...and the second thing 1u claims: two boxes crossed. Plant a form that hands
+# `theme` the value of `extra-plugins` — both names are still referenced, so the
+# rule above is satisfied and only the cross-wiring rule can catch it.
+python3 - "$FWD_TMP/crossed.yml" <<'PY_CROSS'
+import sys
+src = open(".github/workflows/preview-a-plugin.yml").read()
+planted = src.replace(
+    "          theme: ${{ inputs.theme }}\n",
+    "          theme: ${{ inputs.extra-plugins }}\n          landing-path: ${{ inputs.theme }}\n",
+    1,
+)
+if planted == src:
+    sys.exit("1u-self: could not plant — the theme forwarding line has moved")
+open(sys.argv[1], "w").write(planted)
+PY_CROSS
+if [[ $? -ne 0 ]]; then
+    echo "CHECK 1u-cross FAIL: the plant could not be built"
+    FAILED+=("1u-cross: the plant could not be built")
+else
+    CROSS_OUT=$(FORWARD_WORKFLOWS="$FWD_TMP/crossed.yml" python3 scripts/check-forwarding.py 2>&1)
+    CROSS_RC=$?
+    if [[ $CROSS_RC -eq 0 ]]; then
+        echo "CHECK 1u-cross FAIL: 1u PASSED a form with two boxes crossed"
+        FAILED+=("1u-cross: the cross-wiring check does not fire")
+    elif [[ "$CROSS_OUT" != *"crossed"* ]]; then
+        echo "CHECK 1u-cross FAIL: it failed for the WRONG reason — $CROSS_OUT"
+        FAILED+=("1u-cross: failed for an unrelated reason")
+    else
+        echo "CHECK 1u-cross PASS: 1u names the two boxes that were crossed"
+    fi
+fi
 rm -rf "$FWD_TMP"
 
 # A push workflow that defines ONLY tags/tags-ignore never runs on a branch
@@ -990,10 +1022,10 @@ import("./scripts/restore-assert.mjs").then(async (m) => {
     # generate; this asserts what Moodle does with it.
     #
     # Measured 2026-08-13, each row a separate boot of the real host:
-    #   theme installed + activated   5/5 steps, no CSS-failure marker   ~34s
-    #   theme never installed         exit 31 at step 4/4                ~39s
-    #   site left on another theme    exit 32 at step 4/5                ~34s
-    #   theme dir with no parents     exit 33 at step 4/5                ~35s
+    #   theme installed + activated   all steps, no CSS-failure marker    ~34s
+    #   theme never installed         exit 31 at the assertion            ~39s
+    #   site left on another theme    exit 32 at the assertion            ~34s
+    #   theme dir with no parents     exit 33 at the assertion            ~35s
     #
     # The first row is the acceptance evidence for the control: it is the only
     # thing showing a real theme's SCSS builds here rather than crashing or
@@ -1023,7 +1055,11 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
   }
   const want = kase === "badparents" ? "faketheme" : "boost_union";
   steps.push({ step: "setTheme", name: kase === "wrongtheme" ? "classic" : want });
-  steps.push(m.buildThemeWarmup(want));
+  steps.push(m.buildThemeAssertion(want));
+  // Same order the builder uses, minus the login this bare blueprint has no
+  // users for: the assertion aborts on failure, the CSS build is last and
+  // non-critical, and setLandingPage completing is what "it all worked" means.
+  steps.push(m.buildThemeCssWarmup(want));
   steps.push({ step: "setLandingPage", path: "/" });
   const body = JSON.stringify({ preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps }, null, 2);
   fs.writeFileSync(`${process.env.TB_DIR}/blueprint.json`, body);
@@ -1040,11 +1076,22 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
         LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$TB_OUT" \
             BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/tb-$1.json" \
             node scripts/boot-capture.mjs >>/tmp/bv-verify-theme.log 2>&1
-        # The CSS-failure marker is grepped too: it exits 0 by design, so
-        # without looking for it a boot that produced an unstyled site would
-        # read here as a clean pass.
-        grep -oE 'failed with exit code [0-9]+|Blueprint step 5/5: setLandingPage|theme-css-build-failed' \
+        # TWO files, deliberately. Step outcomes are in boot-log.txt; the
+        # CSS-failure marker is written with error_log and lands in console.txt
+        # (measured: on a step that exits 0, `echo` reaches NEITHER file). The
+        # marker is grepped at all because it exits 0 by design — without it, a
+        # boot that produced an unstyled site would read here as a clean pass.
+        grep -oE 'failed with exit code [0-9]+|Blueprint step 6/6: setLandingPage' \
             "$TB_OUT/boot-log.txt" 2>/dev/null | head -1
+        # The marker grep is only evidence if the file it reads exists. Without
+        # this, a run that never wrote console.txt would report "no CSS-failure
+        # marker" — an absence of a file reading as an absence of a problem,
+        # which is the shape this repo keeps paying for.
+        if [[ ! -s "$TB_OUT/console.txt" ]]; then
+            echo "no-console-capture"
+        else
+            grep -o 'theme-css-build-failed' "$TB_OUT/console.txt" | head -1
+        fi
     }
     : >/tmp/bv-verify-theme.log
     TB_GOOD=$(tb_boot correct)
@@ -1053,6 +1100,8 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
     TB_PARENTS=$(tb_boot badparents)
     TB_PROBLEMS=""
     [[ "$TB_GOOD" == *"setLandingPage"* ]] || TB_PROBLEMS+="an installed, activated theme did not complete (got: ${TB_GOOD:-nothing}); "
+    [[ "$TB_GOOD" != *"theme-css-build-failed"* ]] || TB_PROBLEMS+="the theme's stylesheet did not build (got: ${TB_GOOD}); "
+    [[ "$TB_GOOD" != *"no-console-capture"* ]] || TB_PROBLEMS+="nothing captured the browser console, so the stylesheet check proved nothing; "
     [[ "$TB_MISSING" == *"exit code 31"* ]] || TB_PROBLEMS+="a theme that was never installed was not caught (got: ${TB_MISSING:-nothing}); "
     [[ "$TB_WRONG" == *"exit code 32"* ]] || TB_PROBLEMS+="a site left on another theme was not caught (got: ${TB_WRONG:-nothing}); "
     [[ "$TB_PARENTS" == *"exit code 33"* ]] || TB_PROBLEMS+="a theme Moodle silently refused to initialise was not caught (got: ${TB_PARENTS:-nothing}); "

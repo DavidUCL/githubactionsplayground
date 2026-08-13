@@ -30,6 +30,7 @@
 import {
   parseVersionPhp,
   checkMoodleCompatibility,
+  blankComments,
   MAX_VERSION_PHP_BYTES,
 } from "./plugin-version.mjs";
 import { COMMIT_RE, coordinateZipUrl } from "./coordinates.mjs";
@@ -368,6 +369,12 @@ export async function fetchThemeParents(item, { fetchImpl = fetch } = {}) {
 
 /** `$THEME->parents = ['boost'];` — the value is everything up to the `;`. */
 const PARENTS_ASSIGNMENT = /\$THEME\s*->\s*parents\s*=\s*([^;]*);/g;
+/** `$THEME->parents[] = 'boost';` — an APPEND, which the assignment regex
+ * cannot see (the character after `parents` is `[`, not `=`). Measured: a
+ * literal assignment plus a conditional append was read as the literal alone,
+ * so the appended parent got no dependency edge and no warning either — the
+ * reviewer got exit 33 at boot instead of "add it to extra-plugins" at build. */
+const PARENTS_APPEND = /\$THEME\s*->\s*parents\s*\[\s*\]\s*=/;
 /** A literal list of theme names, `[...]` or `array(...)`, nothing computed. */
 const LITERAL_NAME_LIST = /^\s*(?:array\s*\(|\[)\s*((?:['"][a-z][a-z0-9_]*['"]\s*,\s*)*(?:['"][a-z][a-z0-9_]*['"]\s*,?\s*)?)(?:\)|\])\s*$/;
 
@@ -378,7 +385,16 @@ const LITERAL_NAME_LIST = /^\s*(?:array\s*\(|\[)\s*((?:['"][a-z][a-z0-9_]*['"]\s
  *
  * @returns {{ok: boolean, reason?: string, parents?: string[], note?: string}}
  */
-export function parseThemeParents(text, component = "the theme") {
+export function parseThemeParents(raw, component = "the theme") {
+  // COMMENTS FIRST, and with the string-aware blanker rather than a regex.
+  // Measured: `// $THEME->parents = array('boost');` — which is the commented
+  // boilerplate a theme skeleton ships with — was being read as a real
+  // declaration, so a theme that sets no parents at all cleared the refusal
+  // that exists to catch it. Sharing plugin-version.mjs's blanker rather than
+  // writing a second one: it already tracks strings and heredocs, because a
+  // `//` inside `'http://example.com'` is not a comment.
+  const text = blankComments(String(raw ?? ""));
+
   // Counted separately from the literal parse: `$THEME->parents[] = 'boost';`
   // appends rather than assigns, and would otherwise read as "no parents at
   // all" and be refused. Mentioning the property at all is enough to clear the
@@ -407,7 +423,7 @@ export function parseThemeParents(text, component = "the theme") {
     literal.push([...m[1].matchAll(/['"]([a-z][a-z0-9_]*)['"]/g)].map((n) => n[1]));
   }
 
-  if (literal.length === 1 && unparsed === 0) {
+  if (literal.length === 1 && unparsed === 0 && !PARENTS_APPEND.test(text)) {
     return { ok: true, parents: literal[0] };
   }
   return {

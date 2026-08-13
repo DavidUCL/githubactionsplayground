@@ -10,6 +10,11 @@
     "  url        preview-url in $GITHUB_OUTPUT must change",
     "  refusal    the probe value must be REFUSED, matching expect_error",
     "",
+    "expect_summary_contains asserts a LITERAL string reaches the summary. Needed",
+    "when the control is resolved before it is printed - `theme` prints",
+    "component@commit, never the coordinate typed - so expect_in_summary could",
+    "never match and the row would be unpinned.",
+    "",
     "expect_in_summary asserts the probe value reaches $GITHUB_STEP_SUMMARY.",
     "That is the assertion that catches a gutted writeSummary, which once left",
     "230/230 tests and 118/118 mutants green."
@@ -219,10 +224,12 @@
       "expect_steps_added": [
         "installMoodlePlugin",
         "runPhpCode",
+        "runPhpCode",
         "setTheme"
       ],
       "expect_steps_removed": [],
-      "note": "Changes the step LIST three ways at once: the theme is installed like any other plugin, setTheme activates it, and a runPhpCode proves it really is active before the reviewer arrives. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because everything about the coordinate is checked against reality - the commit, the archive, version.php AND config.php's $THEME->parents all have to be there. boost_union deliberately: it sets parents in both arms of a Workplace check, which is the case the parse must warn about rather than refuse, so this row would fail if that branch were ever tightened. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
+      "note": "Changes the step LIST three ways at once: the theme is installed like any other plugin, setTheme activates it, one runPhpCode proves it really is active before the reviewer arrives, and a second, non-critical one builds its stylesheet after login - split because a WASM heap abort in the compile would otherwise take the whole preview down. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because everything about the coordinate is checked against reality - the commit, the archive, version.php AND config.php's $THEME->parents all have to be there. boost_union deliberately: it sets parents in both arms of a Workplace check, which is the case the parse must warn about rather than refuse, so this row would fail if that branch were ever tightened. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it.",
+      "expect_summary_contains": "theme_boost_union@649c2d7b22fee1de767d145b7ec5a95543e9a305"
     },
     {
       "input": "data-hosts",

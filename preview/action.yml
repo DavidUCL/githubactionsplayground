@@ -136,7 +136,7 @@ inputs:
     description: >-
       Look at the plugin under a real theme instead of stock Boost. ONE theme,
       written owner/repo@ref#theme_name — for example
-      moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_405_STABLE#theme_boost_union.
+      moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_500_STABLE#theme_boost_union.
       Leave blank for Boost.
 
       Not needed when the plugin under review IS a theme: the preview already
@@ -158,9 +158,10 @@ inputs:
     description: >-
       Comma-separated hosts that URLs inside the blueprint may point at —
       plugin ZIPs, and anything else it fetches. Defaults to
-      "github.com,raw.githubusercontent.com". Widen it when the preview
-      installs plugins from elsewhere: a dependency on GitLab, a university
-      host, the Moodle plugins directory.
+      "github.com,raw.githubusercontent.com". Extra plugins and themes are
+      GitHub-only whatever this says, because their address is a GitHub
+      coordinate; widen it for a URL you paste in full, such as a course
+      backup on a university host.
 
       What protects the central claim when you widen this is NOT this input:
       it is that two plugin steps resolving to the same directory are refused

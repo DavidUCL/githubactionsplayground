@@ -226,6 +226,15 @@ def main():
             # This is the assertion that catches a gutted writeSummary.
             fail(f"{name}: probe value {row['probe']!r} never reaches GITHUB_STEP_SUMMARY")
 
+        # Some controls are RESOLVED before they are printed: `theme` prints
+        # `theme_boost_union@<40 hex>`, not the coordinate that was typed, so
+        # `expect_in_summary` can never match and the summary row would be
+        # unpinned — deleting it left the whole suite green. Declare the text
+        # that must appear instead.
+        want_text = row.get("expect_summary_contains")
+        if want_text and want_text not in res["summary"]:
+            fail(f"{name}: {want_text!r} never reaches GITHUB_STEP_SUMMARY")
+
     # 5. Two controls producing the identical diff are two names for one thing —
     # the exact shape of the env-swap bug. Compared on VALUES, not path sets:
     # `students` and `teachers` legitimately touch the same paths, so requiring

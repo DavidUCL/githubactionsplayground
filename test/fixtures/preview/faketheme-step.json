@@ -1,7 +1,7 @@
 {
   "_comment": [
-    "Test-only. Builds a directory that IS a theme by every cheap test — it",
-    "exists, it has a config.php, and the site setting can name it — but sets no",
+    "Test-only. Builds a directory that IS a theme by every cheap test \u2014 it",
+    "exists, it has a config.php, and the site setting can name it \u2014 but sets no",
     "$THEME->parents. Moodle's find_theme_config() returns null on that",
     "(theme_config.php:2107), load() falls back to Boost, and it says so only to",
     "a debugging(DEBUG_NORMAL) this runtime does not display.",
@@ -12,9 +12,14 @@
     "inside a single-quoted shell argument.",
     "",
     "It is never reachable from a preview link: the builder cannot emit an",
-    "arbitrary runPhpCode, and nothing reads this file outside the gate."
+    "arbitrary runPhpCode, and nothing reads this file outside the gate.",
+    "",
+    "Every write is CHECKED. It exited on is_dir() alone once, which meant a run",
+    "where config.php was never written still produced exit 33 \u2014 the right answer",
+    "for the wrong reason, and the evidence for the only missing-parent check would",
+    "not have been pinned to its cause."
   ],
   "step": "runPhpCode",
   "critical": true,
-  "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); $d=$CFG->dirroot.'/theme/faketheme'; @mkdir($d,0777,true); file_put_contents($d.'/config.php', '<?php $THEME->name = \"faketheme\";'); file_put_contents($d.'/version.php', '<?php $plugin->component=\"theme_faketheme\"; $plugin->version=2024010100;'); exit(is_dir($d) ? 0 : 1);"
+  "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); $d=$CFG->dirroot.'/theme/faketheme'; if(!@mkdir($d,0777,true) && !is_dir($d)) exit(41); if(file_put_contents($d.'/config.php', '<?php $THEME->name = \"faketheme\";') === false) exit(42); if(file_put_contents($d.'/version.php', '<?php $plugin->component=\"theme_faketheme\"; $plugin->version=2024010100;') === false) exit(43); if(!is_readable($d.'/config.php')) exit(44); exit(0);"
 }

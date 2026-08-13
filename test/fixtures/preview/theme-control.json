@@ -100,17 +100,23 @@
     },
     {
       "step": "setTheme",
-      "name": "boost_union"
+      "name": "boost_union",
+      "critical": true
     },
     {
       "step": "runPhpCode",
-      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; if(!is_dir($CFG->dirroot.'/theme/'.$t)) exit(31); if((string)($CFG->theme ?? '') !== $t) exit(32); try { $th = theme_config::load($t); } catch (Throwable $e) { exit(34); } if($th->name !== $t) exit(33); try { theme_build_css_for_themes(array($th), array(right_to_left() ? 'rtl' : 'ltr')); } catch (Throwable $e) { echo 'theme-css-build-failed: '.$e->getMessage(); } exit(0);",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; if(!is_dir($CFG->dirroot.'/theme/'.$t)) exit(31); if((string)($CFG->theme ?? '') !== $t) exit(32); try { $th = theme_config::load($t); } catch (Throwable $e) { exit(34); } if($th->name !== $t) exit(33); exit(0);",
       "critical": true
     },
     {
       "step": "login",
       "username": "teacher",
       "critical": true
+    },
+    {
+      "step": "runPhpCode",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; try { $th = theme_config::load($t); } catch (Throwable $e) { exit(0); } $dir = right_to_left() ? 'rtl' : 'ltr'; try { theme_build_css_for_themes(array($th), array($dir)); } catch (Throwable $e) { error_log('theme-css-build-failed: '.$e->getMessage()); exit(0); } $f = theme_get_css_filename($t, theme_get_revision(), theme_get_sub_revision_for_theme($t), $dir); $sz = is_readable($f) ? filesize($f) : -1; if($sz < 50000) error_log('theme-css-build-failed: '.$t.' produced '.$sz.' bytes of CSS (may be normal for a theme that ships plain CSS)'); exit(0);",
+      "critical": false
     },
     {
       "step": "setLandingPage",

@@ -1277,15 +1277,16 @@ test("the core-theme refusal is skipped, not guessed, when Moodle's list is abse
 // so the tests are about what it REFUSES and what it exits with.
 
 test("the warm-up refuses a name it cannot safely put in PHP", async () => {
-  const { buildThemeWarmup } = await import("../scripts/theme-assert.mjs");
+  const { buildThemeAssertion, buildThemeCssWarmup } = await import("../scripts/theme-assert.mjs");
   for (const bad of ["", "Boost", "boost-union", "boost union", "1boost", "boost';DROP", null, undefined]) {
-    assert.throws(() => buildThemeWarmup(bad), /unusable theme name/, `accepted ${JSON.stringify(bad)}`);
+    assert.throws(() => buildThemeAssertion(bad), /unusable theme name/, `accepted ${JSON.stringify(bad)}`);
+    assert.throws(() => buildThemeCssWarmup(bad), /unusable theme name/, `accepted ${JSON.stringify(bad)}`);
   }
 });
 
 test("the warm-up can only fail the boot the one way this runtime allows", async () => {
-  const { buildThemeWarmup } = await import("../scripts/theme-assert.mjs");
-  const step = buildThemeWarmup("boost_union");
+  const { buildThemeAssertion } = await import("../scripts/theme-assert.mjs");
+  const step = buildThemeAssertion("boost_union");
   assert.equal(step.step, "runPhpCode");
   assert.equal(step.critical, true);
   // Measured: without CLI_SCRIPT defined BEFORE config.php is required, a
@@ -1302,10 +1303,10 @@ test("the warm-up can only fail the boot the one way this runtime allows", async
 });
 
 test("the warm-up aborts on both silent-Boost failures and on neither visible one", async () => {
-  const { buildThemeWarmup, THEME_CODES, THEME_CSS_FAILURE_MARKER } = await import(
-    "../scripts/theme-assert.mjs"
-  );
-  const { code } = buildThemeWarmup("boost_union");
+  const { buildThemeAssertion, buildThemeCssWarmup, THEME_CODES, THEME_CSS_FAILURE_MARKER } =
+    await import("../scripts/theme-assert.mjs");
+  const { code } = buildThemeAssertion("boost_union");
+  const css = buildThemeCssWarmup("boost_union").code;
   // Four silent-Boost failures, all invisible to a reviewer, so all four must
   // take the boot down. 33 is the one that catches a MISSING PARENT THEME:
   // theme_config::load() falls back and returns a config named something else.
@@ -1316,16 +1317,27 @@ test("the warm-up aborts on both silent-Boost failures and on neither visible on
   // The fallback is detected by NAME, not by assuming load() throws — it does
   // not throw for a non-default theme, it quietly returns a different one.
   assert.match(code, /\$th->name !== \$t/);
-  // A CSS build that throws leaves a working, unstyled site — visible on sight,
-  // and better than no preview. It must NOT be an exit code.
-  assert.match(code, new RegExp(`echo '${THEME_CSS_FAILURE_MARKER}`));
-  // ...and it is the ONLY thing in the step that does not exit non-zero.
-  assert.equal(code.includes(`${THEME_CSS_FAILURE_MARKER}'); exit(`), false);
+  // A failed stylesheet leaves a working, unstyled site — visible on sight, and
+  // better than no preview. It must NOT be an exit code.
+  assert.match(css, new RegExp(`error_log\\('${THEME_CSS_FAILURE_MARKER}`));
+  assert.equal(new RegExp(`${THEME_CSS_FAILURE_MARKER}[^;]*\\); exit\\([1-9]`).test(css), false);
+  // ...and the expensive step cannot cost the reviewer the preview itself: a
+  // WASM heap abort is not a PHP exception, so no try here can catch it.
+  assert.equal(buildThemeCssWarmup("boost_union").critical, false);
+  assert.equal(buildThemeAssertion("boost_union").critical, true);
+  // And it must be error_log, not echo: measured, on a step that exits 0 `echo`
+  // reaches neither boot-log.txt nor console.txt, so an `echo` here is a report
+  // nobody can read.
+  assert.equal(/echo '/.test(css), false, "the marker is echoed, which is invisible");
+  // A compile failure does NOT throw — Moodle catches it and writes a near-empty
+  // sheet — so the size of what was produced is the only real signal.
+  assert.match(css, /theme_get_css_filename/);
+  assert.match(css, /filesize/);
 });
 
 test("the warm-up reads the theme from $CFG, never the literal the runtime hardcodes", async () => {
-  const { buildThemeWarmup } = await import("../scripts/theme-assert.mjs");
-  const { code } = buildThemeWarmup("boost_union");
+  const { buildThemeAssertion } = await import("../scripts/theme-assert.mjs");
+  const { code } = buildThemeAssertion("boost_union");
   // bootstrap.js warms `boost` and only `boost`, before the blueprint runs.
   // Repeating that literal here would warm the wrong theme and leave the
   // reviewer's first page compiling SCSS in WASM.
@@ -1435,4 +1447,80 @@ test("no theme box plans no theme at all", async () => {
   assert.equal(out.themeName, "");
   assert.equal(out.themeSummary, "");
   assert.equal(out.installs.length, 1);
+});
+
+// A commented-out declaration is not a declaration. The theme skeleton every
+// Moodle theme is copied from ships `// $THEME->parents = array('boost');` as
+// boilerplate, and reading that as real cleared the one refusal that exists to
+// catch a theme with no parents at all.
+test("a commented-out $THEME->parents is not read as a declaration", async () => {
+  const { parseThemeParents } = await import("../scripts/extras.mjs");
+  const v = parseThemeParents(
+    "<?php\n// $THEME->parents = array('boost');\n$THEME->name = 'x';\n",
+    "theme_x",
+  );
+  assert.equal(v.ok, false);
+  assert.match(v.reason, /never sets \$THEME->parents/);
+});
+
+// An APPEND is invisible to the assignment regex (the character after
+// `parents` is `[`, not `=`), so a literal plus a conditional append was read as
+// the literal alone: the appended parent got no dependency edge AND no warning,
+// and the reviewer met it as exit 33 at boot instead of a sentence at build.
+test("an appended parent makes the parse say it cannot tell", async () => {
+  const { parseThemeParents } = await import("../scripts/extras.mjs");
+  const v = parseThemeParents(
+    "<?php\n$THEME->parents = ['boost'];\nif ($x) { $THEME->parents[] = 'other'; }\n",
+    "theme_x",
+  );
+  assert.equal(v.ok, true);
+  assert.deepEqual(v.parents, []);
+  assert.match(v.note, /runtime/);
+});
+
+test("a // inside a string is still not a comment", async () => {
+  const { parseThemeParents } = await import("../scripts/extras.mjs");
+  const v = parseThemeParents(
+    "<?php\n$THEME->docs = 'https://example.invalid/docs';\n$THEME->parents = ['boost'];\n",
+    "theme_x",
+  );
+  assert.deepEqual(v.parents, ["boost"]);
+});
+
+// Distinct exit codes are worthless if nothing prints what they mean.
+test("the run log explains the exit codes the builder assigns meaning to", async () => {
+  const { explainExitCodes } = await import("../scripts/assert.mjs");
+  const lines = explainExitCodes([
+    "runPhpCode failed with exit code 33",
+    "restore failed with exit code 23",
+    "something failed with exit code 99",
+  ]);
+  assert.equal(lines.length, 2, lines.join(" | "));
+  assert.match(lines[0], /33 means/);
+  assert.match(lines[0], /parent theme/);
+  assert.match(lines[1], /23 means/);
+  // 99 is not ours. Inventing a meaning would be worse than saying nothing.
+  assert.equal(lines.some((l) => l.includes("99")), false);
+});
+
+test("a clean boot log produces no exit-code explanations", async () => {
+  const { explainExitCodes } = await import("../scripts/assert.mjs");
+  assert.deepEqual(explainExitCodes(["Blueprint step 5/5: setLandingPage"]), []);
+  assert.deepEqual(explainExitCodes([]), []);
+});
+
+// The stylesheet step is non-critical and exits 0, so it cannot fail a verdict.
+// Without this it reaches nobody: it reports through error_log, which lands in
+// console.txt, which nothing else in the pipeline opens.
+test("a stylesheet that did not build is reported, and silence is not", async () => {
+  const { explainStylesheet } = await import("../scripts/assert.mjs");
+  const { THEME_CSS_FAILURE_MARKER } = await import("../scripts/theme-assert.mjs");
+  const note = explainStylesheet(
+    `[console:log] something\n[console:warning] [blueprint] runPhpCode errors: ${THEME_CSS_FAILURE_MARKER}: boost_union produced 412 bytes of CSS\n`,
+  );
+  assert.match(note, /unstyled/);
+  assert.match(note, /412 bytes/);
+  assert.equal(explainStylesheet("[console:log] all fine\n"), null);
+  assert.equal(explainStylesheet(""), null);
+  assert.equal(explainStylesheet(null), null);
 });

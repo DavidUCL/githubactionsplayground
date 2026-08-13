@@ -34,10 +34,19 @@ name must appear as `inputs.<name>` somewhere outside its own declaration" needs
 no exemptions, catches the scenario both reviewers described, and applies
 unchanged to every dispatch workflow rather than only to the one being edited.
 
-What it does NOT catch, stated so nobody reads more into a green line than is
-there: an input forwarded to the WRONG field. `theme: ${{ inputs.extra-plugins }}`
-references both names and passes. Check 1o is what covers that — it runs the
-builder twice per input and requires a distinct blueprint.
+It ALSO catches a cross-wiring, but only the kind it can see without an exempt
+list: when a `with:` key is itself the name of a declared input, its value must
+be that input. `theme: ${{ inputs.extra-plugins }}` is refused; `head-repo:
+${{ inputs.plugin-repo }}` is not even considered, because `head-repo` is not a
+box on this form. That needs no allowlist and no maintenance.
+
+Do NOT read this as "cross-wiring is covered". A `with:` key that is not also an
+input name — every renamed one — can still be wired to the wrong input and pass.
+Check 1o is what catches that class inside the ACTION (it runs the builder twice
+per input and requires a distinct blueprint), but 1o reads `preview/action.yml`
+and never opens `.github/workflows/`, so at the FORM layer the renamed keys are
+genuinely unguarded. Said plainly here because a comment claiming a guard that
+does not exist is worse than no comment, and this repo has shipped two of those.
 
 Usage:  python3 scripts/check-forwarding.py
         FORWARD_WORKFLOWS=<path>[,<path>...]   override the files scanned
@@ -55,8 +64,16 @@ import sys
 try:
     import yaml
 except ImportError:  # pragma: no cover - environment, not logic
-    print("1u: pyyaml unavailable — SKIPPED, not passed")
-    sys.exit(0)
+    # Exit 2, not 0. The docstring above promises this check never silently
+    # passes, and an environment that cannot parse YAML has not checked
+    # anything. Nothing pip-installs pyyaml — the ubuntu-latest image ships it
+    # and this workstation has it — so if this ever fires it is a broken
+    # environment to fix, not something to wave through. NOTE: verify.sh's four
+    # OTHER yaml blocks still `exit(0)` on ImportError and would pass having
+    # checked nothing. That is pre-existing and logged as a follow-up; it is not
+    # a reason to make this one lie too.
+    print("1u: pyyaml unavailable — the check did not run", file=sys.stderr)
+    sys.exit(2)
 
 
 def dispatch_inputs(doc):
@@ -76,11 +93,41 @@ def dispatch_inputs(doc):
     return inputs if isinstance(inputs, dict) else None
 
 
+# `          theme: ${{ inputs.theme }}` — a `with:` entry, indented under a
+# step. Read from the TEXT rather than the parsed YAML because the parse loses
+# which mapping a key came from once several steps have `with:` blocks, and this
+# only needs the pairs.
+#
+# `[ \t]`, NOT `\s`. Measured: `\s{6,}` matches newlines, so the block-opening
+# `with:` swallowed the line after it and the FIRST key of every `with:` block
+# was never cross-checked — a crossed pair placed at the top of the block passed
+# green. The key class is deliberately wide: an input named `theme_repo` or
+# `Theme` is legal, and a narrow class silently exempts it.
+WITH_ENTRY = re.compile(r"^[ \t]{6,}([A-Za-z_][A-Za-z0-9_-]*):[ \t]*(.*\$\{\{.*)$", re.M)
+# A whole line commented out. Not a general YAML comment stripper: a `#` can
+# appear inside a value, and this only needs to stop a commented-out forwarding
+# line from satisfying the reference search. Measured before it existed:
+# `# sections: ${{ inputs.sections }}` left the box wired to nothing and green.
+COMMENT_LINE = re.compile(r"^[ \t]*#.*$", re.M)
+
+
+def live_text(text):
+    """The file with wholly-commented lines blanked, offsets preserved."""
+    return COMMENT_LINE.sub(lambda m: " " * len(m.group(0)), text)
+
+
+def with_keys(text):
+    """Every `<key>: <value containing ${{ }}>` line, as pairs."""
+    return WITH_ENTRY.findall(text)
+
+
 def scan(path):
     """@returns (declared_input_count, problems). Raises on an unusable file."""
-    text = path.read_text()
+    raw = path.read_text()
+    # Everything below reads the LIVE text. A commented-out line is not wiring.
+    text = live_text(raw)
     try:
-        doc = yaml.safe_load(text)
+        doc = yaml.safe_load(raw)
     except yaml.YAMLError as err:
         raise RuntimeError(f"{path}: will not parse as YAML — {err}") from err
     if not isinstance(doc, dict):
@@ -91,6 +138,22 @@ def scan(path):
         return 0, []
 
     problems = []
+
+    # The cross-wiring this CAN see without an exempt list: a `with:` key that is
+    # itself the name of a box on this form must carry that box's value. Keys
+    # that are renamed on the way through (`head-repo:`) are not input names, so
+    # they are skipped automatically rather than listed.
+    for key, value in with_keys(text):
+        if key not in inputs:
+            continue
+        referenced = set(re.findall(r"inputs\.([A-Za-z0-9_-]+)", value))
+        if referenced and key not in referenced:
+            problems.append(
+                f'{path}: the step passes "{key}" the value of '
+                f'{", ".join(sorted(referenced))} — two boxes are crossed, so each '
+                f"silently does the other's job"
+            )
+
     for name in inputs:
         # The DECLARATION is `  theme:`; a REFERENCE is `${{ inputs.theme }}`.
         # Searching for the reference form is what keeps the declaration from
@@ -116,7 +179,10 @@ def main():
     if override:
         paths = [pathlib.Path(p) for p in override.split(",") if p]
     else:
-        paths = sorted(pathlib.Path(".github/workflows").glob("*.yml"))
+        # Both spellings. GitHub accepts `.yaml` and a form saved that way
+        # would be unscanned while the pass line still claimed every form.
+        d = pathlib.Path(".github/workflows")
+        paths = sorted(set(d.glob("*.yml")) | set(d.glob("*.yaml")))
 
     if not paths:
         print("1u: no workflow files found — the check did not run", file=sys.stderr)

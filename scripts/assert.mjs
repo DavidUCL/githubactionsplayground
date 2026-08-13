@@ -4,6 +4,8 @@
 // test/fixtures/golden-boot-log.txt.
 
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { ASSERT_CODES } from "./restore-assert.mjs";
+import { THEME_CODES, THEME_CSS_FAILURE_MARKER } from "./theme-assert.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ERROR_CLASSES } from "./validate-verdict.mjs";
@@ -39,6 +41,59 @@ const RESOLVER_FALLBACK_MARKERS = [
   // blueprint") logs this warning before falling back (observed live).
   "[blueprint] Failed to fetch ?blueprint-url=",
 ];
+
+/** Exit codes the BUILDER generates assertions for, and what each one means. */
+const BUILDER_EXIT_CODES = { ...ASSERT_CODES, ...THEME_CODES };
+/** `... failed with exit code 23`, as the boot log renders a non-zero exit. */
+const EXIT_CODE_RE = /failed with exit code (\d+)/;
+
+/**
+ * Turn the exit codes in a boot log into sentences.
+ *
+ * Only codes the builder itself assigns meaning to. A step failing with some
+ * other code is still a failure and still counted; it simply has no sentence
+ * here, and inventing one would be worse than saying nothing.
+ *
+ * @returns {string[]} one line per DISTINCT explainable code
+ */
+export function explainExitCodes(messages) {
+  const seen = new Set();
+  const out = [];
+  for (const msg of messages || []) {
+    const m = EXIT_CODE_RE.exec(String(msg));
+    // 0 is never reported as a failure, and `BUILDER_EXIT_CODES[0]` describes
+    // success — so a truthy-only lookup here would be right by accident. Take
+    // only codes that actually appear in a failure line.
+    if (!m || seen.has(m[1])) continue;
+    const meaning = BUILDER_EXIT_CODES[Number(m[1])];
+    if (!meaning) continue;
+    seen.add(m[1]);
+    out.push(`exit code ${m[1]} means: ${meaning}`);
+  }
+  return out;
+}
+
+/**
+ * The theme stylesheet report, if there is one.
+ *
+ * That step is NON-critical and exits 0 — deliberately, because an unstyled
+ * site is visible and survivable while a heap abort in the SCSS compile is not.
+ * So it cannot fail the verdict, and without this it reaches nobody: it reports
+ * through `error_log`, which lands in console.txt, which nothing else here
+ * opens.
+ *
+ * @returns {string|null}
+ */
+export function explainStylesheet(consoleText) {
+  for (const line of String(consoleText || "").split("\n")) {
+    if (!line.includes(THEME_CSS_FAILURE_MARKER)) continue;
+    return (
+      `the theme's stylesheet did not build — the site works but is unstyled ` +
+      `(${line.trim().slice(0, 200)})`
+    );
+  }
+  return null;
+}
 
 export function parseBootLog(raw) {
   const messages = [];
@@ -360,6 +415,21 @@ function main() {
   console.log(
     `verdict: ${v.status} (${v.error_class}) boot=${v.boot_ms}ms steps=${v.steps_ok} ok/${v.steps_failed} failed`,
   );
+  // Distinct exit codes are worthless if nothing ever prints what they mean.
+  // The builder generates two assertions of its own — the post-restore one and
+  // the theme one — and each signals through `exit(N)`, which reaches the boot
+  // log as the bare sentence "failed with exit code N". Nobody reading a job
+  // log knows what 23 or 33 is. Explained here rather than in the verdict:
+  // verdict.json has a closed schema, and this is for the person reading the
+  // run, not for a machine.
+  // Read from the boot log directly: `main()` does not hold the parse, and
+  // re-reading the file is what makes this work on every path that reaches a
+  // verdict rather than only the one that assessed a boot.
+  for (const line of explainExitCodes(parseBootLog(readIf(join(outDir, "boot-log.txt"))).messages)) {
+    console.log(`note: ${line}`);
+  }
+  const styles = explainStylesheet(readIf(join(outDir, "console.txt")));
+  if (styles) console.log(`note: ${styles}`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

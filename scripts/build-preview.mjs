@@ -25,7 +25,7 @@ import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
 import { gateBlueprint, assertNoPlaceholders, checkUrl } from "./preflight.mjs";
 import { buildRestoreAssertion } from "./restore-assert.mjs";
-import { buildThemeWarmup } from "./theme-assert.mjs";
+import { buildThemeAssertion, buildThemeCssWarmup } from "./theme-assert.mjs";
 import { checkCourseBackup } from "./mbz.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
@@ -709,8 +709,21 @@ export function buildBlueprint({
   // compiled lazily on the reviewer's first page view.
   const activeTheme = themeName || (type === "theme" ? name : "");
   if (activeTheme) {
-    steps.push({ step: "setTheme", name: activeTheme });
-    steps.push(buildThemeWarmup(activeTheme));
+    // `critical`, like everything else from createCategory onward. It was not,
+    // and the comment above claimed otherwise: on the DEPLOYED executor a
+    // non-critical failure is non-fatal (ADR-0005), so a setTheme that threw
+    // would let the boot carry on and the reviewer would get stock Boost. The
+    // warm-up below catches that case too, but a guard that only works because
+    // a later guard exists is one edit away from not working.
+    steps.push({ step: "setTheme", name: activeTheme, critical: true });
+    // The proof goes here, before login: everything it detects is invisible, so
+    // a failure must stop the link being produced at all. The CSS build is a
+    // SEPARATE, non-critical step further down — compiling a theme's SCSS is
+    // the most expensive thing in the blueprint and the likeliest to exhaust
+    // the WASM heap, and a heap abort is not catchable in PHP. With the two
+    // joined, that abort took the whole preview down; split, the reviewer gets
+    // an unstyled but working site, which is what this was always meant to do.
+    steps.push(buildThemeAssertion(activeTheme));
   }
   // Log in LAST, and as whoever can actually judge the landing page.
   //
@@ -731,6 +744,9 @@ export function buildBlueprint({
   // see the plugin as a learner, and nothing else lets you.
   const loginUser = loginAs || previewUser(landing);
   steps.push({ step: "login", username: loginUser, critical: true });
+  // Last, and non-critical. Everything the preview promises is done by now, so
+  // the expensive part cannot cost the reviewer the preview itself.
+  if (activeTheme) steps.push(buildThemeCssWarmup(activeTheme));
   steps.push({ step: "setLandingPage", path: landing });
 
 

@@ -148,8 +148,15 @@ export const DEFAULT_MOODLE_BRANCH = "MOODLE_500_STABLE";
  * false passes against today's 9 on a corpus of 960 real version.php files
  * checked against executed PHP. A deleted field parses as null, and null passes
  * every check, so getting this wrong is worse than not doing it.
+ *
+ * Exported because a theme's config.php needs exactly the same treatment (see
+ * `parseThemeParents` in extras.mjs). A second implementation is how one of them
+ * gets to be comment-blind: measured before this was shared, a config.php
+ * carrying only the commented-out boilerplate
+ * `// $THEME->parents = array('boost');` was read as declaring a real parent,
+ * which cleared the refusal that exists to catch exactly that theme.
  */
-function blankComments(src) {
+export function blankComments(src) {
   const out = src.split("");
   let i = 0;
   const n = src.length;
