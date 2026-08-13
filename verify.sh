@@ -1081,7 +1081,12 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
         # (measured: on a step that exits 0, `echo` reaches NEITHER file). The
         # marker is grepped at all because it exits 0 by design — without it, a
         # boot that produced an unstyled site would read here as a clean pass.
-        grep -oE 'failed with exit code [0-9]+|Blueprint step 6/6: setLandingPage' \
+        # EVERY terminal state, not just the two happy ones. This grep once
+        # matched only an exit code or the last step, so a boot that died at the
+        # download reported "nothing" — and "nothing" read as a check that had
+        # not been written properly rather than as the failure it was. It cost a
+        # red gate on main to notice. Silence is not success.
+        grep -oE 'failed with exit code [0-9]+|Blueprint step 6/6: setLandingPage|Blueprint failed at step [0-9]+:[a-zA-Z]+.*' \
             "$TB_OUT/boot-log.txt" 2>/dev/null | head -1
         # The marker grep is only evidence if the file it reads exists. Without
         # this, a run that never wrote console.txt would report "no CSS-failure
@@ -1098,16 +1103,44 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
     TB_MISSING=$(tb_boot notinstalled)
     TB_WRONG=$(tb_boot wrongtheme)
     TB_PARENTS=$(tb_boot badparents)
+    # TWO OF THE FOUR ARMS DEPEND ON A THIRD PARTY, AND THAT IS NOT OUR
+    # REGRESSION TO GO RED FOR. `correct` and `wrongtheme` download a real 2.6MB
+    # theme, and this runtime routes every github.com ZIP through
+    # github-proxy.exelearning.dev — a courtesy service with no SLA. Measured:
+    # it answered 502 for both arms on a GitHub runner while both passed on a
+    # workstation minutes earlier, and the boot log says
+    # "Blueprint failed at step 2:installMoodlePlugin: Failed to download plugin
+    # ZIP from https://github-proxy.exelearning.dev/...: 502".
+    #
+    # So those two arms WAIVE on a download failure, loudly, and never silently:
+    # a waiver prints what was not checked. The other two arms need no network
+    # at all and are NOT waivable — they are what proves the assertion can fail,
+    # and they still run when the proxy is down.
+    tb_download_died() { [[ "$1" == *"Failed to download plugin ZIP"* ]]; }
     TB_PROBLEMS=""
-    [[ "$TB_GOOD" == *"setLandingPage"* ]] || TB_PROBLEMS+="an installed, activated theme did not complete (got: ${TB_GOOD:-nothing}); "
-    [[ "$TB_GOOD" != *"theme-css-build-failed"* ]] || TB_PROBLEMS+="the theme's stylesheet did not build (got: ${TB_GOOD}); "
-    [[ "$TB_GOOD" != *"no-console-capture"* ]] || TB_PROBLEMS+="nothing captured the browser console, so the stylesheet check proved nothing; "
+    TB_WAIVED=""
+    if tb_download_died "$TB_GOOD"; then
+        TB_WAIVED+="the installed-and-activated arm; "
+    else
+        [[ "$TB_GOOD" == *"setLandingPage"* ]] || TB_PROBLEMS+="an installed, activated theme did not complete (got: ${TB_GOOD:-nothing}); "
+        [[ "$TB_GOOD" != *"theme-css-build-failed"* ]] || TB_PROBLEMS+="the theme's stylesheet did not build (got: ${TB_GOOD}); "
+        [[ "$TB_GOOD" != *"no-console-capture"* ]] || TB_PROBLEMS+="nothing captured the browser console, so the stylesheet check proved nothing; "
+    fi
+    if tb_download_died "$TB_WRONG"; then
+        TB_WAIVED+="the wrong-theme arm; "
+    else
+        [[ "$TB_WRONG" == *"exit code 32"* ]] || TB_PROBLEMS+="a site left on another theme was not caught (got: ${TB_WRONG:-nothing}); "
+    fi
+    # Not waivable: neither downloads anything.
     [[ "$TB_MISSING" == *"exit code 31"* ]] || TB_PROBLEMS+="a theme that was never installed was not caught (got: ${TB_MISSING:-nothing}); "
-    [[ "$TB_WRONG" == *"exit code 32"* ]] || TB_PROBLEMS+="a site left on another theme was not caught (got: ${TB_WRONG:-nothing}); "
     [[ "$TB_PARENTS" == *"exit code 33"* ]] || TB_PROBLEMS+="a theme Moodle silently refused to initialise was not caught (got: ${TB_PARENTS:-nothing}); "
     if [[ -n "$TB_PROBLEMS" ]]; then
         echo "CHECK 7 FAIL: the theme check is not doing its job — $TB_PROBLEMS"
         FAILED+=("7: theme activation check cannot fail")
+    elif [[ -n "$TB_WAIVED" ]]; then
+        echo "CHECK 7 WAIVED IN PART: the ZIP proxy would not serve the theme, so $TB_WAIVED"
+        echo "                       were UNCHECKED in this run. The two arms needing no"
+        echo "                       download still passed, so the assertion can still fail."
     else
         echo "CHECK 7 PASS: a real theme installs, activates and builds its CSS — and all three silent failures are caught"
     fi
