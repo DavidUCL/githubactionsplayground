@@ -218,6 +218,18 @@ def main():
             stray = {c for c in changed if c not in allowed}
             if stray:
                 fail(f"{name}: changed fields it does not declare: {sorted(stray)}")
+            # ...and the other direction. `expect_paths` was a CEILING only, so a
+            # path that stopped changing left the row quietly over-claiming: the
+            # table would still read as the record of what each control touches
+            # while the control had shrunk. Measured before adding this: all 20
+            # rows already observe every path they declare, so the tightening
+            # refuses nothing that passes today.
+            unmet = allowed - changed
+            if unmet:
+                fail(
+                    f"{name}: declares fields it does not change: {sorted(unmet)} — "
+                    f"either the control stopped touching them or the row is stale"
+                )
             signatures[name] = (frozenset(changed), tuple(sorted(changed_values(base["blueprint"], res["blueprint"]))))
         else:
             fail(f"{name}: unknown target {target!r}")

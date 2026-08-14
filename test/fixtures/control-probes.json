@@ -169,7 +169,8 @@
         "steps[*].enrolments[*]",
         "steps[*].users[*]"
       ],
-      "expect_in_summary": true
+      "expect_summary_contains": "5 student(s)",
+      "note": "expect_in_summary is VACUOUS for a one-digit probe and was measured to be: the baseline summary already contains \"5\" (MOODLE_500_STABLE) and \"2\" (&course=2&), so this row passed with writeSummary gutted - the exact bug the assertion exists to catch. Pin the sentence the summary actually prints instead."
     },
     {
       "input": "sections",
@@ -179,7 +180,8 @@
       "expect_paths": [
         "steps[*].numsections"
       ],
-      "expect_in_summary": true
+      "expect_summary_contains": "7 section(s)",
+      "note": "expect_in_summary is VACUOUS for a one-digit probe and was measured to be: the baseline summary already contains \"5\" (MOODLE_500_STABLE) and \"2\" (&course=2&), so this row passed with writeSummary gutted - the exact bug the assertion exists to catch. Pin the sentence the summary actually prints instead."
     },
     {
       "input": "plugin-root",

@@ -600,6 +600,57 @@ else
 fi
 rm -rf "$SHAPE_TMP"
 
+# ...and prove the third branch: `expect_paths` is now a floor as well as a
+# ceiling. It used to be a ceiling only, so a row could declare a field the
+# control had stopped touching and still pass — the table would read as the
+# record of what each control changes while no longer being one. The check and
+# this plant ship together: an unverified checker is this project's own recorded
+# failure mode, twice.
+#
+# BOTH the table and the action are trimmed to the single row under test. The
+# coverage check runs first and returns early, so a trimmed table against the
+# real action would fail with "has no probe row" for nineteen other inputs —
+# the wrong reason, and a plant that fails for the wrong reason proves nothing.
+# Trimming also takes this plant from ~13s to under 1s; the mutation harness has
+# already made CI time the scarce thing here.
+UNMET_TMP=$(mktemp -d)
+if python3 - "$UNMET_TMP" <<'PY_UNMET'
+import json, sys, yaml
+out = sys.argv[1]
+table = json.load(open("test/fixtures/control-probes.json"))
+row = next((r for r in table["probes"] if r["input"] == "sections"), None)
+if row is None:
+    sys.exit("1o-unmet plant: no sections row")
+# A field `sections` demonstrably does not touch. Declared but never observed is
+# exactly the stale-row shape.
+row["expect_paths"] = sorted(set(row["expect_paths"]) | {"steps[*].numsectionsXX"})
+table["probes"] = [row]
+json.dump(table, open(f"{out}/probes.json", "w"))
+# Derived from the real action, never hand-written: a hand-written copy drifts
+# from the file it stands in for and the plant starts testing a fiction.
+action = yaml.safe_load(open("preview/action.yml"))
+action["inputs"] = {k: v for k, v in action["inputs"].items() if k == "sections"}
+yaml.safe_dump(action, open(f"{out}/action.yml", "w"))
+PY_UNMET
+then
+    UNMET_OUT=$(PROBE_TABLE="$UNMET_TMP/probes.json" PROBE_ACTION="$UNMET_TMP/action.yml" \
+        python3 scripts/probe-controls.py 2>&1)
+    UNMET_RC=$?
+    if [[ $UNMET_RC -eq 0 ]]; then
+        echo "CHECK 1o-unmet FAIL: the harness ACCEPTED a row declaring a field the control never changes"
+        FAILED+=("1o-unmet: expect_paths is still a ceiling only")
+    elif [[ "$UNMET_OUT" != *"sections"* || "$UNMET_OUT" != *"numsectionsXX"* ]]; then
+        echo "CHECK 1o-unmet FAIL: it failed for the WRONG reason — $UNMET_OUT"
+        FAILED+=("1o-unmet: failed for an unrelated reason")
+    else
+        echo "CHECK 1o-unmet PASS: a declared-but-unchanged field names the row and the field"
+    fi
+else
+    echo "CHECK 1o-unmet FAIL: the plant could not be built"
+    FAILED+=("1o-unmet: the plant could not be built")
+fi
+rm -rf "$UNMET_TMP"
+
 # Every action/workflow file must parse, and every output the preview script
 # sets must be DECLARED by the action — an undeclared output silently arrives
 # as an empty string in the caller's comment. (The action itself is only truly

@@ -46,7 +46,13 @@ jobs:
   gate:
     name: verify.sh (offline + drift)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # 30, not 20. MEASURED 2026-08-14: this job runs 16m41s, and the last four
+    # runs took 21-22 minutes wall clock. The mutation harness runs the WHOLE
+    # unit suite once per mutant (457 tests x ~300 mutants), so one added second
+    # of suite time costs roughly five minutes here. At 20 the next control to
+    # land would have killed the job — and a timeout kill names no failing
+    # check, so it reads as flake and gets re-run rather than fixed.
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

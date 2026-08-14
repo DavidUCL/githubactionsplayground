@@ -79,8 +79,25 @@ const CASES = {
 
 for (const [name, opts] of Object.entries(CASES)) {
   test(`blueprint for a ${name} plugin matches its golden snapshot exactly`, () => {
-    const golden = JSON.parse(readFileSync(join(FIXTURES, `${name}.json`), "utf8"));
-    assert.deepEqual(buildBlueprint(opts), golden);
+    const goldenText = readFileSync(join(FIXTURES, `${name}.json`), "utf8");
+    const built = buildBlueprint(opts);
+    // deepEqual FIRST, because it is the assertion that explains itself: it
+    // prints the differing field, where a string comparison prints two walls of
+    // JSON. The serialisation check below is the one that is actually load-bearing.
+    assert.deepEqual(built, JSON.parse(goldenText));
+    // KEY ORDER IS PART OF THE CONTRACT, and deepEqual does not see it. The
+    // link is `gzipSync(JSON.stringify(blueprint))`, so swapping two properties
+    // of a user object changes every URL this action has ever produced while
+    // deepEqual, all 30 gate checks and the mutation harness stay green. That
+    // is not hypothetical: hoisting user construction into a helper is exactly
+    // the kind of tidy-up that reorders keys, and one is landing next.
+    assert.equal(
+      JSON.stringify(built, null, 2) + "\n",
+      goldenText,
+      `${name}: the blueprint's JSON text differs from the golden file. If only ` +
+        `the ORDER of keys moved, deepEqual above passed — and every preview URL ` +
+        `just changed.`,
+    );
   });
 }
 

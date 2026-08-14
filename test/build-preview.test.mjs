@@ -1524,3 +1524,116 @@ test("a stylesheet that did not build is reported, and silence is not", async ()
   assert.equal(explainStylesheet(""), null);
   assert.equal(explainStylesheet(null), null);
 });
+
+// ---- the counts, and the three places each one is written ----------------
+
+// THE BUG THIS EXISTS TO CATCH, measured before it was fixed. Every count used
+// to be written twice in JS — once as `buildBlueprint`'s parameter default and
+// once as `main()`'s `clampCount` fallback — and nothing compared them, because
+// `main()` always passes the count explicitly. So the parameter default was
+// exercised only by tests and the fallback only by real runs. Setting the
+// `students` fallback to 0 left all four golden snapshots, check 1o and the
+// whole unit suite green while every adopter of examples/pr-preview-workflow.yml
+// (which passes no counts) got a preview whose only learner did not exist and
+// whose last step died on MUST_EXIST.
+//
+// One table now makes that unrepresentable in JS. What a test still has to pin
+// is the THIRD copy, in preview/action.yml, because YAML cannot import.
+test("preview/action.yml's declared defaults agree with the one count table", async () => {
+  const { COUNT_INPUTS, clampCount } = await import("../scripts/build-preview.mjs");
+  const fs = await import("node:fs");
+  const yaml = fs.readFileSync(new global.URL("../preview/action.yml", import.meta.url), "utf8");
+
+  for (const [id, spec] of Object.entries(COUNT_INPUTS)) {
+    // The input's own block, up to the next top-level input. A bare search for
+    // `default:` would find whichever came first in the file.
+    const block = new RegExp(`\\n  ${id}:\\n([\\s\\S]*?)(?=\\n  [a-z][a-z0-9-]*:\\n|\\noutputs:)`).exec(yaml);
+    if (!block) continue; // not yet wired to the action — the count table leads
+    const declared = /default:\s*"([^"]*)"/.exec(block[1]);
+    assert.ok(declared, `preview/action.yml's "${id}" input declares no quoted default`);
+    assert.equal(
+      clampCount(declared[1], spec.fallback, spec.min, spec.max),
+      spec.fallback,
+      `preview/action.yml says ${id} defaults to "${declared[1]}", which is not ` +
+        `COUNT_INPUTS.${id}.fallback (${spec.fallback}). A caller who omits the ` +
+        `input and a caller who accepts the form default would get different previews.`,
+    );
+  }
+});
+
+test("every count input the action declares has a row in the count table", async () => {
+  const { COUNT_INPUTS } = await import("../scripts/build-preview.mjs");
+  const fs = await import("node:fs");
+  const yaml = fs.readFileSync(new global.URL("../preview/action.yml", import.meta.url), "utf8");
+  // The reverse direction. Without it, deleting a row from the table leaves the
+  // loop above iterating over what is left and reporting a clean pass.
+  for (const id of ["students", "sections"]) {
+    assert.ok(
+      new RegExp(`\\n  ${id}:\\n`).test(yaml),
+      `preview/action.yml no longer declares "${id}" — if it was renamed, rename its COUNT_INPUTS row too`,
+    );
+    assert.ok(COUNT_INPUTS[id], `COUNT_INPUTS has no row for the declared input "${id}"`);
+  }
+});
+
+// ---- the account roster --------------------------------------------------
+
+test("the first teacher keeps the bare name every shared link already uses", async () => {
+  const { teacherNames } = await import("../scripts/build-preview.mjs");
+  assert.deepEqual(teacherNames(0), []);
+  assert.deepEqual(teacherNames(1), ["teacher"]);
+  assert.deepEqual(teacherNames(2), ["teacher", "teacher2"]);
+  // NOT teacher1. `login-as` validates against this name, and so does every
+  // saved `gh workflow run` command and every link already pasted into a pull
+  // request. Symmetry with student1/student2 is not worth breaking them — and
+  // `teacher1` is what Moodle's own backup generators produce, so reserving it
+  // would refuse ordinary course backups.
+  assert.equal(teacherNames(2).includes("teacher1"), false);
+});
+
+test("the account list covers every name a reviewer may be signed in as", async () => {
+  const { accountNames } = await import("../scripts/build-preview.mjs");
+  const names = accountNames(3, 2);
+  // admin is made by installMoodle, not createUsers — absent it, `login-as:
+  // admin` is refused as a fictional account on every preview.
+  assert.deepEqual(names, ["admin", "teacher", "teacher2", "student1", "student2", "student3"]);
+  assert.deepEqual(accountNames(1, 0), ["admin", "student1"]);
+  assert.deepEqual(accountNames(1, 1), ["admin", "teacher", "student1"]);
+});
+
+test("a count that is not a number is not echoed raw into the runner log", async () => {
+  const { clampCount } = await import("../scripts/build-preview.mjs");
+  const said = [];
+  const real = console.log;
+  console.log = (...a) => said.push(a.join(" "));
+  try {
+    // A newline starts a new line of runner output at column 0, and `::` opens
+    // a workflow command there. Demonstrated before this was fixed: a count of
+    // this shape emitted an interpreted ::error:: annotation and an ::add-mask::
+    // that hid later output.
+    clampCount("x\n::error::forged\n::add-mask::secret", 1, 1, 20);
+  } finally {
+    console.log = real;
+  }
+  const all = said.join("\n");
+  assert.equal(all.includes("\n::"), false, `a workflow command reached column 0: ${JSON.stringify(all)}`);
+  assert.equal(all.includes("::error::"), false);
+  assert.equal(said.length, 1, "one note, not one per line of the value");
+});
+
+test("truncation and clamping are reported as the different things they are", async () => {
+  const { clampCount } = await import("../scripts/build-preview.mjs");
+  const said = [];
+  const real = console.log;
+  console.log = (...a) => said.push(a.join(" "));
+  try {
+    assert.equal(clampCount("2.9", 1, 1, 20), 2);
+  } finally {
+    console.log = real;
+  }
+  // It used to print "2.9 is outside 1-20", which is false twice: 2.9 is inside
+  // the range, and nothing was clamped. On the 0-2 teacher domain the old
+  // wording reads as a refusal — "0.5 is outside 0-2".
+  assert.equal(said.join(" ").includes("outside"), false, said.join(" "));
+  assert.match(said.join(" "), /not a whole number/);
+});

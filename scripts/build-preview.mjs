@@ -266,6 +266,31 @@ const COURSE_SHORTNAME = "REVIEW";
 const COURSE_ID = 2;
 
 /**
+ * The counted controls, in ONE place: the fallback when the box is empty, and
+ * the range a typed value is clamped to.
+ *
+ * There used to be two independent copies of every one of these numbers —
+ * `main()`'s `clampCount` arguments and `buildBlueprint`'s parameter defaults —
+ * and nothing compared them, because `main()` always passes the count
+ * explicitly. So the parameter default was exercised only by tests and the
+ * `main()` fallback only by real runs. MEASURED: changing the `main()` fallback
+ * for `students` to 0 leaves all four golden snapshots, check 1o and the whole
+ * unit suite green, while every adopter of `examples/pr-preview-workflow.yml`
+ * — which passes no counts — gets a preview whose only enrolled learner does
+ * not exist. A test comparing two constants would have caught that; one
+ * constant makes it unrepresentable, which is better. What a test still has to
+ * pin is the THIRD copy, in `preview/action.yml`, since YAML cannot import.
+ */
+export const COUNT_INPUTS = {
+  // 0 is a legal teacher count and 1 is the shape every preview had before the
+  // control existed. The row is here rather than beside the control it serves
+  // so that the one place holding these numbers stays the one place.
+  teachers: { env: "TEACHERS", fallback: 1, min: 0, max: 2 },
+  students: { env: "STUDENTS", fallback: 1, min: 1, max: 20 },
+  sections: { env: "SECTIONS", fallback: 3, min: 1, max: 20 },
+};
+
+/**
  * Plugin identity from the repo name (`moodle-mod_foo` → mod/foo), unless the
  * caller states it. Inference is a convenience, never a dependency: the
  * blueprint always carries the resolved values explicitly, because the
@@ -401,18 +426,61 @@ export function clampCount(raw, fallback, min, max) {
   const s = String(raw ?? "").trim();
   if (s === "") return fallback;
   const n = Number(s);
+  // sanitiseForLog, NOT the raw string. This value comes from an env var the
+  // composite action accepts as free text, and a newline in it starts a new
+  // line of runner output at column 0. Demonstrated:
+  // STUDENTS=$'2\n::error::…\n::add-mask::secret' emitted interpreted workflow
+  // commands — a forged annotation, and a mask that hides later output.
   if (!Number.isFinite(n)) {
-    console.log(`note: "${s}" is not a number — using ${fallback}`);
+    console.log(`note: ${JSON.stringify(sanitiseForLog(s).slice(0, 40))} is not a number — using ${fallback}`);
     return fallback;
   }
-  const clamped = Math.max(min, Math.min(max, Math.trunc(n)));
-  if (clamped !== n) console.log(`note: ${n} is outside ${min}-${max} — using ${clamped}`);
+  // Truncation and clamping are DIFFERENT and used to print the same sentence:
+  // 2.9 reported "2.9 is outside 1-20 — using 2", which is false twice over (it
+  // is inside the range, and nothing was clamped). On a 0-2 domain the old
+  // wording is worse still — "0.5 is outside 0-2" reads as a refusal.
+  const truncated = Math.trunc(n);
+  if (truncated !== n) console.log(`note: ${n} is not a whole number — using ${truncated}`);
+  const clamped = Math.max(min, Math.min(max, truncated));
+  if (clamped !== truncated) {
+    console.log(`note: ${truncated} is outside ${min}-${max} — using ${clamped}`);
+  }
   return clamped;
 }
 
 export function studentNames(n) {
   const count = Math.max(1, Math.min(20, Number(n) || 1));
   return Array.from({ length: count }, (_, i) => `student${i + 1}`);
+}
+
+/**
+ * teacher, teacher2 — NOT teacher1, teacher2.
+ *
+ * The first one keeps the bare name it has always had: `login-as` validates
+ * against it, and every link and saved `gh workflow run` command already shared
+ * uses it. Renaming it to `teacher1` for symmetry would break all of them, and
+ * would additionally reserve the commonest teacher username in real course
+ * backups — Moodle's own backup generators produce `teacher1`
+ * (`test/mbz.test.mjs`), and a reserved name is a refused backup.
+ */
+export function teacherNames(n) {
+  const { min, max } = COUNT_INPUTS.teachers;
+  const count = Math.max(min, Math.min(max, Number(n) || 0));
+  return Array.from({ length: count }, (_, i) => (i === 0 ? "teacher" : `teacher${i + 1}`));
+}
+
+/**
+ * Every account name the preview may sign a reviewer in as, at the given
+ * counts. `admin` is made by `installMoodle` itself, not by `createUsers`.
+ *
+ * ONE definition, deliberately. This list was hand-copied at three sites — the
+ * `login-as` name check, the follow-up count check, and the `.mbz` collision
+ * refusal — and a name added to one and not another is silent in BOTH
+ * directions: a valid account reported as nonexistent, or a colliding username
+ * waved through into the half-built site that collision check exists to stop.
+ */
+export function accountNames(students, teachers) {
+  return ["admin", ...teacherNames(teachers), ...studentNames(students)];
 }
 
 export function previewUser(landing) {
@@ -483,10 +551,10 @@ export function buildBlueprint({
   builtBy = "",
   phpOverride = "",
   loginAs = "",
-  // Defaults MUST match preview/action.yml and main(): one student, three
-  // sections — the shape every preview had before these became adjustable.
-  students = 1,
-  sections = 3,
+  // From the one table, so this default and main()'s fallback cannot drift
+  // apart — they used to be separate literals that nothing compared.
+  students = COUNT_INPUTS.students.fallback,
+  sections = COUNT_INPUTS.sections.fallback,
   // {url, info} from mbz.mjs when a course backup is being restored.
   restore = null,
   // Every plugin this preview installs, ALREADY IN INSTALL ORDER, one entry per
@@ -1335,7 +1403,11 @@ async function main() {
   if (phpOk.ok && phpOk.reason) console.log(`note: ${phpOk.reason}`);
 
   const loginAs = opt(process.env.LOGIN_AS);
-  if (loginAs && !studentNames(20).concat("admin", "teacher").includes(loginAs)) {
+  // The NAME check runs against the maximum of every count, so an account this
+  // preview could have made is never reported as fictional. Whether it was
+  // actually made at the CHOSEN counts is the separate check below.
+  const everyName = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.fallback);
+  if (loginAs && !everyName.includes(loginAs)) {
     problems.add(
       "login-as",
       `must be admin, teacher or student1..student20 — those are the ` +
@@ -1345,14 +1417,18 @@ async function main() {
   // Clamped HERE, not inside studentNames(), so the summary reports the number
   // actually created. It used to print the raw input: "-5 student(s)" while
   // building 1, "999" while building 20.
-  const students = clampCount(process.env.STUDENTS, 1, 1, 20);
-  const sections = clampCount(process.env.SECTIONS, 3, 1, 20);
+  const count = (id) => {
+    const c = COUNT_INPUTS[id];
+    return clampCount(process.env[c.env], c.fallback, c.min, c.max);
+  };
+  const students = count("students");
+  const sections = count("sections");
   // Asking to arrive as a student the blueprint never made is a refusal, not a
   // login failure at boot — phpLogin does MUST_EXIST and would abort there.
   // Only when the NAME itself was valid. Otherwise `student99` produced two
   // rows for one field, the second advising the user to raise a count whose
   // maximum is 20.
-  const loginAsNameOk = !loginAs || studentNames(20).concat("admin", "teacher").includes(loginAs);
+  const loginAsNameOk = !loginAs || everyName.includes(loginAs);
   if (loginAsNameOk && loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
     problems.add(
       "login-as",
@@ -1436,13 +1512,25 @@ async function main() {
               // by booting: the restore succeeded, the assertion passed, and
               // createUsers died with exit code 1 five steps in, leaving a
               // half-built site. Refuse at link-build time instead.
-              const mine = ["admin", "teacher", ...studentNames(20)];
+              // The MAXIMUM of every count, not the counts actually chosen. A
+              // list computed from the chosen counts is a second expression for
+              // "who gets created", and every way it can drift lands on the
+              // ACCEPT side — which is the half-built site this refusal exists
+              // to prevent. Reserving a name the preview did not make costs one
+              // avoidable refusal with a readable reason; the other direction
+              // costs a boot that dies five steps in.
+              const mine = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.fallback);
               const clash = (verdict.info.usernames ?? []).filter((u) => mine.includes(u));
               if (clash.length) {
                 problems.add(
                   "restore-course-url",
-                  `the backup creates user(s) ${clash.join(", ")}, which the preview also ` +
-                    `creates — createUsers would fail mid-boot and leave a half-built site. ` +
+                  // "reserves", not "also creates". At the default counts the
+                  // preview does not create student5 — but it may, so the name
+                  // is refused, and the old wording made that a plain untruth.
+                  `the backup creates user(s) ${clash.join(", ")}, which the preview reserves ` +
+                    `for its own accounts (${mine.filter((n) => !n.startsWith("student")).join(", ")}, ` +
+                    `student1-student${COUNT_INPUTS.students.max}) — ` +
+                    `createUsers would fail mid-boot and leave a half-built site. ` +
                     `Use a course backup whose users do not include ${clash.join(", ")}.`,
                 );
               } else {
