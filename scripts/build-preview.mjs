@@ -412,6 +412,11 @@ export function landingPath(type, name, { restored = false } = {}) {
  */
 /** student1..studentN, clamped: the URL is size-bound and 20 is already more
  * than any review needs. */
+/** Surnames, so a participants list reads as people. The first is "Review",
+ * unchanged from before the count was adjustable — a display name is not a
+ * contract, but changing one for symmetry is churn a reviewer has to check. */
+const TEACHER_SURNAMES = ["Review", "Second"];
+
 const STUDENT_ORDINALS = [
   "One", "Two", "Three", "Four", "Five", "Six",
   "Seven", "Eight", "Nine", "Ten", "Eleven", "Twelve",
@@ -449,7 +454,14 @@ export function clampCount(raw, fallback, min, max) {
 }
 
 export function studentNames(n) {
-  const count = Math.max(1, Math.min(20, Number(n) || 1));
+  // Bounds from the table, like teacherNames. These were literals until a
+  // review measured the consequence: raising COUNT_INPUTS.students.max to 30
+  // left every test green while the summary claimed 25 student(s) over a
+  // blueprint that created 20, and the login-as refusal advertised a range of
+  // accounts that could not exist. Half a refactor is worse than none, because
+  // the remaining literal looks like it was considered.
+  const { min, max } = COUNT_INPUTS.students;
+  const count = Math.max(min, Math.min(max, Number(n) || min));
   return Array.from({ length: count }, (_, i) => `student${i + 1}`);
 }
 
@@ -483,8 +495,95 @@ export function accountNames(students, teachers) {
   return ["admin", ...teacherNames(teachers), ...studentNames(students)];
 }
 
-export function previewUser(landing) {
-  return String(landing).startsWith("/admin/") ? "admin" : "teacher";
+/**
+ * Everything wrong with a `login-as` value, given the counts chosen alongside
+ * it. Zero, one or two reasons; each names the FORM FIELD at fault.
+ *
+ * Pulled out of main() so it can be tested at all. It used to be three inline
+ * `if`s among forty other lines of env reading, reachable only by running the
+ * builder as a subprocess with a network — so the one thing here that is easy
+ * to get wrong (which combinations refuse, and what they say) was covered by
+ * nothing, and the mutation harness could not reach it either.
+ *
+ * NOT a replacement for the gate's own referential check. `checkReferences`
+ * refuses a blueprint whose `login` names a user no `createUsers` makes, and it
+ * must keep doing so — it is what protects a blueprint someone else supplies.
+ * This exists so the person who typed the value gets a sentence naming the two
+ * boxes that disagree, instead of "refusing to build a link from a blueprint
+ * our own gate rejects". Neither may be deleted because the other exists.
+ *
+ * @returns {string[]}
+ */
+export function checkLoginAs({ loginAs, teachers, students }) {
+  if (!loginAs) return [];
+  const reasons = [];
+  // Against the MAXIMUM of every count, so an account this preview could have
+  // made is never called fictional. Whether the CHOSEN counts made it is the
+  // separate question below — and reporting both at once produced two rows for
+  // one field, the second advising a count raise that cannot help.
+  const everyName = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.max);
+  if (!everyName.includes(loginAs)) {
+    return [
+      `must be admin, teacher, teacher2 or student1..student${COUNT_INPUTS.students.max} — ` +
+        `those are the only accounts the blueprint creates. Got: ${JSON.stringify(loginAs)}`,
+    ];
+  }
+  if (loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
+    reasons.push(
+      `${loginAs} but only ${students} student account(s) are created — raise the student count`,
+    );
+  }
+  if (loginAs.startsWith("teacher") && !teacherNames(teachers).includes(loginAs)) {
+    reasons.push(
+      teachers === 0
+        ? `${loginAs}, but the teachers field is set to 0, so no teacher account is ` +
+            `created — set teachers to 1 or 2, or sign in as admin or student1`
+        : `${loginAs}, but the teachers field is set to ${teachers}, so only ` +
+            `${teacherNames(teachers).join(", ")} ${teachers === 1 ? "is" : "are"} ` +
+            `created — set teachers to 2, or sign in as teacher`,
+    );
+  }
+  return reasons;
+}
+
+/**
+ * Which account the finished blueprint signs the reviewer in as, READ BACK off
+ * the login step rather than recomputed.
+ *
+ * There were three independent copies of this derivation — the login step, the
+ * `preview-user` output and the summary's "signed in as" row — each re-deriving
+ * the landing page in order to re-derive the user. A summary naming a different
+ * account from the one the link actually uses is invisible to the reviewer,
+ * who has no way to compare them.
+ *
+ * Exported because main() is not reachable from a test: with this inline, the
+ * mutant that replaces it with a constant SURVIVED a full gate run.
+ */
+export function signedInAsOf(blueprint) {
+  const login = blueprint.steps.find((s) => s.step === "login");
+  if (!login?.username) {
+    // Every blueprint this builder makes ends with a login. If one does not,
+    // saying so beats printing "undefined" into the reviewer's summary.
+    throw new Error("internal: the blueprint has no login step to report");
+  }
+  return login.username;
+}
+
+export function previewUser(landing, teachers = COUNT_INPUTS.teachers.fallback) {
+  if (String(landing).startsWith("/admin/")) return "admin";
+  // With no teacher there is nobody to be. `admin`, not `student1`: the default
+  // landing page for a `mod` plugin is /course/modedit.php?add=... — an EDITING
+  // form — so a student would arrive at a permission error on the commonest
+  // kind of preview there is. admin is also the only account installMoodle
+  // guarantees regardless of every other control, so this needs no truth table
+  // if a student count of 0 ever exists.
+  //
+  // The cost is real and is stated out loud rather than hidden: admin
+  // short-circuits has_capability() (accesslib.php) and is not ENROLLED, so
+  // completion tracking never evaluates for it. A reviewer who wants a
+  // capability-honest view has a control for that — login-as: student1.
+  if (Number(teachers) === 0) return "admin";
+  return "teacher";
 }
 
 /**
@@ -553,6 +652,7 @@ export function buildBlueprint({
   loginAs = "",
   // From the one table, so this default and main()'s fallback cannot drift
   // apart — they used to be separate literals that nothing compared.
+  teachers = COUNT_INPUTS.teachers.fallback,
   students = COUNT_INPUTS.students.fallback,
   sections = COUNT_INPUTS.sections.fallback,
   // {url, info} from mbz.mjs when a course backup is being restored.
@@ -710,7 +810,22 @@ export function buildBlueprint({
       step: "createUsers",
       critical: true,
       users: [
-        { username: "teacher", firstname: "Teacher", lastname: "Review" },
+        // TEACHERS FIRST, and the second one at index 1 — NOT appended after
+        // the students. Two reasons, and the second is the one that bites.
+        // Firstly the teachers belong together and `teacher` has always been
+        // index 0. Secondly check 1o compares two controls by diffing their
+        // blueprints ELEMENT BY ELEMENT over the common prefix: appended, a
+        // `teachers` diff is byte-identical to a `students` diff, and the gate
+        // refuses a CORRECT build for "two names for one thing". Measured
+        // three times independently. Plant `1o-overlap` pins the gate half; the
+        // `users[1].username` test below pins this half.
+        ...teacherNames(teachers).map((u, i) => ({
+          username: u,
+          firstname: "Teacher",
+          // "Review" for the first, so its display name is unchanged from every
+          // preview built before this control existed.
+          lastname: TEACHER_SURNAMES[i] ?? `Number ${i + 1}`,
+        })),
         // student1..studentN. One is enough to see a plugin as a learner;
         // more matter for anything that lists, groups or grades people —
         // measured at ~280ms for 20, so the cost is not the reason to keep
@@ -729,7 +844,16 @@ export function buildBlueprint({
       step: "enrolUsers",
       critical: true,
       enrolments: [
-        { username: "teacher", course: COURSE_SHORTNAME, role: "editingteacher" },
+        // Every teacher is an EDITING teacher. Moodle's non-editing `teacher`
+        // role is a strict subset — 88 core capabilities are editingteacher-only
+        // and NONE are teacher-only — so a quietly non-editing second teacher
+        // could not add an activity of any kind, and would read as a bug in the
+        // plugin under review rather than a choice made here.
+        ...teacherNames(teachers).map((u) => ({
+          username: u,
+          course: COURSE_SHORTNAME,
+          role: "editingteacher",
+        })),
         ...studentNames(students).map((u) => ({
           username: u,
           course: COURSE_SHORTNAME,
@@ -737,6 +861,22 @@ export function buildBlueprint({
         })),
       ],
     },
+  ];
+  // COMPUTED HERE, above the review brief, because the brief has to say who the
+  // reviewer arrives as — and the login STEP itself is pushed much further
+  // down, after the theme. Two derivations of the same fact is how the summary
+  // and the link came to disagree in the first place, so there is exactly one.
+  const landing = landingOverride || landingPath(type, name, { restored: Boolean(restore) });
+  // `login-as` overrides the derived default. Derivation is a good default —
+  // admin for admin pages, teacher elsewhere — but it cannot know you want to
+  // see the plugin as a learner, and nothing else lets you.
+  const loginUser = loginAs || previewUser(landing, teachers);
+
+  // Read back off the steps rather than recomputed, so the brief cannot name a
+  // set of accounts the blueprint did not actually create.
+  const roster = [
+    "admin",
+    ...steps.find((s) => s.step === "createUsers").users.map((u) => u.username),
   ];
   // A brief on the course page. Everything a reviewer needs in order not to
   // misread the site: which commit, the logins, and that yellow debug boxes
@@ -750,13 +890,53 @@ export function buildBlueprint({
     name: "Review brief",
     intro:
       `<p><strong>${escapeHtml(label)}</strong></p>` +
-      `<ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code>` +
+      // Enumerated, never hardcoded. This is the ONE artifact a reviewer reads
+      // to find out who they can be, and it used to name `teacher` even in a
+      // preview that has none — while the summary said nothing about teachers
+      // at all. So a build that quietly made the wrong number of accounts
+      // changed nothing a reviewer could see, before or after.
+      `<ul><li>Logins: ${roster.map((u) => `<code>${escapeHtml(u)}</code>`).join(", ")}` +
       ` — password <code>password</code></li>` +
       `<li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li>` +
       `<li>Student view: user menu → Switch role to… → Student. That is a VIEW only —` +
-      ` log in as <code>student1</code> for anything that owns data</li></ul>`,
+      ` log in as <code>student1</code> for anything that owns data</li>` +
+      // Keyed on the ACCOUNT THE REVIEWER ARRIVES AS, not on the count. Keyed
+      // on `teachers === 0` it was wrong at both edges, and both are reachable:
+      // at teachers:0 with login-as student1 — the combination action.yml
+      // recommends — it told a student they were an administrator; and at
+      // teachers:1 with an /admin/ landing page the reviewer IS admin and was
+      // told nothing. The PR comment already keyed on the account; these two
+      // now agree with it.
+      // The caveat is about a SUBSTITUTION — you are admin because there was no
+      // teacher to be — not about being admin at all. Keyed on `teachers === 0`
+      // alone it told a reviewer who chose `login-as: student1` that they were
+      // an administrator, which is the combination action.yml recommends. Keyed
+      // on `loginUser === "admin"` alone it fires on every block, local, filter,
+      // report and qtype preview, whose landing page REQUIRES admin and where
+      // no other account was ever possible — noise in the one artifact a
+      // reviewer is meant to read. Both conditions, therefore.
+      (teachers === 0 && loginUser === "admin"
+        ? `<li>This preview has NO teacher, so you are an administrator — who can ` +
+          `open anything. This is not what the site looks like to a teacher</li>`
+        : "") +
+      `</ul>`,
   });
 
+  // Everyone created must be enrolled. The review brief lists the roster from
+  // `createUsers`, so a build that created two teachers and enrolled one would
+  // produce a byte-identical brief AND a byte-identical summary — the reviewer
+  // has no way to see the difference, and the account simply cannot reach the
+  // course. Checked here rather than asserted in the boot, because it is
+  // decidable at build time and a link should not exist at all.
+  const created = steps.find((s) => s.step === "createUsers").users.map((u) => u.username);
+  const enrolled = new Set(steps.find((s) => s.step === "enrolUsers").enrolments.map((e) => e.username));
+  const unenrolled = created.filter((u) => !enrolled.has(u));
+  if (unenrolled.length) {
+    throw new Error(
+      `internal: ${unenrolled.join(", ")} would be created but never enrolled — ` +
+        `the account could not reach the review course, and nothing on screen would say so`,
+    );
+  }
   // The invariant is "exactly one course we control", not "exactly one
   // createCourse" — a restore makes the course too, and the original guard
   // refused that blueprint outright.
@@ -806,11 +986,7 @@ export function buildBlueprint({
   // `login` step, so this REPLACES that session rather than adding one.
   // Provisioning needs no session: the create/enrol helpers call core APIs
   // directly and never read $USER.
-  const landing = landingOverride || landingPath(type, name, { restored: Boolean(restore) });
-  // `login-as` overrides the derived default. Derivation is a good default —
-  // admin for admin pages, teacher elsewhere — but it cannot know you want to
-  // see the plugin as a learner, and nothing else lets you.
-  const loginUser = loginAs || previewUser(landing);
+
   steps.push({ step: "login", username: loginUser, critical: true });
   // Last, and non-critical. Everything the preview promises is done by now, so
   // the expensive part cannot cost the reviewer the preview itself.
@@ -959,6 +1135,99 @@ export function setOutput(name, value) {
  * or is passed through sanitiseForLog. The blueprint is not echoed: it can
  * contain strings from a plugin repo, and a job summary renders markdown.
  */
+/**
+ * The run summary, as lines. A pure function of what was decided, so it can be
+ * TESTED — it used to be a 60-line literal inside main(), reachable only by
+ * running the builder as a subprocess with a network, and the mutation harness
+ * proved the consequence: deleting the teacher count from it, and making it
+ * name a different account from the one the link signs you in as, both survived
+ * with the whole suite green.
+ *
+ * This is the reviewer's only summary of what the link will do. Nothing else
+ * states the counts, the theme, or which Moodle was checked.
+ */
+export function previewSummary({
+  type, name, headSha, url, component, headRepo, extras, moodleBranch,
+  signedInAs, php, restore, teachers, students, sections, landingPage,
+  versionPhp, core, risky, loginAs,
+}) {
+  return [
+    "## ▶ Playground preview",
+    "",
+    `### [Open ${sanitiseForLog(`${type}_${name}`)} at ${headSha.slice(0, 7)}](${url})`,
+    "",
+    "| | |",
+    "|---|---|",
+    ...factRows({
+      plugin: component,
+      commit: headSha,
+      repository: headRepo,
+      // In INSTALL ORDER, which is the fact a reviewer cannot see any other
+      // way: a dependency that arrived second is the difference between a
+      // plugin that works and one that installed against nothing. Pinned to
+      // commits, because that is what the link actually boots.
+      "extra plugins": extras.list,
+      // Its own row, at full length. A theme changes every page the reviewer
+      // looks at, so "which theme, from which commit" is not a detail — and
+      // without it there is nothing on the page saying a theme was applied at
+      // all, which is indistinguishable from the failure where it was not.
+      theme: extras.themeSummary,
+      Moodle: moodleBranch,
+      // The landing page MUST be computed the same way the link was, restore
+      // included — otherwise the summary names the add-form path while the link
+      // opens the course.
+      "signed in as": signedInAs,
+      PHP: php,
+      // Do not claim a section count that a restore ignored.
+      // From the CLAMPED values, and teachers included. Without the teacher
+      // count here, a build that made the wrong number of them showed a
+      // reviewer nothing different at all — the one genuinely invisible way
+      // this control can be wrong, and it is cured by printing the number
+      // rather than by asserting it inside the boot.
+      course: restore
+        ? `${teachers} teacher(s), ${students} student(s), restored from a backup ` +
+          `(${restore.info.activityCount} activities)`
+        : `${teachers} teacher(s), ${students} student(s), ${sections} section(s)`,
+      "landing page": landingPage,
+      "version.php": versionPhp || "not checked out — compatibility NOT checked",
+      "core components": core.ok
+        ? `${core.standard.size} from lib/plugins.json`
+        : "NOT CHECKED — could not read Moodle's plugin list",
+    }),
+    "",
+    // Same rule as the in-course brief and the PR comment: keyed on the account
+    // the reviewer ARRIVES as. Keyed on `teachers === 0 && !loginAs` it was
+    // silent for a reviewer who is admin for any other reason — an /admin/
+    // landing page, or login-as: admin — which is most of the previews where
+    // the caveat is worth reading.
+    // Same rule as the in-course brief, and for the same reason: the caveat is
+    // about arriving as admin BECAUSE there was no teacher. `!loginAs` was the
+    // wrong second half — someone who explicitly asks for `login-as: admin`
+    // alongside `teachers: 0` should still be told.
+    ...(teachers === 0 && signedInAs === "admin"
+      ? [
+          "> **No teacher was created, so you arrive as `admin`.** An administrator",
+          "> can open anything, which is not what the site looks like to a teacher —",
+          "> and capability checks a plugin relies on are bypassed.",
+          "",
+        ]
+      : []),
+    ...(risky.length
+      ? [
+          `> **This blueprint can rewrite Moodle after installing:** ${risky
+            .map((r) => `\`${r}\``)
+            .join(", ")}.`,
+          "> Code that installs for real can be overwritten afterwards without",
+          "> touching the database, the boot log, or any assertion.",
+          "",
+        ]
+      : []),
+    "Smoke test only: this shows whether the plugin installs and renders, not",
+    "whether it is correct. Nothing here booted it — the link boots in your",
+    "browser when you open it.",
+  ];
+}
+
 function writeSummary(lines) {
   const body = lines.join("\n") + "\n";
   if (process.env.GITHUB_STEP_SUMMARY) {
@@ -1373,7 +1642,7 @@ async function main() {
     // was never checked out, and that is a legitimate shape. Say plainly that
     // the strongest check was skipped rather than implying it passed.
     console.log(
-      `note: no version.php on disk under "${pluginRoot}" and none fetched for ` +
+      `note: no version.php on disk under ${JSON.stringify(sanitiseForLog(pluginRoot))} and none fetched for ` +
         `${headSha.slice(0, 7)} — Moodle-version compatibility NOT checked`,
     );
   }
@@ -1406,14 +1675,6 @@ async function main() {
   // The NAME check runs against the maximum of every count, so an account this
   // preview could have made is never reported as fictional. Whether it was
   // actually made at the CHOSEN counts is the separate check below.
-  const everyName = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.fallback);
-  if (loginAs && !everyName.includes(loginAs)) {
-    problems.add(
-      "login-as",
-      `must be admin, teacher or student1..student20 — those are the ` +
-        `only accounts the blueprint creates. Got: ${JSON.stringify(loginAs)}`,
-    );
-  }
   // Clamped HERE, not inside studentNames(), so the summary reports the number
   // actually created. It used to print the raw input: "-5 student(s)" while
   // building 1, "999" while building 20.
@@ -1421,19 +1682,11 @@ async function main() {
     const c = COUNT_INPUTS[id];
     return clampCount(process.env[c.env], c.fallback, c.min, c.max);
   };
+  const teachers = count("teachers");
   const students = count("students");
   const sections = count("sections");
-  // Asking to arrive as a student the blueprint never made is a refusal, not a
-  // login failure at boot — phpLogin does MUST_EXIST and would abort there.
-  // Only when the NAME itself was valid. Otherwise `student99` produced two
-  // rows for one field, the second advising the user to raise a count whose
-  // maximum is 20.
-  const loginAsNameOk = !loginAs || everyName.includes(loginAs);
-  if (loginAsNameOk && loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {
-    problems.add(
-      "login-as",
-      `${loginAs} but only ${students} student account(s) are created — raise the student count`,
-    );
+  for (const reason of checkLoginAs({ loginAs, teachers, students })) {
+    problems.add("login-as", reason);
   }
 
   const dataHosts = (process.env.DATA_HOSTS || "")
@@ -1519,7 +1772,7 @@ async function main() {
               // to prevent. Reserving a name the preview did not make costs one
               // avoidable refusal with a readable reason; the other direction
               // costs a boot that dies five steps in.
-              const mine = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.fallback);
+              const mine = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.max);
               const clash = (verdict.info.usernames ?? []).filter((u) => mine.includes(u));
               if (clash.length) {
                 problems.add(
@@ -1582,6 +1835,7 @@ async function main() {
     builtBy,
     phpOverride,
     loginAs,
+    teachers,
     students,
     sections,
     restore,
@@ -1617,10 +1871,13 @@ async function main() {
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
   setOutput("plugin-component", declared?.component || `${type}_${name}`);
-  setOutput(
-    "preview-user",
-    loginAs || previewUser(landingOverride || landingPath(type, name, { restored: Boolean(restore) })),
-  );
+  // READ BACK off the finished blueprint, not recomputed. There were three
+  // independent copies of this expression — the login step, this output and the
+  // summary row — each re-deriving the landing page to re-derive the user. A
+  // summary naming a different account from the one the link signs you in as is
+  // exactly the kind of wrong a reviewer cannot see.
+  const signedInAs = signedInAsOf(blueprint);
+  setOutput("preview-user", signedInAs);
   setOutput("risky-steps", risky.join(","));
   setOutput("preview-url", url);
   if (risky.length) {
@@ -1630,59 +1887,27 @@ async function main() {
   }
   console.log(`preview: ${type}_${name} @ ${headSha.slice(0, 7)} (${url.length} chars)`);
 
-  writeSummary([
-    "## ▶ Playground preview",
-    "",
-    `### [Open ${sanitiseForLog(`${type}_${name}`)} at ${headSha.slice(0, 7)}](${url})`,
-    "",
-    "| | |",
-    "|---|---|",
-    ...factRows({
-      plugin: declared?.component || `${type}_${name}`,
-      commit: headSha,
-      repository: headRepo,
-      // In INSTALL ORDER, which is the fact a reviewer cannot see any other
-      // way: a dependency that arrived second is the difference between a
-      // plugin that works and one that installed against nothing. Pinned to
-      // commits, because that is what the link actually boots.
-      "extra plugins": extras.list,
-      // Its own row, at full length. A theme changes every page the reviewer
-      // looks at, so "which theme, from which commit" is not a detail — and
-      // without it there is nothing on the page saying a theme was applied at
-      // all, which is indistinguishable from the failure where it was not.
-      theme: extras.themeSummary,
-      Moodle: moodleBranch,
-      // The landing page MUST be computed the same way the link was, restore
-      // included — otherwise the summary names the add-form path while the link
-      // opens the course.
-      "signed in as":
-        loginAs || previewUser(landingOverride || landingPath(type, name, { restored: Boolean(restore) })),
-      PHP: phpOverride || phpForBranch(moodleBranch),
-      // Do not claim a section count that a restore ignored.
-      course: restore
-        ? `${students} student(s), restored from a backup (${restore.info.activityCount} activities)`
-        : `${students} student(s), ${sections} section(s)`,
-      "landing page": landingOverride || landingPath(type, name, { restored: Boolean(restore) }),
-      "version.php": declared ? declared.path : "not checked out — compatibility NOT checked",
-      "core components": core.ok
-        ? `${core.standard.size} from lib/plugins.json`
-        : "NOT CHECKED — could not read Moodle's plugin list",
-    }),
-    "",
-    ...(risky.length
-      ? [
-          `> **This blueprint can rewrite Moodle after installing:** ${risky
-            .map((r) => `\`${r}\``)
-            .join(", ")}.`,
-          "> Code that installs for real can be overwritten afterwards without",
-          "> touching the database, the boot log, or any assertion.",
-          "",
-        ]
-      : []),
-    "Smoke test only: this shows whether the plugin installs and renders, not",
-    "whether it is correct. Nothing here booted it — the link boots in your",
-    "browser when you open it.",
-  ]);
+  writeSummary(previewSummary({
+    type,
+    name,
+    headSha,
+    url,
+    component: declared?.component || `${type}_${name}`,
+    headRepo,
+    extras,
+    moodleBranch,
+    signedInAs,
+    php: phpOverride || phpForBranch(moodleBranch),
+    restore,
+    teachers,
+    students,
+    sections,
+    landingPage: landingOverride || landingPath(type, name, { restored: Boolean(restore) }),
+    versionPhp: declared ? declared.path : "",
+    core,
+    risky,
+    loginAs,
+  }));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -1702,7 +1927,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
       },
       err?.problems ?? [],
     );
-    console.error(err?.stack ?? String(err));
+    // sanitiseForLog, because this text is built from env values the caller
+    // supplied. Problems.annotate() already sanitises the same strings on the
+    // way to stdout — dumping the raw stack here undid that for any message
+    // that did not happen to wrap its value in JSON.stringify.
+    console.error(sanitiseForLog(err?.stack ?? String(err)));
     process.exit(1);
   }
 }

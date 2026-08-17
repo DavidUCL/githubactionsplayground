@@ -163,6 +163,17 @@ def main():
         res = run_builder({row["env"]: row["probe"]}, baseline_env)
         target = row["target"]
 
+        # `expect_paths` is only READ on a blueprint row. Declared on a shape,
+        # url or refusal row it is documentation nothing checks — and a
+        # fabricated path was demonstrated sitting in such a row with the gate
+        # green, which is worse than no documentation because the table reads as
+        # the authoritative record of what each control touches.
+        if target != "blueprint" and "expect_paths" in row:
+            fail(
+                f"{name}: target is {target!r}, which never reads expect_paths — "
+                f"remove it, or the row documents a check that does not run"
+            )
+
         if target == "refusal":
             if res["rc"] == 0:
                 fail(f"{name}: probe value {row['probe']!r} was accepted; expected a refusal")
@@ -244,8 +255,19 @@ def main():
         # unpinned — deleting it left the whole suite green. Declare the text
         # that must appear instead.
         want_text = row.get("expect_summary_contains")
-        if want_text and want_text not in res["summary"]:
-            fail(f"{name}: {want_text!r} never reaches GITHUB_STEP_SUMMARY")
+        if want_text:
+            # ABSENT from the baseline, present in the probe. Requiring only
+            # presence lets the string be weakened until it appears anyway: a
+            # row asking for "section(s)" passes against a summary that
+            # hardcodes "3 section(s)" and never reads the input at all. That is
+            # the same vacuity `expect_in_summary` had, one layer along.
+            if want_text in base["summary"]:
+                fail(
+                    f"{name}: {want_text!r} is already in the BASELINE summary, so finding "
+                    f"it proves nothing — choose text only the probe value produces"
+                )
+            elif want_text not in res["summary"]:
+                fail(f"{name}: {want_text!r} never reaches GITHUB_STEP_SUMMARY")
 
     # 5. Two controls producing the identical diff are two names for one thing —
     # the exact shape of the env-swap bug. Compared on VALUES, not path sets:

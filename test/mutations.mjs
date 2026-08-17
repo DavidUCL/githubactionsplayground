@@ -237,8 +237,8 @@ const MUTATIONS = [
   // build-preview.mjs — who the reviewer arrives as, and what a link may carry
   ["login: land the reviewer as admin everywhere (bypasses capability checks)",
     "scripts/build-preview.mjs",
-    'return String(landing).startsWith("/admin/") ? "admin" : "teacher";',
-    'return "admin";'],
+    '  if (String(landing).startsWith("/admin/")) return "admin";',
+    '  if (true) return "admin";'],
   ["login: drop critical from the login step", "scripts/build-preview.mjs",
     'steps.push({ step: "login", username: loginUser, critical: true });',
     'steps.push({ step: "login", username: loginUser });'],
@@ -300,7 +300,8 @@ const MUTATIONS = [
     "  if (!allowed.includes(php)) {", "  if (false) {"],
   ["php: ignore the override and always use the branch default",
     "scripts/build-preview.mjs",
-    "php: phpOverride || phpForBranch(moodleBranch)", "php: phpForBranch(moodleBranch)"],
+    "preferredVersions: { php: phpOverride || phpForBranch(moodleBranch), moodle: moodleBranch }",
+    "preferredVersions: { php: phpForBranch(moodleBranch), moodle: moodleBranch }"],
   ["counts: ignore the student count", "scripts/build-preview.mjs",
     "...studentNames(students).map((u, i) => ({", "...studentNames(1).map((u, i) => ({"],
   ["counts: enrol only the first student", "scripts/build-preview.mjs",
@@ -309,9 +310,16 @@ const MUTATIONS = [
   ["counts: ignore the section count", "scripts/build-preview.mjs",
     "numsections: sections,", "numsections: 3,"],
   ["login: ignore the login-as override", "scripts/build-preview.mjs",
-    "const loginUser = loginAs || previewUser(landing);", "const loginUser = previewUser(landing);"],
+    "const loginUser = loginAs || previewUser(landing, teachers);",
+    "const loginUser = previewUser(landing, teachers);"],
   ["counts: drop the clamp on studentNames", "scripts/build-preview.mjs",
-    "Math.max(1, Math.min(20, Number(n) || 1))", "Number(n) || 1"],
+    "  const count = Math.max(min, Math.min(max, Number(n) || min));\n  return Array.from({ length: count }, (_, i) => `student${i + 1}`);",
+    "  const count = Number(n) || min;\n  return Array.from({ length: count }, (_, i) => `student${i + 1}`);"],
+  // [1, 30], not [1, 20] — a literal that AGREES with the table is behaviourally
+  // identical and no test could ever kill it, which would have made this a
+  // permanent KNOWN_SURVIVOR bought for nothing.
+  ["counts: read the student bounds from a literal again", "scripts/build-preview.mjs",
+    "  const { min, max } = COUNT_INPUTS.students;", "  const [min, max] = [1, 30];"],
   ["landing: skip validating the override entirely", "scripts/build-preview.mjs",
     "    const ok = checkLandingPath(landingOverride);\n    if (!ok.ok) {", "    const ok = { ok: true };\n    if (false) {"],
   ["landing: allow a traversal segment (walks out of the site)",
@@ -411,7 +419,7 @@ const MUTATIONS = [
   ["restore: allow a backup whose users collide with ours", "scripts/build-preview.mjs",
     "              if (clash.length) {", "              if (false) {"],
   ["restore: only look for a collision with admin", "scripts/build-preview.mjs",
-    "const mine = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.fallback);",
+    "const mine = accountNames(COUNT_INPUTS.students.max, COUNT_INPUTS.teachers.max);",
     'const mine = ["admin"];'],
   // The one count table, and the one account list derived from it. Both
   // replaced hand-copies that nothing compared, so both need mutants or the
@@ -430,6 +438,59 @@ const MUTATIONS = [
   ["counts: echo the raw value into the runner log", "scripts/build-preview.mjs",
     'console.log(`note: ${JSON.stringify(sanitiseForLog(s).slice(0, 40))} is not a number — using ${fallback}`);',
     'console.log(`note: "${s}" is not a number — using ${fallback}`);'],
+  // --- the teachers control ---
+  ["teachers: ignore the count and always build one", "scripts/build-preview.mjs",
+    "        ...teacherNames(teachers).map((u, i) => ({",
+    "        ...teacherNames(1).map((u, i) => ({"],
+  ["teachers: enrol only the first teacher", "scripts/build-preview.mjs",
+    '        ...teacherNames(teachers).map((u) => ({\n          username: u,\n          course: COURSE_SHORTNAME,\n          role: "editingteacher",\n        })),',
+    '        { username: "teacher", course: COURSE_SHORTNAME, role: "editingteacher" },'],
+  ["teachers: make the second teacher non-editing", "scripts/build-preview.mjs",
+    '          role: "editingteacher",\n        })),',
+    '          role: u === "teacher" ? "editingteacher" : "teacher",\n        })),'],
+  // NAMED FOR WHAT IT DOES. It was called "append after the students" while
+  // replacing the list with [], which DELETES them — the same bug as "ignore
+  // the count" above, so the list claimed coverage of the ordering decision it
+  // did not have. The genuine append is covered by the unit test asserting the
+  // full roster order, and by the probe row; this pins the order WITHIN the
+  // teachers, which is what decides whether users[1] is teacher2.
+  ["teachers: reorder the teachers within the roster",
+    "scripts/build-preview.mjs",
+    "        ...teacherNames(teachers).map((u, i) => ({\n          username: u,\n          firstname: \"Teacher\",",
+    "        ...teacherNames(teachers).slice().reverse().map((u, i) => ({\n          username: u,\n          firstname: \"Teacher\","],
+  ["teachers: keep sending the reviewer to a teacher that does not exist",
+    "scripts/build-preview.mjs",
+    "  if (Number(teachers) === 0) return \"admin\";", "  if (false) return \"admin\";"],
+  ["teachers: drop the count when deriving the login", "scripts/build-preview.mjs",
+    "  const loginUser = loginAs || previewUser(landing, teachers);",
+    "  const loginUser = loginAs || previewUser(landing);"],
+  ["teachers: hardcode the review brief's logins again", "scripts/build-preview.mjs",
+    '      `<ul><li>Logins: ${roster.map((u) => `<code>${escapeHtml(u)}</code>`).join(", ")}` +',
+    '      `<ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code>` +'],
+  ["teachers: drop the no-teacher caveat from the review brief", "scripts/build-preview.mjs",
+    '      (teachers === 0 && loginUser === "admin"', "      (false"],
+  ["teachers: warn about admin on every preview whose landing needs one",
+    "scripts/build-preview.mjs",
+    '    ...(teachers === 0 && signedInAs === "admin"', '    ...(signedInAs === "admin"'],
+  ["teachers: stop refusing a login the counts cannot create", "scripts/build-preview.mjs",
+    '  if (loginAs.startsWith("teacher") && !teacherNames(teachers).includes(loginAs)) {',
+    "  if (false) {"],
+  ["teachers: stop refusing a student login the count cannot create",
+    "scripts/build-preview.mjs",
+    '  if (loginAs.startsWith("student") && !studentNames(students).includes(loginAs)) {',
+    "  if (false) {"],
+  ["teachers: leave the count out of the summary", "scripts/build-preview.mjs",
+    "        : `${teachers} teacher(s), ${students} student(s), ${sections} section(s)`,",
+    "        : `${students} student(s), ${sections} section(s)`,"],
+  ["teachers: let the summary name a different account from the link",
+    "scripts/build-preview.mjs",
+    '  const login = blueprint.steps.find((s) => s.step === "login");',
+    '  const login = { username: "teacher" };'],
+  ["comment: enumerate accounts that may not exist", "scripts/render-comment.mjs",
+    "`The link logs you in as **\\`${user}\\`**. The review brief on the course`,",
+    "`The link logs you in as **\\`${user}\\`**. \\`admin\\`, \\`teacher\\` and \\`student1\\` all exist,`,"],
+  ["comment: drop the admin caveat again", "scripts/render-comment.mjs",
+    '    ...(user === "admin"\n      ? [', '    ...(false\n      ? ['],
   ["mbz: stop reporting the users a backup creates", "scripts/mbz.mjs",
     "  const usernames = usersXml", "  const usernames = false"],
 
@@ -474,11 +535,11 @@ const MUTATIONS = [
 
   // A restored course brings its own sections and format
   ["restore: claim sections a restore ignored", "scripts/build-preview.mjs",
-    "      course: restore\n        ? `${students} student(s), restored from a backup (${restore.info.activityCount} activities)`\n        : `${students} student(s), ${sections} section(s)`,",
-    "      course: `${students} student(s), ${sections} section(s)`,"],
+    "      course: restore\n        ? `${teachers} teacher(s), ${students} student(s), restored from a backup ` +\n          `(${restore.info.activityCount} activities)`\n        : `${teachers} teacher(s), ${students} student(s), ${sections} section(s)`,",
+    "      course: `${teachers} teacher(s), ${students} student(s), ${sections} section(s)`,"],
   ["restore: summary names a landing page the link does not open", "scripts/build-preview.mjs",
-    '      "landing page": landingOverride || landingPath(type, name, { restored: Boolean(restore) }),',
-    '      "landing page": landingOverride || landingPath(type, name),'],
+    "    landingPage: landingOverride || landingPath(type, name, { restored: Boolean(restore) }),",
+    "    landingPage: landingOverride || landingPath(type, name),"],
   ["restore: allow a format plugin against a restored course", "scripts/build-preview.mjs",
     '  if (restoreUrl && type === "format") {', "  if (false) {"],
 
@@ -577,8 +638,13 @@ const MUTATIONS = [
     "if (message) this.list.push({ input, message });"],
   ["rev2: table cells stop escaping pipes", "scripts/build-preview.mjs",
     'sanitiseForLog(String(v)).replace(/\\|/g, "\\\\|")', "sanitiseForLog(String(v))"],
+  // A name that is not an account at all must report ONE reason — the one that
+  // says so. Without the early return it falls through to the count advice and
+  // tells someone who typed "teacher9" to raise the teacher count, which cannot
+  // help. (This replaced a `loginAsNameOk` flag when the checks moved into
+  // checkLoginAs; the early return does the same job more directly.)
   ["rev2: login-as reports the count error on a bad name too", "scripts/build-preview.mjs",
-    "if (loginAsNameOk && loginAs.startsWith(\"student\")", 'if (loginAs.startsWith("student")'],
+    "  if (!everyName.includes(loginAs)) {", "  if (false) {"],
   ["rev2: reference waiver slides back below the checks", "scripts/order-rules.mjs",
     "    if (i > opaqueFrom) continue;\n\n", ""],
 
@@ -857,7 +923,14 @@ for (const block of ORDER_SRC.match(/ {2}\{\n {4}id: "[^"]+",[\s\S]*?\n {2}\},\n
 // Everything a test may read. `preview/` is here because
 // render-comment.test.mjs reads ../preview/action.yml — and its absence is what
 // made this whole harness vacuous (see the baseline self-test below).
-const COPY_DIRS = ["scripts", "test", "preview", "fixtures"];
+// ".github" is here because a test reads the dispatch form to check that every
+// login-as option the form offers is an account the builder accepts. Omit it
+// and the unmutated baseline throws ENOENT inside the staged tree — which is
+// PRECISELY the bug that made this harness vacuous until 2026-08-10, when
+// render-comment.test.mjs read ../preview/action.yml and every mutant was
+// "killed" by the resulting failure rather than by the mutation. The baseline
+// self-test below caught the repeat within a second of it being introduced.
+const COPY_DIRS = ["scripts", "test", "preview", "fixtures", ".github"];
 
 // EVERY test file, found rather than listed. The old hard-coded list silently
 // excluded five suites — coordinates, mbz, order-rules, restore-assert and
@@ -947,6 +1020,34 @@ const KNOWN_SURVIVORS = new Map([
 const survivors = [];
 let killed = 0;
 
+// ANCHORS_ONLY — every anchor must resolve exactly once, checked in under a
+// second instead of at minute 20 of a full run.
+//
+// A mutant whose anchor no longer matches is not a weak test, it is a mutant
+// that never ran: the harness reports MUTATION STALE and the assertion it was
+// guarding has been unguarded ever since the line moved. That has happened
+// three times here — twice in the theme round, where the highest-value mutant
+// of the commit (deleting the critical assertion) silently never executed, and
+// once in this one. It is always the author's OWN edit that breaks it, which is
+// exactly when a 20-minute feedback loop is too slow to catch it.
+if (process.env.MUTATIONS_ANCHORS_ONLY) {
+  const tree = stageTree();
+  let stale = 0;
+  try {
+    for (const [label, file, find] of MUTATIONS) {
+      const n = readFileSync(join(tree, file), "utf8").split(find).length - 1;
+      if (n !== 1) {
+        stale += 1;
+        console.error(`STALE (${n}x) ${label}\n         in ${file}`);
+      }
+    }
+  } finally {
+    rmSync(tree, { recursive: true, force: true });
+  }
+  console.log(`anchors: ${MUTATIONS.length - stale}/${MUTATIONS.length} resolve exactly once`);
+  process.exit(stale ? 1 : 0);
+}
+
 for (const [label, file, find, replace] of MUTATIONS) {
   const dir = stageTree();
   try {
@@ -968,7 +1069,15 @@ for (const [label, file, find, replace] of MUTATIONS) {
 console.log(`mutations: ${killed}/${MUTATIONS.length} killed`);
 
 const label = (s) => s.replace(/ \(scripts\/.*\)$/, "").replace(/ — MUTATION STALE.*$/, "");
-const unexpected = survivors.filter((s) => !KNOWN_SURVIVORS.has(label(s)));
+// A STALE anchor is NEVER known debt, whatever the label says. `label()` strips
+// the "— MUTATION STALE" suffix before the lookup, so a mutant on the
+// KNOWN_SURVIVORS list whose anchor stopped matching was absorbed as debt we
+// had already accepted and the run exited 0 — while check 1a2, reading the same
+// list, exited 1. A listed survivor is an assertion we know is unpinned; a
+// stale anchor is a mutant that did not run at all, which is a different and
+// worse thing and the list must not launder it.
+const isStale = (s) => s.includes("MUTATION STALE");
+const unexpected = survivors.filter((s) => isStale(s) || !KNOWN_SURVIVORS.has(label(s)));
 const fixed = [...KNOWN_SURVIVORS.keys()].filter((k) => !survivors.some((s) => label(s) === k));
 
 if (unexpected.length) {

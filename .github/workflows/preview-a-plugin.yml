@@ -8,7 +8,7 @@
 # single form with a "source" selector would show eight irrelevant boxes. The
 # Actions sidebar is the selector, for free.
 #
-# FOURTEEN FIELDS, of a planned twenty. A review panel cut an earlier draft to
+# FIFTEEN FIELDS, of a planned twenty. A review panel cut an earlier draft to
 # five; David restored `login-as`, the counts, and `php-version` — the last one
 # restricted to the versions each Moodle branch actually accepts, and REFUSED
 # rather than silently substituted when the pair is invalid, which is what the
@@ -126,9 +126,22 @@ on:
           - "(default)"
           - admin
           - teacher
+          # Only exists when "teachers" below is set to 2 — picking it otherwise
+          # is refused with a reason, rather than building a link that dies at
+          # its last step. ADDING an option breaks no saved `gh workflow run`
+          # command; removing or renaming one gives 422.
+          - teacher2
           - student1
           - student2
           - student3
+      teachers:
+        description: "Editing teachers in the review course. 0 signs you in as an administrator instead, which can open anything — so it is not what a teacher-less site looks like to a teacher."
+        required: false
+        type: choice
+        # QUOTED. An unquoted 0 parses as the integer 0 for a `choice`, and the
+        # form then vanishes from the Actions sidebar with no error anywhere.
+        default: "1"
+        options: ["0", "1", "2"]
       students:
         description: "Student accounts in the review course. Raise it for anything that lists, groups or grades people."
         required: false
@@ -211,6 +224,7 @@ jobs:
           # unset state, so the sentinel is how "unset" is expressed.
           php-version: ${{ inputs.php-version }}
           login-as: ${{ inputs.login-as }}
+          teachers: ${{ inputs.teachers }}
           students: ${{ inputs.students }}
           sections: ${{ inputs.sections }}
           # The only provenance a pasted link carries. Without it, a link built

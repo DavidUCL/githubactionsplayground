@@ -29,8 +29,10 @@
 // and a preview account of the same name then fails to create. Measured by
 // booting: a restore of a fixture containing `student1` succeeded, the
 // post-restore assertion passed, and createUsers died with exit code 1 five
-// steps in, leaving a half-built site. The preview supplies its own teacher and
-// students and enrols them, so the fixture needs none. Cost: no submissions or
+// steps in, leaving a half-built site. The preview supplies its own teachers
+// and students and enrols them, so the fixture needs none. It reserves every
+// name it MIGHT create (teacher, teacher2, student1-student20), not only the
+// ones the chosen counts create, so this fixture must avoid all of them. Cost: no submissions or
 // grades in the fixture. Revisit only with usernames that cannot collide.
 //
 // SHORTNAME IS NOT "REVIEW". phpRestoreCourse only takes the requested

@@ -74,8 +74,10 @@ caller posts it. It needs no token and no write permission.
 scripts/build-preview.mjs   plugin identity (repo convention or explicit)
                             → blueprint: install Moodle, DEVELOPER debugging,
                               install the plugin from the head COMMIT, a review
-                              course named for the PR + commit, a teacher and a
-                              student, and a landing page per plugin type
+                              course named for the PR + commit, the teachers and
+                              students the form asked for (one of each by
+                              default, teachers settable to 0 or 2), and a
+                              landing page per plugin type
                             → gzip + base64url into ?blueprint= (~1.1 KB)
 ```
 

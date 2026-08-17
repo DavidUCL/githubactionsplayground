@@ -37,7 +37,8 @@
     "DATA_HOSTS": "",
     "PLAYGROUND_HOST": "https://daviducl.github.io/moodle-playground",
     "SAMPLE_CONTENT": "(default)",
-    "THEME": ""
+    "THEME": "",
+    "TEACHERS": "1"
   },
   "probes": [
     {
@@ -161,16 +162,35 @@
       "expect_in_summary": true
     },
     {
+      "input": "teachers",
+      "env": "TEACHERS",
+      "probe": "2",
+      "target": "blueprint",
+      "expect_paths": [
+        "steps[*].enrolments[*]",
+        "steps[*].enrolments[*].role",
+        "steps[*].enrolments[*].username",
+        "steps[*].intro",
+        "steps[*].users[*]",
+        "steps[*].users[*].firstname",
+        "steps[*].users[*].lastname",
+        "steps[*].users[*].username"
+      ],
+      "expect_summary_contains": "2 teacher(s)",
+      "note": "The FIRST row whose expect_paths legitimately overlap another's - students writes steps[*].users and steps[*].enrolments too - which is why the identical-diff check below compares diffed VALUES rather than path sets. That comparison walks the two lists ELEMENT BY ELEMENT over their common prefix, so it only tells these two controls apart because the second teacher is INSERTED AT INDEX 1 rather than appended after the students: appended, both diffs are {users[*], enrolments[*]} with no differing value and a CORRECT build is refused. Measured three times independently. steps[*].intro is here because the in-course review brief now enumerates the accounts that exist instead of hardcoding three names - which is what makes a wrong teacher count visible to a reviewer at all."
+    },
+    {
       "input": "students",
       "env": "STUDENTS",
       "probe": "5",
       "target": "blueprint",
       "expect_paths": [
         "steps[*].enrolments[*]",
+        "steps[*].intro",
         "steps[*].users[*]"
       ],
       "expect_summary_contains": "5 student(s)",
-      "note": "expect_in_summary is VACUOUS for a one-digit probe and was measured to be: the baseline summary already contains \"5\" (MOODLE_500_STABLE) and \"2\" (&course=2&), so this row passed with writeSummary gutted - the exact bug the assertion exists to catch. Pin the sentence the summary actually prints instead."
+      "note": "expect_in_summary is VACUOUS for a one-digit probe and was measured to be: the baseline summary already contains \"5\" (MOODLE_500_STABLE) and \"2\" (&course=2&), so this row passed with writeSummary gutted - the exact bug the assertion exists to catch. Pin the sentence the summary actually prints instead. steps[*].intro joined the list when the in-course review brief stopped hardcoding \"admin, teacher, student1\" and started enumerating the accounts actually created - so the student count is now visible to the reviewer, not only to the blueprint."
     },
     {
       "input": "sections",

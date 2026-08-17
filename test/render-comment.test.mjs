@@ -25,12 +25,31 @@ test("it names the commit the reviewer can cross-check", () => {
   assert.match(body, /from commit `8b217b1`/);
 });
 
-test("it gives credentials for all three accounts, so a reviewer can switch role", () => {
+test("it gives the password and points at the roster, without enumerating it", () => {
   const body = renderComment(ok);
   assert.match(body, /logs you in as \*\*`admin`\*\*/);
-  assert.match(body, /`admin`, `teacher` and/);
-  assert.match(body, /`student1`/);
-  assert.match(body, /password \*\*`password`\*\*/);
+  // The password sits at a line break, so match the token not the sentence.
+  assert.match(body, /\*\*`password`\*\*/);
+  assert.match(body, /review brief on the course/);
+  // It used to say "`admin`, `teacher` and `student1` all exist". That is FALSE
+  // when the preview has no teacher and INCOMPLETE when it has two, and this
+  // comment has no access to the counts — keeping it correct would mean a
+  // second contract carrying the roster. The brief on the course page is built
+  // from the blueprint itself, so it cannot disagree with what was created.
+  assert.equal(body.includes("`admin`, `teacher` and"), false);
+  assert.equal(body.includes("all exist"), false);
+});
+
+test("arriving as admin carries the caveat that admin is not a teacher", () => {
+  // This paragraph used to exist ONLY for `teacher` and simply vanished for
+  // admin — the one case where it matters, and now a reachable one, because
+  // teachers: 0 signs the reviewer in as admin by design.
+  const body = renderComment({ ...ok, user: "admin" });
+  assert.match(body, /You are an administrator here/);
+  assert.match(body, /not enrolled/);
+  const asTeacher = renderComment({ ...ok, user: "teacher" });
+  assert.match(asTeacher, /Deliberately not admin/);
+  assert.equal(asTeacher.includes("You are an administrator here"), false);
 });
 
 test("it warns that absence is quiet and names the proxy as the cause", () => {

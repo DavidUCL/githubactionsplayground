@@ -1637,3 +1637,338 @@ test("truncation and clamping are reported as the different things they are", as
   assert.equal(said.join(" ").includes("outside"), false, said.join(" "));
   assert.match(said.join(" "), /not a whole number/);
 });
+
+// ---- the teachers control ------------------------------------------------
+
+const usersOf = (bp) => bp.steps.find((s) => s.step === "createUsers").users;
+const enrolOf = (bp) => bp.steps.find((s) => s.step === "enrolUsers").enrolments;
+const loginOf = (bp) => bp.steps.find((s) => s.step === "login").username;
+const briefOf = (bp) => bp.steps.find((s) => s.step === "addModule").intro;
+
+test("one teacher by default, and the default preview is unchanged", () => {
+  const bp = buildBlueprint(base);
+  assert.deepEqual(usersOf(bp).map((u) => u.username), ["teacher", "student1"]);
+  assert.deepEqual(enrolOf(bp).map((e) => e.role), ["editingteacher", "student"]);
+  // Omitting the option and passing the default must be the same preview. This
+  // is what keeps every link and saved command from before the control valid.
+  assert.deepEqual(buildBlueprint({ ...base, teachers: 1 }), bp);
+});
+
+test("the second teacher is inserted at index 1, NOT appended after the students", () => {
+  const bp = buildBlueprint({ ...base, teachers: 2, students: 3 });
+  assert.deepEqual(usersOf(bp).map((u) => u.username), [
+    "teacher", "teacher2", "student1", "student2", "student3",
+  ]);
+  assert.equal(usersOf(bp)[1].username, "teacher2");
+  assert.equal(enrolOf(bp)[1].username, "teacher2");
+  // Appending instead would make the `teachers` blueprint diff byte-identical
+  // to the `students` one — check 1o compares list elements by index over the
+  // common prefix — and the gate would refuse a CORRECT build. Plant
+  // `1o-overlap` proves the gate half; this is the builder half.
+});
+
+test("both teachers can edit — a non-editing second teacher would read as a bug", () => {
+  const bp = buildBlueprint({ ...base, teachers: 2 });
+  const roles = enrolOf(bp).filter((e) => e.username.startsWith("teacher")).map((e) => e.role);
+  assert.deepEqual(roles, ["editingteacher", "editingteacher"]);
+  // Moodle's non-editing `teacher` role is a strict subset: 88 core
+  // capabilities are editingteacher-only and none are teacher-only, so a
+  // non-editing teacher2 could not add an activity of any kind.
+  assert.equal(roles.includes("teacher"), false);
+});
+
+test("teachers: 0 creates none, and signs the reviewer in as admin", () => {
+  const bp = buildBlueprint({ ...base, teachers: 0 });
+  assert.deepEqual(usersOf(bp).map((u) => u.username), ["student1"]);
+  assert.equal(enrolOf(bp).some((e) => e.username.startsWith("teacher")), false);
+  // NOT student1: the default landing for a `mod` plugin is the modedit ADD
+  // FORM, which a student cannot open — the commonest preview would greet the
+  // reviewer with a permission error.
+  assert.equal(loginOf(bp), "admin");
+  // And the steps still exist, with the teacher simply absent. An empty users
+  // array is a legal no-op; branching to omit the step would add a path
+  // exercised only at 0 students AND 0 teachers.
+  assert.ok(bp.steps.some((s) => s.step === "createUsers"));
+  assert.ok(bp.steps.some((s) => s.step === "enrolUsers"));
+});
+
+test("teachers: 0 does not override an explicit login-as", () => {
+  // The count decides the DEFAULT. Someone who asked for student1 gets it.
+  const bp = buildBlueprint({ ...base, teachers: 0, loginAs: "student1" });
+  assert.equal(loginOf(bp), "student1");
+});
+
+test("the review brief names the accounts that exist, and no others", () => {
+  const two = briefOf(buildBlueprint({ ...base, teachers: 2, students: 2 }));
+  for (const u of ["admin", "teacher", "teacher2", "student1", "student2"]) {
+    assert.ok(two.includes(`<code>${u}</code>`), `the brief should name ${u}`);
+  }
+  const none = briefOf(buildBlueprint({ ...base, teachers: 0 }));
+  // The brief used to hardcode "admin, teacher, student1" — so a preview with
+  // no teacher told the reviewer, on the course page, to log in as one.
+  assert.equal(none.includes("<code>teacher</code>"), false);
+  assert.match(none, /NO teacher/);
+  assert.match(none, /administrator/);
+  // ...and the caveat appears only when it is true.
+  assert.equal(two.includes("NO teacher"), false);
+});
+
+test("a teacherless preview says so where a reviewer will actually read it", () => {
+  // Three artifacts carry the roster, and all three used to be wrong at 0:
+  // the blueprint (fixed above), the brief (fixed above) and the summary.
+  // Without this the only evidence of the count is the count itself.
+  const bp = buildBlueprint({ ...base, teachers: 0 });
+  assert.equal(JSON.stringify(bp).includes('"teacher"'), false);
+});
+
+// ---- refusing a login that cannot happen ---------------------------------
+
+test("login-as names the two boxes that disagree, not an internal check", async () => {
+  const { checkLoginAs } = await import("../scripts/build-preview.mjs");
+  assert.deepEqual(checkLoginAs({ loginAs: "", teachers: 0, students: 1 }), []);
+  assert.deepEqual(checkLoginAs({ loginAs: "teacher", teachers: 1, students: 1 }), []);
+  assert.deepEqual(checkLoginAs({ loginAs: "teacher2", teachers: 2, students: 1 }), []);
+  assert.deepEqual(checkLoginAs({ loginAs: "admin", teachers: 0, students: 1 }), []);
+
+  const noTeacher = checkLoginAs({ loginAs: "teacher", teachers: 0, students: 1 });
+  assert.equal(noTeacher.length, 1);
+  assert.match(noTeacher[0], /teachers field is set to 0/);
+  assert.match(noTeacher[0], /sign in as admin or student1/);
+
+  const oneTeacher = checkLoginAs({ loginAs: "teacher2", teachers: 1, students: 1 });
+  assert.equal(oneTeacher.length, 1);
+  assert.match(oneTeacher[0], /only teacher is created/);
+  assert.match(oneTeacher[0], /set teachers to 2/);
+
+  // A name that is not an account at all gets ONE reason, not two — the count
+  // advice cannot help someone who typed a name that never exists.
+  const bogus = checkLoginAs({ loginAs: "teacher9", teachers: 2, students: 1 });
+  assert.equal(bogus.length, 1);
+  assert.match(bogus[0], /only accounts the blueprint creates/);
+  // The pre-existing student case still behaves, including its one-reason rule.
+  assert.equal(checkLoginAs({ loginAs: "student99", teachers: 1, students: 1 }).length, 1);
+  assert.match(checkLoginAs({ loginAs: "student5", teachers: 1, students: 1 })[0], /raise the student count/);
+});
+
+test("the string \"0\" from the form survives the trip to a teacher count", async () => {
+  const { clampCount } = await import("../scripts/build-preview.mjs");
+  // THE GAP THIS CLOSES, measured. Nothing exercised teachers: 0 through the
+  // env: the probe row probes "2", and every unit test passes a NUMBER. So the
+  // ordinary tidy-up `clampCount(Number(process.env[X]) || fallback, ...)` —
+  // which turns the string "0" into 1, because 0 is falsy — left the whole
+  // suite, check 1o and check 1u green while the form's 0 option built a
+  // one-teacher preview. 0 is the only value of this control that does anything
+  // novel, and it was the one value nothing tested end to end.
+  assert.equal(clampCount("0", 1, 0, 2), 0);
+  assert.equal(clampCount("1", 1, 0, 2), 1);
+  assert.equal(clampCount("2", 1, 0, 2), 2);
+  // ...and an empty box is the DEFAULT, not zero. A composite action passes an
+  // omitted input as "", so these two cases are one character apart and mean
+  // opposite things.
+  assert.equal(clampCount("", 1, 0, 2), 1);
+  assert.equal(clampCount(undefined, 1, 0, 2), 1);
+});
+
+test("the dispatch form's teachers box agrees with the count table", async () => {
+  const { COUNT_INPUTS, clampCount } = await import("../scripts/build-preview.mjs");
+  const fs = await import("node:fs");
+  const yaml = fs.readFileSync(
+    new global.URL("../.github/workflows/preview-a-plugin.yml", import.meta.url), "utf8");
+  // The FORM's default is a fourth copy of this number, and nothing pinned it:
+  // commit 1's test reads preview/action.yml, and probe-controls.py never opens
+  // .github/workflows at all. Setting it to "0" left everything green while
+  // every ordinary dispatch built a teacherless preview.
+  const block = /\n      teachers:\n([\s\S]*?)(?=\n      [a-z][a-z0-9-]*:\n)/.exec(yaml);
+  assert.ok(block, "the teachers input block moved");
+  const declared = /default:\s*"([^"]*)"/.exec(block[1]);
+  assert.ok(declared, "the form's teachers default must be QUOTED — an unquoted 0 makes the form vanish");
+  assert.equal(
+    clampCount(declared[1], COUNT_INPUTS.teachers.fallback, COUNT_INPUTS.teachers.min, COUNT_INPUTS.teachers.max),
+    COUNT_INPUTS.teachers.fallback,
+    `the form offers "${declared[1]}" as its default, which is not COUNT_INPUTS.teachers.fallback`,
+  );
+  // Every option must be QUOTED and inside the range, in both directions: an
+  // option outside it is silently clamped to something the reviewer did not ask
+  // for, and a missing one makes part of the range unreachable from the form.
+  const options = /options:\s*\[([^\]]*)\]/.exec(block[1]);
+  assert.ok(options, "the teachers options moved");
+  const values = options[1].split(",").map((v) => v.trim());
+  for (const v of values) {
+    assert.match(v, /^"[0-9]+"$/, `every teachers option must be quoted, got ${v}`);
+  }
+  const nums = values.map((v) => Number(v.replace(/"/g, "")));
+  assert.deepEqual(
+    nums, [0, 1, 2],
+    "the form must offer exactly the range COUNT_INPUTS.teachers allows",
+  );
+  assert.equal(Math.min(...nums), COUNT_INPUTS.teachers.min);
+  assert.equal(Math.max(...nums), COUNT_INPUTS.teachers.max);
+});
+
+test("every option the dispatch form offers is an account the builder accepts", async () => {
+  const { checkLoginAs } = await import("../scripts/build-preview.mjs");
+  const fs = await import("node:fs");
+  const yaml = fs.readFileSync(
+    new global.URL("../.github/workflows/preview-a-plugin.yml", import.meta.url), "utf8");
+  // The dropdown and the builder's allowlist are two independent lists with
+  // nothing binding them. Adding teacher2 to the form alone would render a
+  // control that is refused 100% of the time, with a message saying the account
+  // does not exist — a green gate and an unusable box.
+  const block = /\n      login-as:\n([\s\S]*?)(?=\n      [a-z][a-z0-9-]*:\n)/.exec(yaml);
+  assert.ok(block, "the login-as input block moved");
+  const options = [...block[1].matchAll(/^\s+- "?([A-Za-z0-9()._-]+)"?$/gm)].map((m) => m[1]);
+  assert.ok(options.length >= 6, `expected the dropdown's options, got ${JSON.stringify(options)}`);
+  const { COUNT_INPUTS, teacherNames } = await import("../scripts/build-preview.mjs");
+  for (const opt of options.filter((o) => o !== "(default)")) {
+    // At the maximum counts, every offered account must exist.
+    assert.deepEqual(
+      checkLoginAs({ loginAs: opt, teachers: COUNT_INPUTS.teachers.max, students: COUNT_INPUTS.students.max }), [],
+      `the form offers "${opt}" but the builder refuses it`,
+    );
+  }
+  // AND THE OTHER DIRECTION, which the first version of this test left open:
+  // deleting `- teacher2` from the dropdown passed, leaving the teachers: 2
+  // control building an account no reviewer could ever select. Every teacher
+  // the maximum count creates must be offered. Students are deliberately NOT
+  // symmetric — the count goes to 20 and offering twenty options would bury the
+  // three that matter.
+  for (const account of ["admin", ...teacherNames(COUNT_INPUTS.teachers.max)]) {
+    assert.ok(
+      options.includes(account),
+      `the builder can create "${account}" but the login-as dropdown does not offer it`,
+    );
+  }
+});
+
+// ---- the run summary -----------------------------------------------------
+
+// The reviewer's only statement of what the link will do. It had NO unit
+// coverage until the mutation harness proved the cost: deleting the teacher
+// count from it, and making it name a different account from the one the link
+// signs you in as, both survived with the whole suite green.
+const summaryOpts = {
+  type: "mod", name: "attendance", headSha: SHA, url: "https://example.invalid/?blueprint=x",
+  component: "mod_attendance", headRepo: "DavidUCL/moodle-mod_attendance",
+  extras: { list: "", themeSummary: "" }, moodleBranch: "MOODLE_500_STABLE",
+  signedInAs: "teacher", php: "8.3", restore: null,
+  teachers: 1, students: 1, sections: 3,
+  landingPage: "/course/modedit.php?add=attendance&course=2&section=1",
+  versionPhp: "version.php", core: { ok: true, standard: new Set(["mod_assign"]) },
+  risky: [], loginAs: "",
+};
+
+test("the summary states the counts it actually built", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  const one = previewSummary(summaryOpts).join("\n");
+  assert.match(one, /1 teacher\(s\), 1 student\(s\), 3 section\(s\)/);
+  const two = previewSummary({ ...summaryOpts, teachers: 2, students: 5, sections: 7 }).join("\n");
+  assert.match(two, /2 teacher\(s\), 5 student\(s\), 7 section\(s\)/);
+  // A restore ignores the section count, so the summary must not claim one —
+  // but the people counts are still ours and must still appear.
+  const restored = previewSummary({
+    ...summaryOpts, teachers: 0, restore: { info: { activityCount: 10 } },
+  }).join("\n");
+  assert.match(restored, /0 teacher\(s\), 1 student\(s\), restored from a backup \(10 activities\)/);
+  assert.equal(restored.includes("section(s)"), false);
+});
+
+test("the summary names the account the link actually signs you in as", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  // Not recomputed from the landing page — read back off the blueprint, so it
+  // cannot disagree with the login step. Prove it tracks the argument.
+  const row = (u) => `| signed in as | \`${u}\` |`;
+  assert.ok(previewSummary({ ...summaryOpts, signedInAs: "admin" }).includes(row("admin")));
+  assert.ok(previewSummary({ ...summaryOpts, signedInAs: "student1" }).includes(row("student1")));
+  const asTeacher = previewSummary(summaryOpts);
+  assert.ok(asTeacher.includes(row("teacher")));
+  assert.equal(asTeacher.includes(row("admin")), false);
+});
+
+test("a teacherless preview says so under the summary table, and only then", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  const none = previewSummary({ ...summaryOpts, teachers: 0, signedInAs: "admin" }).join("\n");
+  assert.match(none, /No teacher was created/);
+  assert.match(none, /capability checks a plugin relies on are bypassed/);
+  // Not when there IS a teacher...
+  assert.equal(previewSummary(summaryOpts).join("\n").includes("No teacher was created"), false);
+  // ...not when the reviewer chose a real account, because then the missing
+  // teacher did not decide anything...
+  const chosen = previewSummary({ ...summaryOpts, teachers: 0, loginAs: "student1", signedInAs: "student1" });
+  assert.equal(chosen.join("\n").includes("No teacher was created"), false);
+  // ...but DO say it when they asked for admin alongside teachers: 0. The old
+  // rule was `!loginAs`, which stayed silent exactly there.
+  const asked = previewSummary({ ...summaryOpts, teachers: 0, loginAs: "admin", signedInAs: "admin" });
+  assert.match(asked.join("\n"), /No teacher was created/);
+  // And never merely because the landing page needs an administrator: a block
+  // or local plugin lands on /admin/..., where no other account was possible.
+  const adminLanding = previewSummary({ ...summaryOpts, teachers: 1, signedInAs: "admin" });
+  assert.equal(adminLanding.join("\n").includes("No teacher was created"), false);
+});
+
+test("no env-derived value can forge a workflow command on the runner", async () => {
+  const { sanitiseForLog } = await import("../scripts/sanitise.mjs");
+  // The class, not the instance. `clampCount` was fixed first; a sweep of the
+  // other 22 env vars the action passes then found the same bug live in two
+  // more places — `PLUGIN_ROOT` interpolated into a note on a run that EXITS 0,
+  // and the error path dumping a refusal message's stack raw to stderr, which
+  // undid the sanitising `Problems.annotate()` had already applied.
+  //
+  // A newline starts a new line of runner output at column 0; `::` opens a
+  // command there. `::add-mask::` is the worst of them: it does not just forge
+  // an annotation, it makes the runner replace that string everywhere in the
+  // log afterwards — including inside the preview URL, which then prints
+  // as ***.
+  const payload = ".\n::add-mask::hunter2\n::error title=FORGED::pwned";
+  const safe = sanitiseForLog(payload);
+  assert.equal(safe.includes("\n"), false, "a newline survived");
+  assert.equal(safe.includes("::"), false, "a workflow command opener survived");
+  assert.equal(safe.includes("add-mask"), true, "the text itself should still be readable");
+});
+
+test("the review brief only claims the reviewer is an admin when they are", () => {
+  // Keyed on BOTH the count and the account. Keyed on the count alone it told a
+  // reviewer who chose login-as: student1 that they were an administrator —
+  // and that pairing is what preview/action.yml recommends for a capability-
+  // honest view, so it is the likeliest use of teachers: 0, not an edge case.
+  const asStudent = briefOf(buildBlueprint({ ...base, teachers: 0, loginAs: "student1" }));
+  assert.equal(asStudent.includes("administrator"), false);
+  const asAdmin = briefOf(buildBlueprint({ ...base, teachers: 0 }));
+  assert.match(asAdmin, /administrator/);
+  // ...and never merely because the landing page needs one. A local plugin
+  // lands on /admin/localplugins.php, where no other account was ever possible,
+  // so the caveat there is noise in the one artifact a reviewer must read.
+  const adminLanding = briefOf(buildBlueprint({
+    ...base, type: "local", name: "myplugin", teachers: 1,
+  }));
+  assert.equal(adminLanding.includes("administrator"), false);
+});
+
+test("the roster helpers obey the count table, not a literal of their own", async () => {
+  const { studentNames, teacherNames, COUNT_INPUTS } = await import("../scripts/build-preview.mjs");
+  // Called directly with an out-of-range number — which main() prevents via
+  // clampCount, so this is the only place the helpers' OWN bound is observable.
+  // It matters because the two clamps are what keep the summary's count and the
+  // blueprint's roster describing the same site.
+  assert.equal(studentNames(999).length, COUNT_INPUTS.students.max);
+  assert.equal(studentNames(0).length, COUNT_INPUTS.students.min);
+  assert.equal(teacherNames(999).length, COUNT_INPUTS.teachers.max);
+  assert.equal(teacherNames(-5).length, COUNT_INPUTS.teachers.min);
+});
+
+test("the reported account is read off the blueprint, not assumed", async () => {
+  const { signedInAsOf } = await import("../scripts/build-preview.mjs");
+  // The summary, the `preview-user` output and the login step must be one fact.
+  // This is read back from the finished blueprint precisely so they cannot
+  // disagree — and the disagreement is invisible to a reviewer, who sees only
+  // the summary. Cover the cases where the answer is NOT the default, or a
+  // constant would pass.
+  assert.equal(signedInAsOf(buildBlueprint(base)), "teacher");
+  assert.equal(signedInAsOf(buildBlueprint({ ...base, teachers: 0 })), "admin");
+  assert.equal(signedInAsOf(buildBlueprint({ ...base, loginAs: "student1" })), "student1");
+  assert.equal(signedInAsOf(buildBlueprint({ ...base, teachers: 2, loginAs: "teacher2" })), "teacher2");
+  // A local plugin lands on /admin/, so the derived account is admin there too.
+  assert.equal(signedInAsOf(buildBlueprint({ ...base, type: "local", name: "myplugin" })), "admin");
+  // And a blueprint with no login step is an internal error, not "undefined"
+  // printed into the reviewer's summary.
+  assert.throws(() => signedInAsOf({ steps: [{ step: "installMoodle" }] }), /no login step/);
+});

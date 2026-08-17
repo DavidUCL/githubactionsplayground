@@ -57,13 +57,28 @@ inputs:
     default: ""
   login-as:
     description: >-
-      Account the reviewer arrives as: admin, teacher, or student1..studentN.
+      Account the reviewer arrives as: admin, teacher, teacher2 (only when
+      `teachers` is 2), or student1..studentN.
       Blank, or the reserved token "(default)", derives it from the
       landing page (admin for admin pages, teacher
       elsewhere), which is right for most reviews but cannot know you want to
       see the plugin as a learner.
     required: false
     default: ""
+  teachers:
+    description: >-
+      How many EDITING teachers the review course gets: 1 (default), 0 or 2.
+
+      0 creates none, and the reviewer then arrives as `admin` — who can open
+      anything, so it is NOT what a teacher-less site looks like to a teacher.
+      Capability checks a plugin's own code relies on are bypassed by an
+      administrator. Use `login-as: student1` for a capability-honest view.
+
+      2 adds `teacher2`, also an editing teacher. Moodle's non-editing teacher
+      role is a strict subset of the editing one — it cannot add an activity —
+      so a second teacher that could not edit would read as a broken plugin.
+    required: false
+    default: "1"
   students:
     description: >-
       How many student accounts the review course gets (1-20, default 1).
@@ -246,6 +261,7 @@ runs:
         BUILT_BY: ${{ inputs.built-by }}
         PHP_VERSION: ${{ inputs.php-version }}
         LOGIN_AS: ${{ inputs.login-as }}
+        TEACHERS: ${{ inputs.teachers }}
         STUDENTS: ${{ inputs.students }}
         SECTIONS: ${{ inputs.sections }}
         SAMPLE_CONTENT: ${{ inputs.sample-content }}

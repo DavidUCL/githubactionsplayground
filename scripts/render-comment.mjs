@@ -74,13 +74,31 @@ export function renderComment({ url, plugin, headSha, runUrl, user = "admin", al
     `Boots a throwaway Moodle **in your browser tab**, with \`${plugin}\` built`,
     `from commit \`${short}\`.`,
     "",
-    `The link logs you in as **\`${user}\`**. \`admin\`, \`teacher\` and`,
-    "`student1` all exist, password **`password`**, so you can switch to check",
-    "a different role.",
+    // The accounts are NOT enumerated here. This comment used to say "admin,
+    // teacher and student1 all exist", which is false when the preview has no
+    // teacher and incomplete when it has two — and keeping it correct would
+    // mean threading the roster through a second contract. The review brief on
+    // the course page lists what actually exists, and is built from the
+    // blueprint itself, so point at it instead of duplicating it.
+    `The link logs you in as **\`${user}\`**. The review brief on the course`,
+    "page lists every account the preview created; the password is",
+    "**`password`**, so you can switch to check a different role.",
     ...(user === "teacher"
       ? [
           "",
           "**Deliberately not admin.**",
+        ]
+      : []),
+    // The admin arm. Without it this paragraph simply VANISHED whenever the
+    // reviewer arrived as admin — the one case where the caveat matters, since
+    // an administrator passes capability checks a plugin's own code relies on
+    // and is not enrolled, so completion never evaluates for them.
+    ...(user === "admin"
+      ? [
+          "",
+          "**You are an administrator here.** Admin bypasses the capability",
+          "checks a plugin relies on and is not enrolled in the course, so some",
+          "behaviour differs from a real teacher's.",
         ]
       : []),
     "",

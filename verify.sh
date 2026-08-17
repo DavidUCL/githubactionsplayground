@@ -58,6 +58,15 @@ echo "=== verify.sh — boot-verify action gate ==="
 node --test test/*.test.mjs >/tmp/bv-verify-unit.log 2>&1
 check $? 1 "unit suite (log: /tmp/bv-verify-unit.log)"
 
+# Every mutant's anchor must still match its source line — 2.5s, and it runs
+# FIRST because it is the failure the slow run reports worst. A stale anchor is
+# not a weak test, it is a mutant that never executed: the assertion it guards
+# has been unguarded since the line moved. That has happened three times here,
+# always because of the author's own edit, and the full run only says so after
+# twenty minutes. Same code, same list, no second definition to drift.
+MUTATIONS_ANCHORS_ONLY=1 node test/mutations.mjs >/tmp/bv-verify-anchors.log 2>&1
+check $? 1a2 "every mutation anchor still matches (log: /tmp/bv-verify-anchors.log)"
+
 # Anti-vacuity: every assertion term must be pinned by some test. Without
 # this, a green suite proves nothing:
 # the first version of these tests let 13 of 14 terms be deleted silently.
@@ -623,7 +632,7 @@ if row is None:
     sys.exit("1o-unmet plant: no sections row")
 # A field `sections` demonstrably does not touch. Declared but never observed is
 # exactly the stale-row shape.
-row["expect_paths"] = sorted(set(row["expect_paths"]) | {"steps[*].numsectionsXX"})
+row["expect_paths"] = sorted(set(row["expect_paths"]) | {"steps[*].bogusField"})
 table["probes"] = [row]
 json.dump(table, open(f"{out}/probes.json", "w"))
 # Derived from the real action, never hand-written: a hand-written copy drifts
@@ -639,7 +648,11 @@ then
     if [[ $UNMET_RC -eq 0 ]]; then
         echo "CHECK 1o-unmet FAIL: the harness ACCEPTED a row declaring a field the control never changes"
         FAILED+=("1o-unmet: expect_paths is still a ceiling only")
-    elif [[ "$UNMET_OUT" != *"sections"* || "$UNMET_OUT" != *"numsectionsXX"* ]]; then
+    # The field name deliberately shares no substring with the row name, so
+    # each half of this assertion is earned separately. It used to be
+    # "numsectionsXX", which contains "sections" — the row-naming half passed
+    # even with the row name stripped out of the message.
+    elif [[ "$UNMET_OUT" != *"sections: declares fields"* || "$UNMET_OUT" != *"bogusField"* ]]; then
         echo "CHECK 1o-unmet FAIL: it failed for the WRONG reason — $UNMET_OUT"
         FAILED+=("1o-unmet: failed for an unrelated reason")
     else
@@ -650,6 +663,78 @@ else
     FAILED+=("1o-unmet: the plant could not be built")
 fi
 rm -rf "$UNMET_TMP"
+
+# ...and the fourth branch: two controls that produce the IDENTICAL blueprint
+# diff are two names for one thing. That is the env-swap bug — `MOODLE_BRANCH:
+# ${{ inputs.built-by }}` — which once passed a 17-check gate.
+#
+# `teachers` and `students` are the first pair whose paths legitimately OVERLAP
+# (both write steps[*].users and steps[*].enrolments), which is why the
+# comparison is on diffed VALUES rather than path sets. Until this control
+# landed, that branch had never been exercised by a real pair and had never been
+# seen to fail. Plant the bug it exists to catch: make TEACHERS drive the
+# student count, so both inputs produce the same diff.
+#
+# The plant asserts on the WORDING, not the exit code. The theme round cost two
+# red gates by matching an error's phrasing in one place and its step in
+# another; here the requirement is that the message NAMES BOTH INPUTS, because
+# a reader who is told only "two controls collide" has to guess which.
+OVERLAP_TMP=$(mktemp -d)
+if python3 - "$OVERLAP_TMP" <<'PY_OVERLAP'
+import json, shutil, sys, yaml
+out = sys.argv[1]
+table = json.load(open("test/fixtures/control-probes.json"))
+keep = {"teachers", "students"}
+rows = [r for r in table["probes"] if r["input"] in keep]
+if len(rows) != 2:
+    sys.exit(f"1o-overlap plant: expected rows for {keep}, found {[r['input'] for r in rows]}")
+table["probes"] = rows
+json.dump(table, open(f"{out}/probes.json", "w"))
+action = yaml.safe_load(open("preview/action.yml"))
+action["inputs"] = {k: v for k, v in action["inputs"].items() if k in keep}
+yaml.safe_dump(action, open(f"{out}/action.yml", "w"))
+# THE BUG: `teachers` stops driving the teacher count and drives the STUDENT
+# count instead, landing on the same 5 the students row probes with. Both
+# substitutions are needed. With only the second, the teachers probe still
+# changes the teacher count too, the two diffs differ, and the plant passes
+# while proving nothing — which is what the first draft of it did.
+shutil.copytree("scripts", f"{out}/scripts")
+src = open("scripts/build-preview.mjs").read()
+for old, new in [
+    ('  const teachers = count("teachers");',
+     "  const teachers = COUNT_INPUTS.teachers.fallback;"),
+    ('  const students = count("students");',
+     '  const students = count("teachers") > 1 ? 5 : count("students");'),
+]:
+    if src.count(old) != 1:
+        sys.exit(f"1o-overlap plant: anchor moved, update the plant: {old}")
+    src = src.replace(old, new, 1)
+open(f"{out}/scripts/build-preview.mjs", "w").write(src)
+PY_OVERLAP
+then
+    # Run the checker FROM the patched copy: ROOT comes from __file__ and the
+    # builder is invoked with cwd=ROOT, so this needs no new hook in the
+    # checker itself — the copy is the repo as far as it is concerned.
+    OVERLAP_OUT=$(PROBE_TABLE="$OVERLAP_TMP/probes.json" PROBE_ACTION="$OVERLAP_TMP/action.yml" \
+        python3 "$OVERLAP_TMP/scripts/probe-controls.py" 2>&1)
+    OVERLAP_RC=$?
+    if [[ $OVERLAP_RC -eq 0 ]]; then
+        echo "CHECK 1o-overlap FAIL: the harness ACCEPTED two controls wired to the same thing"
+        FAILED+=("1o-overlap: the identical-diff comparison does not fire")
+    # ONE line, not three greps over the whole output. The plant also provokes
+    # two unrelated problems that mention "teachers", so asserting on the tokens
+    # separately passed even when the message named a single control.
+    elif [[ "$OVERLAP_OUT" != *"students and teachers produce an identical blueprint diff"* ]]; then
+        echo "CHECK 1o-overlap FAIL: it failed for the WRONG reason — $OVERLAP_OUT"
+        FAILED+=("1o-overlap: failed for an unrelated reason")
+    else
+        echo "CHECK 1o-overlap PASS: two controls with one wiring are named, both of them"
+    fi
+else
+    echo "CHECK 1o-overlap FAIL: the plant could not be built"
+    FAILED+=("1o-overlap: the plant could not be built")
+fi
+rm -rf "$OVERLAP_TMP"
 
 # Every action/workflow file must parse, and every output the preview script
 # sets must be DECLARED by the action — an undeclared output silently arrives
