@@ -56,7 +56,20 @@ check() {
 echo "=== verify.sh — boot-verify action gate ==="
 
 node --test test/*.test.mjs >/tmp/bv-verify-unit.log 2>&1
-check $? 1 "unit suite (log: /tmp/bv-verify-unit.log)"
+UNIT_RC=$?
+# SKIPS ARE REPORTED, not buried in the log. A handful of tests reach
+# raw.githubusercontent.com and skip themselves when it is unreachable — which
+# is correct, but a test that skips asserts nothing, and a skip that becomes
+# permanent (a moved fixture repo, a probe URL that 404s forever) is a check
+# nobody notices has stopped checking. Printing the count is the cheapest thing
+# that makes that visible; it is not a gate, because being genuinely offline
+# must not fail the run.
+UNIT_SKIPPED=$(grep -cE '^ok .* # SKIP' /tmp/bv-verify-unit.log 2>/dev/null || echo 0)
+check "$UNIT_RC" 1 "unit suite, $UNIT_SKIPPED skipped (log: /tmp/bv-verify-unit.log)"
+if [[ "$UNIT_SKIPPED" -gt 0 ]]; then
+    echo "  note: $UNIT_SKIPPED test(s) skipped — network-dependent ones skip when their host is unreachable or throttling:"
+    grep -E '^ok .* # SKIP' /tmp/bv-verify-unit.log | sed 's/^/    /' | head -8
+fi
 
 # Every mutant's anchor must still match its source line — 2.5s, and it runs
 # FIRST because it is the failure the slow run reports worst. A stale anchor is
