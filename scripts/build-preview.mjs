@@ -26,6 +26,7 @@ import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
 import { gateBlueprint, assertNoPlaceholders, checkUrl } from "./preflight.mjs";
 import { buildRestoreAssertion } from "./restore-assert.mjs";
 import { buildThemeAssertion, buildThemeCssWarmup } from "./theme-assert.mjs";
+import { buildCourseAssertion } from "./course-assert.mjs";
 import { checkCourseBackup } from "./mbz.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
@@ -281,6 +282,30 @@ const COURSE_ID = 2;
  * constant makes it unrepresentable, which is better. What a test still has to
  * pin is the THIRD copy, in `preview/action.yml`, since YAML cannot import.
  */
+/**
+ * The course formats the `course-format` box offers, and the one it means by
+ * "leave it alone". Core formats only — this table governs THE BOX, not the
+ * blueprint: a course-format plugin under review legitimately sets a format
+ * name that is not in here, which is the whole point of previewing it.
+ *
+ * WHY A CLOSED LIST AND NOT FREE TEXT. `create_course()` does not validate the
+ * format at all (`course/lib.php:1969` inserts the row verbatim), and
+ * `core_courseformat\base::get_format_or_default()` then substitutes the site
+ * default with only a DEBUG_DEVELOPER message this runtime never displays.
+ * `/course/view.php:142-144` overwrites the value in memory before the renderer
+ * runs, so there is no error, no notice, and not even a body class: a typo in
+ * this box would boot a perfectly healthy-looking `topics` course. The form is
+ * a dropdown, but `preview/action.yml` accepts free text, so the refusal has to
+ * live in JS.
+ *
+ * `singleactivity` is here and works, but it moves every displayable activity
+ * out of section 0 and hides every section but that one — including the
+ * preview's own Review brief, which is the only place the logins are written
+ * down. `landingPath()` compensates; see the comment there.
+ */
+export const COURSE_FORMATS = ["topics", "weeks", "social", "singleactivity"];
+export const DEFAULT_COURSE_FORMAT = "topics";
+
 export const COUNT_INPUTS = {
   // 0 is a legal teacher count and 1 is the shape every preview had before the
   // control existed. The row is here rather than beside the control it serves
@@ -347,7 +372,7 @@ export function derivePlugin(repoFullName, overrides = {}) {
  * course_modules and bypasses the plugin's own add_instance(), so a working
  * mod plugin often renders blank — land on the add form instead.
  */
-export function landingPath(type, name, { restored = false } = {}) {
+export function landingPath(type, name, { restored = false, courseFormat = "" } = {}) {
   // A RESTORED course is not created by us, so its id is not knowable when the
   // link is built — "Course restored (id 2)" held in every boot measured, but
   // it holds only while nothing else makes a course first, and that is exactly
@@ -361,6 +386,23 @@ export function landingPath(type, name, { restored = false } = {}) {
   if (restored && (type === "mod" || type === "theme" || type === "format")) {
     return `/course/view.php?name=${COURSE_SHORTNAME}`;
   }
+  // `singleactivity` needs `&section=1`, and this is the only format that needs
+  // anything. It hides every section but 0 and MOVES every other displayable
+  // activity out of section 0 into section 1 — including the preview's own
+  // Review brief label, which is the only place the logins and the password are
+  // written down. It then redirects a reviewer who lands on the bare course
+  // page to "Adding a new Forum", because no single activity exists yet.
+  //
+  // `page_set_course()` returns without redirecting when a section is named and
+  // the user can view hidden sections (the teacher and admin accounts this
+  // preview creates both can), and the renderer is called as
+  // `display($course, $section != 0)`, which draws the orphaned-activities page
+  // — the one holding the brief. So `&section=1` both stops the redirect and
+  // shows the reviewer the thing they need.
+  const courseView = (fmt) =>
+    fmt === "singleactivity"
+      ? `/course/view.php?id=${COURSE_ID}&section=1`
+      : `/course/view.php?id=${COURSE_ID}`;
   switch (type) {
     case "mod":
       // CONFIRMED in a browser: the real add form, which runs the plugin's own
@@ -370,7 +412,7 @@ export function landingPath(type, name, { restored = false } = {}) {
     case "theme":
     case "format":
       // Both are applied to the course, so a content page shows them working.
-      return `/course/view.php?id=${COURSE_ID}`;
+      return courseView(courseFormat);
     // Below: admin pages verified in Moodle source to take no required
     // params. Stronger than the guesses they replace (an earlier qtype path
     // needed a `cmid` and would have shown the reviewer an error page), but
@@ -514,6 +556,63 @@ export function accountNames(students, teachers) {
  *
  * @returns {string[]}
  */
+/**
+ * Everything wrong with a `course-format` value, given what else was asked for.
+ * Zero, one or more reasons; each names the FORM FIELD at fault.
+ *
+ * Pulled out of main() so it can be tested at all — and, this time, tested in
+ * the same commit. The previous control learned the hard way that extracting a
+ * function so it CAN be tested is not the same as testing it: three refusals
+ * sat in main() where no unit test could reach them, and all three mutants
+ * survived a full gate run.
+ *
+ * @returns {string[]}
+ */
+export function checkCourseFormat({ courseFormat, type, name, restoreUrl }) {
+  if (!courseFormat) return [];
+  const reasons = [];
+  if (!COURSE_FORMATS.includes(courseFormat)) {
+    // A closed list, because Moodle does not check this at all: an unknown
+    // format is stored as typed and then rendered as the site default, with no
+    // error, no notice and nothing in the boot log. Returning early — the
+    // conflicts below are not worth reporting about a value that is not a
+    // format, and one field with two rows was a real complaint on `login-as`.
+    return [
+      `must be one of ${COURSE_FORMATS.join(", ")} — got ${JSON.stringify(courseFormat)}. ` +
+        `Moodle does NOT check this: an unknown format is stored as typed and then ` +
+        `rendered as an ordinary topics course, with nothing in the log to say so.`,
+    ];
+  }
+  // Two ways into one field. Refused rather than resolved: `format` is a single
+  // key on a single step, so whichever value lost would leave no trace anywhere
+  // — no step, no log line, nothing in the blueprint a reviewer could decode.
+  // That is worse than the theme conflict this mirrors, where both setThemes at
+  // least appear in the blueprint.
+  if (type === "format") {
+    reasons.push(
+      `the plugin under review IS a course format (${type}_${name}), so the review ` +
+        `course already uses it — setting this box to "${courseFormat}" as well would ` +
+        `replace it, and the preview would show a format that is not the one being ` +
+        `reviewed. Leave the box alone, or preview a different plugin.`,
+    );
+  }
+  // A restored course brings its OWN format, and the restore branch emits no
+  // createCourse step at all — so the box would be dropped at build time with
+  // nothing said, exactly as `sections` was until a reviewer noticed. `sections`
+  // was downgraded to a corrected summary because a wrong section count is
+  // cosmetic. The format is the thing the reviewer is looking AT, so it is a
+  // refusal.
+  if (restoreUrl) {
+    reasons.push(
+      `a course backup brings its own format, and a restored course is not created ` +
+        `by this preview — so "${courseFormat}" would be silently dropped and the ` +
+        `reviewer would see whatever format the backup was cut in. Pick the backup ` +
+        `or the format, not both.`,
+    );
+  }
+  return reasons;
+}
+
 export function checkLoginAs({ loginAs, teachers, students }) {
   if (!loginAs) return [];
   const reasons = [];
@@ -652,6 +751,10 @@ export function buildBlueprint({
   loginAs = "",
   // From the one table, so this default and main()'s fallback cannot drift
   // apart — they used to be separate literals that nothing compared.
+  // The course format. "" means the box was left alone, in which case the
+  // plugin under review decides (a format plugin previews itself) and topics is
+  // the floor. Emitted UNCONDITIONALLY below.
+  courseFormat = "",
   teachers = COUNT_INPUTS.teachers.fallback,
   students = COUNT_INPUTS.students.fallback,
   sections = COUNT_INPUTS.sections.fallback,
@@ -718,6 +821,11 @@ export function buildBlueprint({
     );
   }
 
+  // Which format the review course ends up in. Two ways in, ONE key: the box,
+  // or a course-format plugin previewing itself. They cannot both apply and the
+  // combination is refused in main(), because the loser of a duplicate key
+  // leaves no trace anywhere at all.
+  const activeFormat = courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT);
   const steps = [
     { step: "installMoodle" },
     {
@@ -792,9 +900,24 @@ export function buildBlueprint({
           // created above sits empty — the helper only honours a named category
           // on the course itself.
           category: "Review",
-          // A format plugin is only visible if the review course actually uses it
-          // — the exact analogue of setTheme for themes.
-          ...(type === "format" ? { format: name } : {}),
+          // ALWAYS emitted, never conditional. Two reasons. The blueprint is
+          // the artifact a reviewer can decode and read, and "no format key"
+          // means "whatever the handler defaults to today", which is a fact
+          // about someone else's code rather than about this preview. And
+          // check 1o compares two controls by the VALUES their diffs change:
+          // emitted conditionally, this control's diff has an empty value
+          // signature, which is the weak half of the identical-diff test.
+          // Behaviourally identical — phpCreateCourses already does
+          // `course.format || "topics"`.
+          //
+          // A format plugin under review previews ITSELF, which is the analogue
+          // of setTheme for themes. The box and a format plugin cannot both
+          // apply, and that combination is refused in main() rather than
+          // resolved here: they would be two values for one key in one object
+          // literal, so the loser would leave no trace anywhere — not a step,
+          // not a log line. That is worse than the theme conflict it mirrors,
+          // where both setThemes are at least visible in the blueprint.
+          format: activeFormat,
           numsections: sections,
         },
     // Immediately after the restore and BEFORE anything depends on the course:
@@ -806,6 +929,22 @@ export function buildBlueprint({
       modulenames: restore.info.modulenames,
       activityCount: restore.info.activityCount,
     })] : []),
+    // ...and the format assertion, on the createCourse path, ONLY when the
+    // format is not the default. A restored course brings its own format and
+    // emits no createCourse step at all, which is why the box is REFUSED
+    // alongside a restore rather than quietly dropped.
+    //
+    // NOT unconditional, and this is a departure from the written plan, made on
+    // a measurement: the assertion is ~1.4 KB of PHP and takes the preview URL
+    // from ~750 characters to 2117 on EVERY preview. `topics` is the default
+    // and resolves to itself unless core itself is broken, so at the default
+    // the step can only ever pass — the inert-assertion shape this project
+    // gates against. Every case where the format CAN be wrong is a case where
+    // it differs from the default: the box was set, or a format plugin is under
+    // review and previews itself under its own name.
+    ...(!restore && activeFormat !== DEFAULT_COURSE_FORMAT
+      ? [buildCourseAssertion({ format: activeFormat, shortname: COURSE_SHORTNAME })]
+      : []),
     {
       step: "createUsers",
       critical: true,
@@ -866,7 +1005,8 @@ export function buildBlueprint({
   // reviewer arrives as — and the login STEP itself is pushed much further
   // down, after the theme. Two derivations of the same fact is how the summary
   // and the link came to disagree in the first place, so there is exactly one.
-  const landing = landingOverride || landingPath(type, name, { restored: Boolean(restore) });
+  const landing =
+    landingOverride || landingPath(type, name, { restored: Boolean(restore), courseFormat: activeFormat });
   // `login-as` overrides the derived default. Derivation is a good default —
   // admin for admin pages, teacher elsewhere — but it cannot know you want to
   // see the plugin as a learner, and nothing else lets you.
@@ -1152,7 +1292,7 @@ export function setOutput(name, value) {
  */
 export function previewSummary({
   type, name, headSha, url, component, headRepo, extras, moodleBranch,
-  signedInAs, php, restore, teachers, students, sections, landingPage,
+  signedInAs, php, restore, teachers, students, sections, courseFormat, landingPage,
   versionPhp, core, risky, loginAs,
 }) {
   return [
@@ -1191,7 +1331,8 @@ export function previewSummary({
       course: restore
         ? `${teachers} teacher(s), ${students} student(s), restored from a backup ` +
           `(${restore.info.activityCount} activities)`
-        : `${teachers} teacher(s), ${students} student(s), ${sections} section(s)`,
+        : `${teachers} teacher(s), ${students} student(s), ${sections} section(s), ` +
+          `${courseFormat} format`,
       "landing page": landingPage,
       "version.php": versionPhp || "not checked out — compatibility NOT checked",
       "core components": core.ok
@@ -1208,6 +1349,18 @@ export function previewSummary({
     // about arriving as admin BECAUSE there was no teacher. `!loginAs` was the
     // wrong second half — someone who explicitly asks for `login-as: admin`
     // alongside `teachers: 0` should still be told.
+    // singleactivity is the one format that changes what the reviewer can see.
+    // It hides every section but 0 and moves every other displayable activity
+    // into section 1 — including this preview's own Review brief, which is the
+    // only place the logins and the password are written down.
+    ...(courseFormat === "singleactivity"
+      ? [
+          "> **`singleactivity` hides the course page.** It shows one activity and",
+          "> nothing else, so the Review brief with the logins is not on it — the",
+          "> landing page links straight to it, and the password is `password`.",
+          "",
+        ]
+      : []),
     ...(teachers === 0 && signedInAs === "admin"
       ? [
           "> **No teacher was created, so you arrive as `admin`.** An administrator",
@@ -1686,6 +1839,20 @@ async function main() {
     const c = COUNT_INPUTS[id];
     return clampCount(process.env[c.env], c.fallback, c.min, c.max);
   };
+  // The course format. `opt()` because it is a CHOICE input: "(default)" is the
+  // reserved token a dropdown uses for "unset", since a choice cannot be blank.
+  const courseFormat = opt(process.env.COURSE_FORMAT);
+  for (const reason of checkCourseFormat({
+    courseFormat,
+    type,
+    name,
+    // Read straight from the env: the restore is fetched further down, and this
+    // refusal is decidable from the text alone. Deciding it before any request
+    // is the same rule the theme control follows.
+    restoreUrl: opt(process.env.RESTORE_COURSE_URL) || opt(process.env.SAMPLE_CONTENT),
+  })) {
+    problems.add("course-format", reason);
+  }
   const teachers = count("teachers");
   const students = count("students");
   const sections = count("sections");
@@ -1839,6 +2006,7 @@ async function main() {
     builtBy,
     phpOverride,
     loginAs,
+    courseFormat,
     teachers,
     students,
     sections,
@@ -1906,7 +2074,20 @@ async function main() {
     teachers,
     students,
     sections,
-    landingPage: landingOverride || landingPath(type, name, { restored: Boolean(restore) }),
+    // The RESOLVED format, so the summary names what the course is actually in
+    // — which for a course-format plugin under review is the plugin's own name,
+    // not anything the box says.
+    courseFormat: courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT),
+    landingPage:
+      landingOverride ||
+      landingPath(type, name, {
+        restored: Boolean(restore),
+        // The summary must compute the landing page the SAME way the link did.
+        // singleactivity is the one format that changes it, and a summary
+        // naming a different page from the one the link opens is invisible to
+        // the reviewer, who sees only one of them.
+        courseFormat: courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT),
+      }),
     versionPhp: declared ? declared.path : "",
     core,
     risky,

@@ -1148,6 +1148,74 @@ import("./scripts/restore-assert.mjs").then(async (m) => {
         echo "CHECK 6 PASS: the post-restore assertion passes when right and fails when wrong"
     fi
 
+    # LIVE 8 — the course-format assertion must be able to FAIL, and must fail
+    # for the RIGHT reason.
+    #
+    # This one needs NO download: the whole blueprint is createCourse plus the
+    # assertion, all core. Unlike LIVE 7's theme arms — which waive on GitHub
+    # runners because the plugin ZIP proxy is unreachable from Actions — both
+    # arms here run everywhere, so neither is waivable and a red is always ours.
+    #
+    # 8b asserts exit 41 SPECIFICALLY, and that is the standing measurement, not
+    # a detail: 41 means "the resolved format is not what we asked for AND the
+    # course row still holds what we asked for". It is the proof that Moodle
+    # stores a bogus format verbatim and substitutes only at render time — which
+    # is WHY the assertion cannot be written as a read-back of the column. If
+    # someone collapses 41 and 43 into one code in a tidy-up, that proof is gone
+    # and the obvious-but-vacuous assertion looks correct again.
+    cf_boot() { # $1=label $2=format -> echoes the observed outcome
+        local CF_OUT="$WORK/cf_$1"
+        mkdir -p "$CF_OUT"
+        CF_DIR="$CF_OUT" CF_FMT="$2" node -e '
+import("./scripts/course-assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const c = await import("node:crypto");
+  const step = m.buildCourseAssertion({ format: process.env.CF_FMT, shortname: "REVIEW" });
+  const bp = { preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps: [
+    { step: "installMoodle" },
+    { step: "createCategory", name: "Review" },
+    { step: "createCourse", fullname: "Review", shortname: "REVIEW",
+      category: "Review", format: process.env.CF_FMT, numsections: 3 },
+    step,
+    { step: "setLandingPage", path: "/course/view.php?name=REVIEW" }] };
+  const body = JSON.stringify(bp, null, 2);
+  fs.writeFileSync(`${process.env.CF_DIR}/blueprint.json`, body);
+  const sha = c.createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(`${process.env.CF_DIR}/preflight.json`,
+    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }));
+  fs.writeFileSync(`${process.env.CF_DIR}/expectations.json`, JSON.stringify({
+    blueprintUrl: "loopback", blueprintSha256: sha, stepCount: 5,
+    stepNames: ["installMoodle", "createCategory", "createCourse", "runPhpCode", "setLandingPage"],
+    pluginSteps: [] }));
+});
+' >/dev/null 2>&1
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$CF_OUT" \
+            BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/cf-$1.json" \
+            node scripts/boot-capture.mjs >>/tmp/bv-verify-format.log 2>&1
+        grep -oE 'failed with exit code [0-9]+|Blueprint step 5/5: setLandingPage|Blueprint failed at step [0-9]+:[a-zA-Z]+.*' \
+            "$CF_OUT/boot-log.txt" 2>/dev/null | head -1
+    }
+    : >/tmp/bv-verify-format.log
+    # `weeks` rather than `topics`: topics is the site default, so it would pass
+    # even if the assertion compared against the fallback instead of the ask.
+    CF_GOOD=$(cf_boot weeks weeks)
+    CF_BAD=$(cf_boot bogus nosuchformat)
+    CF_PROBLEMS=""
+    [[ "$CF_GOOD" == *"setLandingPage"* ]] || CF_PROBLEMS+="a real format did not complete (got: ${CF_GOOD:-nothing}); "
+    if [[ "$CF_BAD" != *"exit code 41"* ]]; then
+        if [[ "$CF_BAD" == *"exit code 43"* ]]; then
+            CF_PROBLEMS+="a format Moodle does not have exited 43, not 41 — 43 means the course row NO LONGER holds the format we asked for, so Moodle has started rewriting it. If that is now true, the assertion may read the column after all and this whole design should be revisited; "
+        else
+            CF_PROBLEMS+="a format Moodle does not have was NOT caught (got: ${CF_BAD:-nothing}) — a preview would render an ordinary topics course and say nothing; "
+        fi
+    fi
+    if [[ -n "$CF_PROBLEMS" ]]; then
+        echo "CHECK 8 FAIL: the course-format assertion is not doing its job — $CF_PROBLEMS"
+        FAILED+=("8: course-format assertion cannot fail")
+    else
+        echo "CHECK 8 PASS: a real format boots and a format Moodle does not have exits 41 (not 43 — the row keeps the bogus value)"
+    fi
+
     # LIVE 7 — the theme control, in a real browser.
     #
     # Nothing offline can prove any of this. The failures the `theme` control

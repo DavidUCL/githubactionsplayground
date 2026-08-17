@@ -68,6 +68,30 @@ const CASES = {
       },
     ],
   },
+  // A course-format plugin previewing ITSELF. The only case pinning three
+  // things at once: the format is the plugin's own name (not the box, not
+  // topics), the format assertion rides along because that name is not the
+  // default, and the landing page is the course rather than an admin page.
+  // Nothing covered this before — the `type === "format"` branch was pinned by
+  // one mutant and no snapshot.
+  format: {
+    headRepo: "DavidUCL/moodle-format_tiles",
+    headSha: SHA,
+    prNumber: "9",
+    type: "format",
+    name: "tiles",
+  },
+  // The `course-format` BOX, on an ordinary plugin. Pins that a non-default
+  // format brings the assertion with it, and that singleactivity moves the
+  // landing page — the format that hides the review brief.
+  "course-format": {
+    headRepo: "DavidUCL/moodle-mod_attendance",
+    headSha: SHA,
+    prNumber: "11",
+    type: "mod",
+    name: "attendance",
+    courseFormat: "singleactivity",
+  },
   unknown: {
     headRepo: "DavidUCL/local_myplugin",
     headSha: SHA,
@@ -279,6 +303,17 @@ test("the action's own blueprint uses no risky step it did not generate itself",
     for (const s of risky) {
       assert.match(s.code, /^<\?php define\('CLI_SCRIPT',true\);/, `${name}: ${s.step}`);
       assert.equal(s.code.includes("\n"), false, `${name}: ${s.step} is multi-line`);
+      // ...and NO `//` COMMENT, which is only safe to say because of the line
+      // above. Every generator collapses its PHP onto one physical line, so a
+      // `//` comment silently swallows the entire rest of the program. Written
+      // and shipped: a draft of the course-format assertion commented out its
+      // own startdate fix, its comparison and both of its failing exits, and
+      // would have exited 0 on every boot including the broken ones. It looked
+      // completely ordinary in the source.
+      assert.equal(
+        s.code.includes("//"), false,
+        `${name}: ${s.step} carries a // comment, which on one line comments out everything after it`,
+      );
     }
   }
 });

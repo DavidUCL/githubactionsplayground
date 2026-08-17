@@ -76,8 +76,10 @@ scripts/build-preview.mjs   plugin identity (repo convention or explicit)
                               install the plugin from the head COMMIT, a review
                               course named for the PR + commit, the teachers and
                               students the form asked for (one of each by
-                              default, teachers settable to 0 or 2), and a
-                              landing page per plugin type
+                              default, teachers settable to 0 or 2), the course
+                              format (topics unless asked otherwise, and proved
+                              in-band because Moodle silently ignores one it
+                              does not have), and a landing page per plugin type
                             → gzip + base64url into ?blueprint= (~1.1 KB)
 ```
 
@@ -121,6 +123,27 @@ Three things about it are worth knowing before you use it:
 A theme whose parent is decided at runtime (boost_union sets its parents in
 both arms of a Workplace check) is a WARNING, not a refusal: the preview cannot
 tell which parent will be needed, says so, and carries on.
+
+### Picking the course format (`course-format`)
+
+The review course is a `topics` course unless you say otherwise. `weeks`,
+`social` and `singleactivity` are the alternatives, and a course-format plugin
+under review previews itself — setting the box as well is refused, because
+`format` is one key on one step and the value that lost would leave no trace at
+all.
+
+The reason this box is validated rather than passed through: **Moodle does not
+check a course format.** `create_course()` stores whatever string it is given,
+and the page then renders the site default instead, with no error, no notice and
+nothing in the boot log. A typo would give you a perfectly healthy-looking
+ordinary course. So the list is closed, and the preview proves in-band that the
+format really took effect before you arrive — reading the RESOLVED format, not
+the database column, because the column holds the value you asked for whether or
+not it exists.
+
+`singleactivity` is worth one warning: it shows a single activity and hides the
+course page, including this preview's own review brief where the logins are
+written down. The landing page compensates by linking past it.
 
 Why the public playground is the default host: a preview runs unreviewed PHP
 in the visitor's browser, and the playground renders the site in an

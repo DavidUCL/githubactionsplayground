@@ -3,7 +3,7 @@
     "php": "8.3",
     "moodle": "MOODLE_500_STABLE"
   },
-  "landingPage": "/admin/localplugins.php",
+  "landingPage": "/course/view.php?id=2",
   "steps": [
     {
       "step": "installMoodle"
@@ -32,9 +32,9 @@
     },
     {
       "step": "installMoodlePlugin",
-      "url": "https://github.com/DavidUCL/local_myplugin/archive/d0638b39df1c28fd93c27778ae2cbada7cc1660f.zip",
-      "pluginType": "local",
-      "pluginName": "myplugin",
+      "url": "https://github.com/DavidUCL/moodle-format_tiles/archive/d0638b39df1c28fd93c27778ae2cbada7cc1660f.zip",
+      "pluginType": "format",
+      "pluginName": "tiles",
       "critical": true
     },
     {
@@ -44,12 +44,17 @@
     },
     {
       "step": "createCourse",
-      "fullname": "d0638b3 · local_myplugin",
+      "fullname": "PR #9 · d0638b3 · format_tiles",
       "shortname": "REVIEW",
       "critical": true,
       "category": "Review",
-      "format": "topics",
+      "format": "tiles",
       "numsections": 3
+    },
+    {
+      "step": "runPhpCode",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->dirroot . '/course/lib.php'); $want = 'tiles'; $c = $DB->get_record('course', array('shortname' => 'REVIEW')); if (!$c) { exit(42); } if (empty($c->startdate)) { $DB->set_field('course', 'startdate', usergetmidnight(time()), array('id' => $c->id)); rebuild_course_cache($c->id, true); $c = $DB->get_record('course', array('id' => $c->id)); } try { $got = course_get_format($c)->get_format(); } catch (Throwable $e) { exit(44); } error_log('course-format: asked=' . $want . ' column=' . $c->format . ' resolved=' . $got . ' installed=' . (is_dir($CFG->dirroot . '/course/format/' . $want) ? '1' : '0')); if ($got === $want) { exit(0); } exit($c->format === $want ? 41 : 43);",
+      "critical": true
     },
     {
       "step": "createUsers",
@@ -90,16 +95,16 @@
       "course": "REVIEW",
       "section": 0,
       "name": "Review brief",
-      "intro": "<p><strong>d0638b3 · local_myplugin</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
+      "intro": "<p><strong>PR #9 · d0638b3 · format_tiles</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
     },
     {
       "step": "login",
-      "username": "admin",
+      "username": "teacher",
       "critical": true
     },
     {
       "step": "setLandingPage",
-      "path": "/admin/localplugins.php"
+      "path": "/course/view.php?id=2"
     }
   ]
 }

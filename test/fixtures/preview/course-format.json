@@ -32,13 +32,6 @@
     },
     {
       "step": "installMoodlePlugin",
-      "url": "https://github.com/moodle-an-hochschulen/moodle-theme_boost_union/archive/1cf4a2e39ab1b46b1e0c1e0b64a0e19f6f0f7a21.zip",
-      "pluginType": "theme",
-      "pluginName": "boost_union",
-      "critical": true
-    },
-    {
-      "step": "installMoodlePlugin",
       "url": "https://github.com/DavidUCL/moodle-mod_attendance/archive/d0638b39df1c28fd93c27778ae2cbada7cc1660f.zip",
       "pluginType": "mod",
       "pluginName": "attendance",
@@ -51,12 +44,17 @@
     },
     {
       "step": "createCourse",
-      "fullname": "PR #42 · d0638b3 · mod_attendance",
+      "fullname": "PR #11 · d0638b3 · mod_attendance",
       "shortname": "REVIEW",
       "critical": true,
       "category": "Review",
-      "format": "topics",
+      "format": "singleactivity",
       "numsections": 3
+    },
+    {
+      "step": "runPhpCode",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->dirroot . '/course/lib.php'); $want = 'singleactivity'; $c = $DB->get_record('course', array('shortname' => 'REVIEW')); if (!$c) { exit(42); } if (empty($c->startdate)) { $DB->set_field('course', 'startdate', usergetmidnight(time()), array('id' => $c->id)); rebuild_course_cache($c->id, true); $c = $DB->get_record('course', array('id' => $c->id)); } try { $got = course_get_format($c)->get_format(); } catch (Throwable $e) { exit(44); } error_log('course-format: asked=' . $want . ' column=' . $c->format . ' resolved=' . $got . ' installed=' . (is_dir($CFG->dirroot . '/course/format/' . $want) ? '1' : '0')); if ($got === $want) { exit(0); } exit($c->format === $want ? 41 : 43);",
+      "critical": true
     },
     {
       "step": "createUsers",
@@ -97,27 +95,12 @@
       "course": "REVIEW",
       "section": 0,
       "name": "Review brief",
-      "intro": "<p><strong>PR #42 · d0638b3 · mod_attendance</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
-    },
-    {
-      "step": "setTheme",
-      "name": "boost_union",
-      "critical": true
-    },
-    {
-      "step": "runPhpCode",
-      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; if(!is_dir($CFG->dirroot.'/theme/'.$t)) exit(31); if((string)($CFG->theme ?? '') !== $t) exit(32); try { $th = theme_config::load($t); } catch (Throwable $e) { exit(34); } if($th->name !== $t) exit(33); exit(0);",
-      "critical": true
+      "intro": "<p><strong>PR #11 · d0638b3 · mod_attendance</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
     },
     {
       "step": "login",
       "username": "teacher",
       "critical": true
-    },
-    {
-      "step": "runPhpCode",
-      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); require_once($CFG->libdir.'/outputlib.php'); $t='boost_union'; try { $th = theme_config::load($t); } catch (Throwable $e) { exit(0); } $dir = right_to_left() ? 'rtl' : 'ltr'; try { theme_build_css_for_themes(array($th), array($dir)); } catch (Throwable $e) { error_log('theme-css-build-failed: '.$e->getMessage()); exit(0); } $f = theme_get_css_filename($t, theme_get_revision(), theme_get_sub_revision_for_theme($t), $dir); $sz = is_readable($f) ? filesize($f) : -1; if($sz < 50000) error_log('theme-css-build-failed: '.$t.' produced '.$sz.' bytes of CSS (may be normal for a theme that ships plain CSS)'); exit(0);",
-      "critical": false
     },
     {
       "step": "setLandingPage",

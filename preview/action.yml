@@ -90,6 +90,28 @@ inputs:
     description: "How many sections the review course has (1-20, default 3)."
     required: false
     default: "3"
+  course-format:
+    description: >-
+      Course format for the review course: topics (the default), weeks, social
+      or singleactivity. Blank, or the reserved token "(default)", means topics.
+
+      REFUSED rather than substituted when the value is not one of those four.
+      Moodle does not validate a course format: `create_course()` stores the
+      string verbatim and `/course/view.php` then renders the site default
+      instead, with no error, no notice and nothing in the boot log — so a typo
+      here would produce a healthy-looking ordinary course and the reviewer
+      would never know the setting was ignored. The preview also proves in-band
+      that the format really took effect before the reviewer arrives.
+
+      Not for use when the plugin under review IS a course format: the review
+      course already uses it, and setting this as well is refused rather than
+      silently replacing it. Refused alongside a course backup too, since a
+      restored course brings its own format and this preview does not create it.
+
+      `singleactivity` shows one activity and hides the course page, including
+      the preview's own review brief; the landing page compensates.
+    required: false
+    default: ""
   plugin-root:
     description: >-
       Directory holding the plugin's version.php, relative to the workspace.
@@ -264,6 +286,7 @@ runs:
         TEACHERS: ${{ inputs.teachers }}
         STUDENTS: ${{ inputs.students }}
         SECTIONS: ${{ inputs.sections }}
+        COURSE_FORMAT: ${{ inputs.course-format }}
         SAMPLE_CONTENT: ${{ inputs.sample-content }}
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
         EXTRA_PLUGINS: ${{ inputs.extra-plugins }}

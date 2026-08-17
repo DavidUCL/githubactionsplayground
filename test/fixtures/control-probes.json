@@ -38,7 +38,8 @@
     "PLAYGROUND_HOST": "https://daviducl.github.io/moodle-playground",
     "SAMPLE_CONTENT": "(default)",
     "THEME": "",
-    "TEACHERS": "1"
+    "TEACHERS": "1",
+    "COURSE_FORMAT": "(default)"
   },
   "probes": [
     {
@@ -202,6 +203,18 @@
       ],
       "expect_summary_contains": "7 section(s)",
       "note": "expect_in_summary is VACUOUS for a one-digit probe and was measured to be: the baseline summary already contains \"5\" (MOODLE_500_STABLE) and \"2\" (&course=2&), so this row passed with writeSummary gutted - the exact bug the assertion exists to catch. Pin the sentence the summary actually prints instead."
+    },
+    {
+      "input": "course-format",
+      "env": "COURSE_FORMAT",
+      "probe": "weeks",
+      "target": "shape",
+      "expect_steps_added": [
+        "runPhpCode"
+      ],
+      "expect_steps_removed": [],
+      "expect_summary_contains": "weeks format",
+      "note": "probe is 'weeks', NOT 'topics': topics is the default, so probing it produces a byte-identical blueprint and the row would fail 'the input reaches nothing' on a correct build. And not 'singleactivity', which also moves the landing page and would make the row assert two things at once. target is 'shape' because a non-default format brings the format ASSERTION with it - a whole extra runPhpCode step - and an inserted step renumbers every index-normalised path after it. The assertion rides only a non-default format: at topics it could only ever pass, which is the inert-assertion shape this gate exists to refuse. expect_summary_contains has a SPACE in it deliberately: the summary carries the base64 blueprint blob, and a bare five-letter token can appear inside base64 by chance, but a space cannot."
     },
     {
       "input": "plugin-root",

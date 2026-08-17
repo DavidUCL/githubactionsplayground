@@ -48,6 +48,7 @@
       "shortname": "REVIEW",
       "critical": true,
       "category": "Review",
+      "format": "topics",
       "numsections": 3
     },
     {

@@ -1972,3 +1972,170 @@ test("the reported account is read off the blueprint, not assumed", async () => 
   // printed into the reviewer's summary.
   assert.throws(() => signedInAsOf({ steps: [{ step: "installMoodle" }] }), /no login step/);
 });
+
+// ---- the course-format control -------------------------------------------
+
+const courseOf = (bp) => bp.steps.find((s) => s.step === "createCourse");
+const phpOf = (bp) => bp.steps.filter((s) => s.step === "runPhpCode");
+
+test("the format is stated in the blueprint, always, never left to the handler", () => {
+  // `phpCreateCourses` defaults a missing format to topics, so omitting the key
+  // is behaviourally identical — but the blueprint is the artifact a reviewer
+  // can decode and read, and "no format key" is a fact about someone else's
+  // code rather than about this preview.
+  assert.equal(courseOf(buildBlueprint(base)).format, "topics");
+  assert.equal(courseOf(buildBlueprint({ ...base, courseFormat: "weeks" })).format, "weeks");
+});
+
+test("a course-format plugin previews itself, under its own name", () => {
+  const bp = buildBlueprint({ ...base, type: "format", name: "tiles" });
+  assert.equal(courseOf(bp).format, "tiles");
+  // ...and the assertion rides along, because that name is not the default and
+  // a format that failed to install renders as an ordinary topics course.
+  assert.equal(phpOf(bp).length, 1);
+  assert.match(phpOf(bp)[0].code, /\$want = 'tiles'/);
+});
+
+test("the format assertion rides a non-default format and nothing else", () => {
+  // At topics it could only ever pass — core resolving topics to topics — which
+  // is the inert-assertion shape this project gates against. It also costs
+  // ~1KB of URL on every preview, measured.
+  assert.equal(phpOf(buildBlueprint(base)).length, 0);
+  for (const f of ["weeks", "social", "singleactivity"]) {
+    assert.equal(phpOf(buildBlueprint({ ...base, courseFormat: f })).length, 1, f);
+  }
+});
+
+test("the assertion reads the RESOLVED format, not the column", async () => {
+  const { buildCourseAssertion } = await import("../scripts/course-assert.mjs");
+  const { code } = buildCourseAssertion({ format: "weeks", shortname: "REVIEW" });
+  // THE POINT OF THE WHOLE FILE. Moodle stores a bogus format verbatim and then
+  // renders the site default, so `$DB->get_field('course','format',...) === $want`
+  // is TRUE in both the working and the broken case. Only the resolved format
+  // tells them apart.
+  assert.match(code, /course_get_format\(\$c\)->get_format\(\)/);
+  // The column IS read — but only to choose between exit 41 and 43, which is
+  // what makes LIVE 8b's "41 and not 43" a standing measurement that the column
+  // keeps the bogus value.
+  assert.match(code, /exit\(\$c->format === \$want \? 41 : 43\)/);
+  // Failure is only reportable with the CLI_SCRIPT define before config.php.
+  assert.match(code, /^<\?php define\('CLI_SCRIPT',true\);/);
+  assert.ok(code.indexOf("CLI_SCRIPT") < code.indexOf("config.php"));
+  // One line, and therefore no `//` — see the snapshot suite for why.
+  assert.equal(code.includes("\n"), false);
+  assert.equal(code.includes("//"), false);
+});
+
+test("the assertion refuses to be built from a name it cannot trust", async () => {
+  const { buildCourseAssertion } = await import("../scripts/course-assert.mjs");
+  for (const bad of ["we'eks", "we eks", "Weeks", "", "1weeks", "weeks;drop", "../etc"]) {
+    assert.throws(
+      () => buildCourseAssertion({ format: bad, shortname: "REVIEW" }),
+      /unsafe course format/,
+      `should refuse ${JSON.stringify(bad)}`,
+    );
+  }
+  assert.throws(() => buildCourseAssertion({ format: "weeks", shortname: "rev iew" }), /unsafe course shortname/);
+});
+
+test("singleactivity moves the landing page, and only singleactivity does", () => {
+  // It hides every section but 0 and moves every other displayable activity to
+  // section 1 — the review brief with it — then redirects a reviewer who lands
+  // on the bare course page to "Adding a new Forum".
+  assert.equal(
+    landingPath("theme", "boost_union", { courseFormat: "singleactivity" }),
+    "/course/view.php?id=2&section=1",
+  );
+  for (const f of ["topics", "weeks", "social", ""]) {
+    assert.equal(landingPath("theme", "boost_union", { courseFormat: f }), "/course/view.php?id=2", f);
+  }
+  // A mod plugin lands on the add form, which is outside the redirect's guard,
+  // so it is unaffected by the format.
+  assert.match(landingPath("mod", "attendance", { courseFormat: "singleactivity" }), /modedit\.php/);
+});
+
+test("the format the summary names is the format the course is in", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  assert.match(previewSummary({ ...summaryOpts, courseFormat: "weeks" }).join("\n"), /weeks format/);
+  // The caveat appears for the one format that hides the course page...
+  const single = previewSummary({ ...summaryOpts, courseFormat: "singleactivity" }).join("\n");
+  assert.match(single, /hides the course page/);
+  // ...and for no other.
+  for (const f of ["topics", "weeks", "social"]) {
+    assert.equal(
+      previewSummary({ ...summaryOpts, courseFormat: f }).join("\n").includes("hides the course page"),
+      false, f,
+    );
+  }
+});
+
+test("course-format refuses what Moodle would silently ignore", async () => {
+  const { COURSE_FORMATS } = await import("../scripts/build-preview.mjs");
+  assert.deepEqual(COURSE_FORMATS, ["topics", "weeks", "social", "singleactivity"]);
+  // The list is closed because create_course() validates nothing: an unknown
+  // format is stored verbatim and rendered as topics, so a typo in this box is
+  // invisible in the preview AND in the boot log.
+  assert.equal(COURSE_FORMATS.includes("weekly"), false);
+});
+
+test("every course format the form offers is one the builder accepts", async () => {
+  const { COURSE_FORMATS, DEFAULT_SENTINEL } = await import("../scripts/build-preview.mjs");
+  const fs = await import("node:fs");
+  const yaml = fs.readFileSync(
+    new global.URL("../.github/workflows/preview-a-plugin.yml", import.meta.url), "utf8");
+  // Both directions, because the two lists are independent and nothing else
+  // binds them: a form offering `weekly` — one letter off — would pass every
+  // other check and boot a course in a format that does not exist.
+  const block = /\n      course-format:\n([\s\S]*?)(?=\n      [a-z][a-z0-9-]*:\n|\n\n)/.exec(yaml);
+  assert.ok(block, "the course-format input block moved");
+  const options = /options:\s*\[([^\]]*)\]/.exec(block[1]);
+  assert.ok(options, "the course-format options moved");
+  const values = options[1].split(",").map((v) => v.trim());
+  for (const v of values) {
+    assert.match(v, /^"[a-z()]+"$/, `every course-format option must be quoted, got ${v}`);
+  }
+  const offered = values.map((v) => v.replace(/"/g, ""));
+  assert.equal(offered[0], DEFAULT_SENTINEL, "the unset token must be first, as the default");
+  assert.deepEqual(
+    offered.slice(1), COURSE_FORMATS,
+    "the form's formats and COURSE_FORMATS must be the same list, in the same order",
+  );
+  // And the declared default must BE the sentinel, not a real format.
+  assert.match(block[1], new RegExp(`default:\\s*"${DEFAULT_SENTINEL.replace(/[()]/g, "\\$&")}"`));
+});
+
+test("course-format names the boxes that disagree, and only real reasons", async () => {
+  const { checkCourseFormat } = await import("../scripts/build-preview.mjs");
+  const ok = { courseFormat: "weeks", type: "mod", name: "attendance", restoreUrl: "" };
+  assert.deepEqual(checkCourseFormat({ ...ok, courseFormat: "" }), []);
+  assert.deepEqual(checkCourseFormat(ok), []);
+  for (const f of ["topics", "social", "singleactivity"]) {
+    assert.deepEqual(checkCourseFormat({ ...ok, courseFormat: f }), [], f);
+  }
+
+  // A format Moodle does not have. ONE reason, and it returns early: reporting
+  // the conflicts as well would give one field several rows about a value that
+  // is not a format at all.
+  const bogus = checkCourseFormat({ ...ok, courseFormat: "weekly", type: "format", restoreUrl: "x" });
+  assert.equal(bogus.length, 1);
+  assert.match(bogus[0], /must be one of topics, weeks, social, singleactivity/);
+  assert.match(bogus[0], /Moodle does NOT check this/);
+
+  // The plugin under review is itself a course format.
+  const selfFmt = checkCourseFormat({ ...ok, type: "format", name: "tiles" });
+  assert.equal(selfFmt.length, 1);
+  assert.match(selfFmt[0], /IS a course format \(format_tiles\)/);
+  assert.match(selfFmt[0], /Leave the box alone/);
+
+  // A restore brings its own format and emits no createCourse at all, so the
+  // box would be dropped in silence.
+  const restored = checkCourseFormat({ ...ok, restoreUrl: "https://example.invalid/c.mbz" });
+  assert.equal(restored.length, 1);
+  assert.match(restored[0], /brings its own format/);
+  // ...and the sample-content menu is the same thing by another name.
+  assert.equal(checkCourseFormat({ ...ok, restoreUrl: "review-course" }).length, 1);
+
+  // Both conflicts at once are both reported: they are independent mistakes and
+  // fixing one leaves the other.
+  assert.equal(checkCourseFormat({ ...ok, type: "format", restoreUrl: "x" }).length, 2);
+});
