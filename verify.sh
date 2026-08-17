@@ -1216,6 +1216,83 @@ import("./scripts/course-assert.mjs").then(async (m) => {
         echo "CHECK 8 PASS: a real format boots and a format Moodle does not have exits 41 (not 43 — the row keeps the bogus value)"
     fi
 
+    # LIVE 9 — the language-pack assertion must be able to FAIL, and must not be
+    # satisfiable by the thing that LOOKS like success.
+    #
+    # NOTHING HERE DOWNLOADS A LANGUAGE PACK. The packs are FABRICATED on disk by
+    # a runPhpCode step, the same move LIVE 6 makes with a .mbz. That keeps all
+    # four arms unwaivable on a GitHub runner — unlike LIVE 7's theme arms, which
+    # waive because the ZIP proxy is unreachable from Actions — and it lets 9c
+    # build a state a real download could never be relied on to produce.
+    #
+    # 9d is the GREEN arm and it is not optional: an assertion that can never
+    # exit 0 would pass 9a, 9b and 9c while killing every real preview. A set of
+    # failing arms alone cannot tell those two apart.
+    #
+    # 9c is the one that earns its place. It writes a langconfig.php with NO
+    # `thislanguage`, which is exactly the state where `is_file()` says yes AND
+    # `translation_exists()` says yes — because Moodle loads lang/en first and
+    # English's own `thislanguage` survives. The assertion must still exit 51.
+    # If someone "simplifies" it to translation_exists, this arm goes green-to-
+    # red and says why.
+    lp_boot() { # $1=label $2=mode -> echoes the observed outcome
+        local LP_OUT="$WORK/lp_$1"
+        mkdir -p "$LP_OUT"
+        LP_DIR="$LP_OUT" LP_MODE="$2" node -e '
+import("./scripts/lang-assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const c = await import("node:crypto");
+  const mode = process.env.LP_MODE;
+  const parts = ["<?php define(\"CLI_SCRIPT\",true); require(\"/www/moodle/config.php\");"];
+  if (mode !== "missing") {
+    parts.push("$d = $CFG->dataroot . \"/lang/zz\"; @mkdir($d, 0777, true);");
+    const body = mode === "nothislanguage"
+      ? "<?php $string[\u0027firstdayofweek\u0027] = \u00271\u0027;"
+      : "<?php $string[\u0027thislanguage\u0027] = \u0027Fabricated\u0027; $string[\u0027thislanguageint\u0027] = \u0027Fabricated\u0027;";
+    const php = "\u0027" + body.replace(/\\/g, "\\\\").replace(/\u0027/g, "\\\u0027") + "\u0027";
+    parts.push(`if (@file_put_contents($d . "/langconfig.php", ${php}) === false) { exit(61); }`);
+  }
+  if (mode === "good") parts.push("set_config(\"lang\", \"zz\");");
+  parts.push("get_string_manager()->reset_caches(); exit(0);");
+  const fabricate = { step: "runPhpCode", code: parts.join(" "), critical: true };
+  const bp = { preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps: [
+    { step: "installMoodle" },
+    fabricate,
+    m.buildLangAssertion({ codes: ["zz"] }),
+    { step: "setLandingPage", path: "/" }] };
+  const body = JSON.stringify(bp, null, 2);
+  fs.writeFileSync(`${process.env.LP_DIR}/blueprint.json`, body);
+  const sha = c.createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(`${process.env.LP_DIR}/preflight.json`,
+    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }));
+  fs.writeFileSync(`${process.env.LP_DIR}/expectations.json`, JSON.stringify({
+    blueprintUrl: "loopback", blueprintSha256: sha, stepCount: 4,
+    stepNames: ["installMoodle", "runPhpCode", "runPhpCode", "setLandingPage"], pluginSteps: [] }));
+});
+' >/dev/null 2>&1
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$LP_OUT" \
+            BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/lp-$1.json" \
+            node scripts/boot-capture.mjs >>/tmp/bv-verify-lang.log 2>&1
+        grep -oE 'failed with exit code [0-9]+|Blueprint step 4/4: setLandingPage|Blueprint failed at step [0-9]+:[a-zA-Z]+.*' \
+            "$LP_OUT/boot-log.txt" 2>/dev/null | head -1
+    }
+    : >/tmp/bv-verify-lang.log
+    LP_MISSING=$(lp_boot missing missing)
+    LP_NOTSET=$(lp_boot notset installed)
+    LP_NOSTRING=$(lp_boot nothislanguage nothislanguage)
+    LP_GOOD=$(lp_boot good good)
+    LP_PROBLEMS=""
+    [[ "$LP_MISSING" == *"exit code 51"* ]] || LP_PROBLEMS+="a pack that never installed was NOT caught (got: ${LP_MISSING:-nothing}); "
+    [[ "$LP_NOTSET" == *"exit code 52"* ]] || LP_PROBLEMS+="packs installed but the site left in English was NOT caught (got: ${LP_NOTSET:-nothing}); "
+    [[ "$LP_NOSTRING" == *"exit code 51"* ]] || LP_PROBLEMS+="a langconfig.php with no thislanguage was NOT caught (got: ${LP_NOSTRING:-nothing}) — that is the state where is_file AND translation_exists both report success, so the assertion has become the vacuous one; "
+    [[ "$LP_GOOD" == *"setLandingPage"* ]] || LP_PROBLEMS+="a CORRECTLY installed and selected pack did not complete (got: ${LP_GOOD:-nothing}) — an assertion that can never pass would satisfy every other arm here; "
+    if [[ -n "$LP_PROBLEMS" ]]; then
+        echo "CHECK 9 FAIL: the language-pack assertion is not doing its job — $LP_PROBLEMS"
+        FAILED+=("9: language-pack assertion cannot fail, or cannot pass")
+    else
+        echo "CHECK 9 PASS: a real pack boots, and missing / unselected / English-fallback packs exit 51, 52, 51"
+    fi
+
     # LIVE 7 — the theme control, in a real browser.
     #
     # Nothing offline can prove any of this. The failures the `theme` control

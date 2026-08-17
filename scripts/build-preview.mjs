@@ -27,6 +27,7 @@ import { gateBlueprint, assertNoPlaceholders, checkUrl } from "./preflight.mjs";
 import { buildRestoreAssertion } from "./restore-assert.mjs";
 import { buildThemeAssertion, buildThemeCssWarmup } from "./theme-assert.mjs";
 import { buildCourseAssertion } from "./course-assert.mjs";
+import { buildLangAssertion, parseLanguagePacks } from "./lang-assert.mjs";
 import { checkCourseBackup } from "./mbz.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
@@ -755,6 +756,9 @@ export function buildBlueprint({
   // plugin under review decides (a format plugin previews itself) and topics is
   // the floor. Emitted UNCONDITIONALLY below.
   courseFormat = "",
+  // Language packs to install, already parsed and validated. The FIRST becomes
+  // the site language.
+  languagePacks = [],
   teachers = COUNT_INPUTS.teachers.fallback,
   students = COUNT_INPUTS.students.fallback,
   sections = COUNT_INPUTS.sections.fallback,
@@ -875,6 +879,33 @@ export function buildBlueprint({
     // on a slow connection. Aborting at the first duplicate keeps the site
     // coherent. (The local playground checkout aborts on any throw and cannot
     // reproduce this; only the deployed build can.)
+    // Straight after the plugin installs and BEFORE anything that creates a
+    // user or a course. `user_create_user` takes its default language from
+    // `$CFG->lang`, so accounts made after this inherit the new language while
+    // accounts made before it keep English — and the reviewer logs into one of
+    // them. Before `setLandingPage` for a second reason: a right-to-left site
+    // needs a different theme stylesheet from the one warmed at boot, and
+    // switching later means compiling it on the reviewer's first click.
+    //
+    // `critical: true` is set for the same reason it is set everywhere else,
+    // and is INERT here: this step's own handler catches everything, in the PHP
+    // and again in the JS, on both deployed hosts. The assertion below is what
+    // actually makes a failed download visible.
+    ...(languagePacks.length
+      ? [
+          {
+            step: "installLanguagePack",
+            languages: languagePacks,
+            // One control, not two. A pack installed but not selected changes
+            // nothing a reviewer would notice beyond a menu entry, and the
+            // stated use for this box — seeing a plugin render right-to-left —
+            // needs the language ACTIVE.
+            setDefault: true,
+            critical: true,
+          },
+          buildLangAssertion({ codes: languagePacks }),
+        ]
+      : []),
     { step: "createCategory", name: "Review", critical: true },
     // One course, made one of two ways. A restore REPLACES createCourse rather
     // than joining it: phpRestoreCourse only takes the shortname if no other
@@ -1292,7 +1323,8 @@ export function setOutput(name, value) {
  */
 export function previewSummary({
   type, name, headSha, url, component, headRepo, extras, moodleBranch,
-  signedInAs, php, restore, teachers, students, sections, courseFormat, landingPage,
+  signedInAs, php, restore, teachers, students, sections, courseFormat, languagePacks = [],
+  landingPage,
   versionPhp, core, risky, loginAs,
 }) {
   return [
@@ -1316,6 +1348,12 @@ export function previewSummary({
       // without it there is nothing on the page saying a theme was applied at
       // all, which is indistinguishable from the failure where it was not.
       theme: extras.themeSummary,
+      // Its own row when there is one: the whole interface changes, which is
+      // not a detail, and the site language is the fact a reviewer most needs
+      // when the screen is not in English.
+      language: languagePacks.length
+        ? `${languagePacks.join(", ")} — site language is ${languagePacks[0]}`
+        : "",
       Moodle: moodleBranch,
       // The landing page MUST be computed the same way the link was, restore
       // included — otherwise the summary names the add-form path while the link
@@ -1349,6 +1387,20 @@ export function previewSummary({
     // about arriving as admin BECAUSE there was no teacher. `!loginAs` was the
     // wrong second half — someone who explicitly asks for `login-as: admin`
     // alongside `teachers: 0` should still be told.
+    // Four things a reviewer would otherwise misread as a broken plugin. The
+    // partial-translation one matters most: it is normal Moodle behaviour and
+    // it looks exactly like a half-finished download.
+    ...(languagePacks.length
+      ? [
+          `> **This preview is in ${languagePacks[0]}, not English.**`,
+          "> Strings a language pack has not translated fall back to English —",
+          "> that is normal, not a failed install. Language is in the user menu",
+          "> under your avatar, not the top bar. A right-to-left language mirrors",
+          "> the whole layout, and its first page may take a few seconds while the",
+          "> theme is recompiled.",
+          "",
+        ]
+      : []),
     // singleactivity is the one format that changes what the reviewer can see.
     // It hides every section but 0 and moves every other displayable activity
     // into section 1 — including this preview's own Review brief, which is the
@@ -1853,6 +1905,12 @@ async function main() {
   })) {
     problems.add("course-format", reason);
   }
+  // Language packs. Parsed and REFUSED here rather than dropped: the install
+  // step cannot fail — its PHP and its JS each swallow everything — so a code
+  // that never installs would leave a working English site and a green log.
+  const langs = parseLanguagePacks(process.env.LANGUAGE_PACKS);
+  for (const reason of langs.problems) problems.add("language-packs", reason);
+
   const teachers = count("teachers");
   const students = count("students");
   const sections = count("sections");
@@ -2007,6 +2065,7 @@ async function main() {
     phpOverride,
     loginAs,
     courseFormat,
+    languagePacks: langs.codes,
     teachers,
     students,
     sections,
@@ -2078,6 +2137,7 @@ async function main() {
     // — which for a course-format plugin under review is the plugin's own name,
     // not anything the box says.
     courseFormat: courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT),
+    languagePacks: langs.codes,
     landingPage:
       landingOverride ||
       landingPath(type, name, {

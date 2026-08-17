@@ -39,7 +39,8 @@
     "SAMPLE_CONTENT": "(default)",
     "THEME": "",
     "TEACHERS": "1",
-    "COURSE_FORMAT": "(default)"
+    "COURSE_FORMAT": "(default)",
+    "LANGUAGE_PACKS": ""
   },
   "probes": [
     {
@@ -215,6 +216,19 @@
       "expect_steps_removed": [],
       "expect_summary_contains": "weeks format",
       "note": "probe is 'weeks', NOT 'topics': topics is the default, so probing it produces a byte-identical blueprint and the row would fail 'the input reaches nothing' on a correct build. And not 'singleactivity', which also moves the landing page and would make the row assert two things at once. target is 'shape' because a non-default format brings the format ASSERTION with it - a whole extra runPhpCode step - and an inserted step renumbers every index-normalised path after it. The assertion rides only a non-default format: at topics it could only ever pass, which is the inert-assertion shape this gate exists to refuse. expect_summary_contains has a SPACE in it deliberately: the summary carries the base64 blueprint blob, and a bare five-letter token can appear inside base64 by chance, but a space cannot."
+    },
+    {
+      "input": "language-packs",
+      "env": "LANGUAGE_PACKS",
+      "probe": "es,ar",
+      "target": "shape",
+      "expect_steps_added": [
+        "installLanguagePack",
+        "runPhpCode"
+      ],
+      "expect_steps_removed": [],
+      "expect_summary_contains": "site language is es",
+      "note": "target is 'shape' because the control adds TWO steps: the install, and the assertion that makes it capable of failing. Declaring only installLanguagePack fails the row, so this also enforces that the assertion ships - which matters more here than anywhere else, because the install step CANNOT fail: its PHP wraps everything in an empty catch and its JS wraps that in another, on both deployed hosts, so critical:true on it is inert. expect_summary_contains has SPACES in it: the summary carries the base64 blueprint blob and a bare 'es' appears inside it twice by chance, so a short token would pass with writeSummary gutted."
     },
     {
       "input": "plugin-root",

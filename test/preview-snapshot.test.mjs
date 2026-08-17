@@ -92,6 +92,19 @@ const CASES = {
     name: "attendance",
     courseFormat: "singleactivity",
   },
+  // Language packs. The ONLY case that reaches `lang-assert.mjs`, which matters
+  // beyond this control: the "no // comment in generated PHP" guard below walks
+  // these CASES, so a generator no case exercises is not checked by it at all.
+  // Measured — a `//` planted in this generator left the whole suite green
+  // before this case existed.
+  "language-packs": {
+    headRepo: "DavidUCL/moodle-mod_attendance",
+    headSha: SHA,
+    prNumber: "13",
+    type: "mod",
+    name: "attendance",
+    languagePacks: ["es", "ar"],
+  },
   unknown: {
     headRepo: "DavidUCL/local_myplugin",
     headSha: SHA,

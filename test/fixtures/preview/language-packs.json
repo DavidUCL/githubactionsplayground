@@ -1,0 +1,119 @@
+{
+  "preferredVersions": {
+    "php": "8.3",
+    "moodle": "MOODLE_500_STABLE"
+  },
+  "landingPage": "/course/modedit.php?add=attendance&course=2&section=1",
+  "steps": [
+    {
+      "step": "installMoodle"
+    },
+    {
+      "step": "setConfigs",
+      "configs": [
+        {
+          "name": "debug",
+          "value": "32767"
+        },
+        {
+          "name": "debugdisplay",
+          "value": "1"
+        },
+        {
+          "name": "noemailever",
+          "value": "1"
+        },
+        {
+          "name": "sendcoursewelcomemessage",
+          "value": "0",
+          "plugin": "enrol_manual"
+        }
+      ]
+    },
+    {
+      "step": "installMoodlePlugin",
+      "url": "https://github.com/DavidUCL/moodle-mod_attendance/archive/d0638b39df1c28fd93c27778ae2cbada7cc1660f.zip",
+      "pluginType": "mod",
+      "pluginName": "attendance",
+      "critical": true
+    },
+    {
+      "step": "installLanguagePack",
+      "languages": [
+        "es",
+        "ar"
+      ],
+      "setDefault": true,
+      "critical": true
+    },
+    {
+      "step": "runPhpCode",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); $want = array('es', 'ar'); $sm = get_string_manager(); foreach ($want as $c) { $dir = $CFG->dataroot . '/lang/' . $c; if (!is_file($dir . '/langconfig.php')) { error_log('langpack: missing ' . $c); exit(51); } $name = $sm->get_string('thislanguage', 'langconfig', null, $c); if ($name === '' || $name === null) { error_log('langpack: unreadable ' . $c); exit(53); } if ($name === 'English') { error_log('langpack: english fallback for ' . $c); exit(51); } } $lang = $CFG->lang ?? 'en'; error_log('langpack: installed=es+ar sitelang=' . $lang); if ($lang !== 'es') { exit(52); } exit(0);",
+      "critical": true
+    },
+    {
+      "step": "createCategory",
+      "name": "Review",
+      "critical": true
+    },
+    {
+      "step": "createCourse",
+      "fullname": "PR #13 · d0638b3 · mod_attendance",
+      "shortname": "REVIEW",
+      "critical": true,
+      "category": "Review",
+      "format": "topics",
+      "numsections": 3
+    },
+    {
+      "step": "createUsers",
+      "critical": true,
+      "users": [
+        {
+          "username": "teacher",
+          "firstname": "Teacher",
+          "lastname": "Review"
+        },
+        {
+          "username": "student1",
+          "firstname": "Student",
+          "lastname": "One"
+        }
+      ]
+    },
+    {
+      "step": "enrolUsers",
+      "critical": true,
+      "enrolments": [
+        {
+          "username": "teacher",
+          "course": "REVIEW",
+          "role": "editingteacher"
+        },
+        {
+          "username": "student1",
+          "course": "REVIEW",
+          "role": "student"
+        }
+      ]
+    },
+    {
+      "step": "addModule",
+      "critical": true,
+      "module": "label",
+      "course": "REVIEW",
+      "section": 0,
+      "name": "Review brief",
+      "intro": "<p><strong>PR #13 · d0638b3 · mod_attendance</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li></ul>"
+    },
+    {
+      "step": "login",
+      "username": "teacher",
+      "critical": true
+    },
+    {
+      "step": "setLandingPage",
+      "path": "/course/modedit.php?add=attendance&course=2&section=1"
+    }
+  ]
+}

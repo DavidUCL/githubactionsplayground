@@ -2139,3 +2139,106 @@ test("course-format names the boxes that disagree, and only real reasons", async
   // fixing one leaves the other.
   assert.equal(checkCourseFormat({ ...ok, type: "format", restoreUrl: "x" }).length, 2);
 });
+
+// ---- the language-packs control ------------------------------------------
+
+const langStepOf = (bp) => bp.steps.find((s) => s.step === "installLanguagePack");
+
+test("language packs are refused, never quietly dropped", async () => {
+  const { parseLanguagePacks, MAX_LANGUAGE_PACKS } = await import("../scripts/lang-assert.mjs");
+  assert.deepEqual(parseLanguagePacks(""), { codes: [], problems: [] });
+  assert.deepEqual(parseLanguagePacks("es,ar").codes, ["es", "ar"]);
+  assert.deepEqual(parseLanguagePacks(" es , ar ").codes, ["es", "ar"]);
+  assert.deepEqual(parseLanguagePacks("pt_br").codes, ["pt_br"]);
+
+  // Every rejection is a REPORTED problem, not a shorter list. `.filter(Boolean)`
+  // on a split is how a preview boots without the thing that was asked for —
+  // this repo has paid for that pattern more than once.
+  const empty = parseLanguagePacks("es,,fr");
+  assert.equal(empty.problems.length, 1);
+  assert.match(empty.problems[0], /empty entry/);
+  assert.match(parseLanguagePacks("ES").problems[0], /not a Moodle language code/);
+  assert.match(parseLanguagePacks("e s").problems[0], /not a Moodle language code/);
+  assert.match(parseLanguagePacks("es,es").problems[0], /listed more than once/);
+  assert.match(parseLanguagePacks("es,fr,de,it").problems[0],
+    new RegExp(`limit is ${MAX_LANGUAGE_PACKS}`));
+
+  // `en` specifically. English lives in dirroot and never appears under
+  // dataroot/lang/en, and its own `thislanguage` IS "English" — so it would
+  // fail BOTH halves of the assertion on a completely healthy site. Refusing it
+  // is honest; special-casing it inside the assertion would put a hole in the
+  // assertion for every other code too.
+  assert.match(parseLanguagePacks("en").problems[0], /built into Moodle/);
+  assert.deepEqual(parseLanguagePacks("en").codes, []);
+});
+
+test("the language assertion cannot be satisfied by an empty directory", async () => {
+  const { buildLangAssertion } = await import("../scripts/lang-assert.mjs");
+  const { code } = buildLangAssertion({ codes: ["es", "ar"] });
+  // THE POINT OF THE FILE. translation_exists('es') is
+  // isset(get_list_of_translations()['es']), and that list keeps any directory
+  // whose langconfig strings have a non-empty `thislanguage` — but
+  // load_component_strings loads ENGLISH FIRST and only then overlays the
+  // language, so an EMPTY dataroot/lang/es reports installed as "English (es)".
+  assert.equal(code.includes("translation_exists"), false);
+  assert.equal(code.includes("get_list_of_translations"), false);
+  // What it does instead: the pack's own file, and a name that is not English.
+  assert.match(code, /is_file\(\$dir \. '\/langconfig\.php'\)/);
+  assert.match(code, /\$name === 'English'/);
+  // Every code is checked BEFORE the site language, so asking for a language
+  // that does not exist exits 51 (missing) and not 52 (wrong site language) —
+  // the playground sets $CFG->lang to the first code unconditionally, so 52
+  // would otherwise describe a missing pack as a wrong selection.
+  assert.ok(code.indexOf("exit(51)") < code.indexOf("exit(52)"));
+  assert.match(code, /^<\?php define\('CLI_SCRIPT',true\);/);
+  assert.ok(code.indexOf("CLI_SCRIPT") < code.indexOf("config.php"));
+  assert.equal(code.includes("\n"), false);
+  assert.equal(code.includes("//"), false);
+});
+
+test("the language assertion refuses to be built from a code it cannot trust", async () => {
+  const { buildLangAssertion } = await import("../scripts/lang-assert.mjs");
+  assert.throws(() => buildLangAssertion({ codes: [] }), /at least one code/);
+  for (const bad of ["ES", "e s", "e'; drop", "1es", "", "en"]) {
+    assert.throws(() => buildLangAssertion({ codes: [bad] }), /unsafe language code/, bad);
+  }
+});
+
+test("the install step and its assertion travel together, before any user exists", () => {
+  const bp = buildBlueprint({ ...base, languagePacks: ["es", "ar"] });
+  const order = bp.steps.map((s) => s.step);
+  const step = langStepOf(bp);
+  assert.deepEqual(step.languages, ["es", "ar"]);
+  // One control, not two: the first pack becomes the site language, because the
+  // stated use — seeing a plugin render right-to-left — needs it ACTIVE.
+  assert.equal(step.setDefault, true);
+  // A user takes its language from $CFG->lang AT CREATION, so accounts made
+  // before this step would stay English while the site moved — and the reviewer
+  // logs into one of them.
+  assert.ok(order.indexOf("installLanguagePack") < order.indexOf("createUsers"));
+  assert.ok(order.indexOf("installLanguagePack") < order.indexOf("login"));
+  assert.ok(order.indexOf("installLanguagePack") < order.indexOf("setLandingPage"));
+  // ...and after the plugin installs, so the language is not installed into a
+  // Moodle that is about to have code dropped into it.
+  assert.ok(order.indexOf("installLanguagePack") > order.lastIndexOf("installMoodlePlugin"));
+  // The assertion is the very next step. The install step CANNOT fail — its PHP
+  // and its JS each swallow everything — so nothing else would notice.
+  assert.equal(order[order.indexOf("installLanguagePack") + 1], "runPhpCode");
+  // Nothing at all when the box is empty.
+  assert.equal(langStepOf(buildBlueprint(base)), undefined);
+  assert.equal(buildBlueprint(base).steps.filter((s) => s.step === "runPhpCode").length, 0);
+});
+
+test("the summary names the site language, and warns about what looks broken", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  const es = previewSummary({ ...summaryOpts, languagePacks: ["es", "ar"] }).join("\n");
+  assert.match(es, /es, ar — site language is es/);
+  assert.match(es, /This preview is in es, not English/);
+  // The one that matters most: a partial translation is normal Moodle
+  // behaviour and is indistinguishable from a half-finished download.
+  assert.match(es, /fall back to English/);
+  assert.match(es, /under your avatar/);
+  const none = previewSummary(summaryOpts).join("\n");
+  assert.equal(none.includes("site language is"), false);
+  assert.equal(none.includes("not English"), false);
+});

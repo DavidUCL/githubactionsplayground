@@ -145,6 +145,31 @@ not it exists.
 course page, including this preview's own review brief where the logins are
 written down. The landing page compensates by linking past it.
 
+### Seeing the plugin in another language (`language-packs`)
+
+Comma-separated codes, up to three — `es`, or `es,ar`. The first becomes the
+site language, because installing a pack without selecting it changes almost
+nothing a reviewer would notice. The stated use is right-to-left rendering:
+pass `ar` and the whole layout mirrors.
+
+Be honest about what this does not do: **a language pack does not surface
+hardcoded English in a plugin's own code.** Strings the pack has not translated
+fall back to English, which is normal Moodle behaviour and looks exactly like a
+half-finished download.
+
+The reason the codes are validated rather than passed through: **the install
+step cannot fail.** Its generated PHP wraps everything in an empty `catch`, and
+the JavaScript around it catches again and returns — on both deployed
+playgrounds — so `critical: true` on that step is inert. A pack that failed to
+download would leave a working English site and a green boot log. So a
+malformed, repeated or `en` code is refused when the link is built, and the
+preview proves in-band that every pack is really installed and that the site is
+really speaking the first one.
+
+That in-band check deliberately does NOT use `translation_exists()`, which
+returns true for an empty directory: Moodle loads `lang/en` first and English's
+own `thislanguage` survives when the pack has nothing to overlay it with.
+
 Why the public playground is the default host: a preview runs unreviewed PHP
 in the visitor's browser, and the playground renders the site in an
 unsandboxed iframe with a service worker that outlives the tab. Browser

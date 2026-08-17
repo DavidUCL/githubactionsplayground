@@ -90,6 +90,25 @@ inputs:
     description: "How many sections the review course has (1-20, default 3)."
     required: false
     default: "3"
+  language-packs:
+    description: >-
+      Extra Moodle language packs to install, comma separated (e.g. `es` or
+      `es,ar`). Up to 3, and the FIRST becomes the site language — installing
+      one without selecting it changes almost nothing a reviewer would notice.
+
+      The stated use is seeing a plugin render right-to-left: pass `ar`. A
+      language pack does NOT surface hardcoded English in a plugin's own code;
+      strings the pack has not translated fall back to English, which is normal
+      Moodle behaviour and looks identical to a half-finished download.
+
+      REFUSED rather than dropped when a code is malformed, repeated, or `en`
+      (English is built in and is not a downloadable pack). The install step
+      itself CANNOT fail — its PHP and its JavaScript each swallow every error —
+      so a pack that does not download would otherwise leave a working English
+      site and a green boot log. The preview proves in-band that each pack is
+      really installed and that the site is really speaking the first one.
+    required: false
+    default: ""
   course-format:
     description: >-
       Course format for the review course: topics (the default), weeks, social
@@ -287,6 +306,7 @@ runs:
         STUDENTS: ${{ inputs.students }}
         SECTIONS: ${{ inputs.sections }}
         COURSE_FORMAT: ${{ inputs.course-format }}
+        LANGUAGE_PACKS: ${{ inputs.language-packs }}
         SAMPLE_CONTENT: ${{ inputs.sample-content }}
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
         EXTRA_PLUGINS: ${{ inputs.extra-plugins }}
