@@ -46,13 +46,20 @@ jobs:
   gate:
     name: verify.sh (offline + drift)
     runs-on: ubuntu-latest
-    # 30, not 20. MEASURED 2026-08-14: this job runs 16m41s, and the last four
-    # runs took 21-22 minutes wall clock. The mutation harness runs the WHOLE
-    # unit suite once per mutant (457 tests x ~300 mutants), so one added second
-    # of suite time costs roughly five minutes here. At 20 the next control to
-    # land would have killed the job — and a timeout kill names no failing
-    # check, so it reads as flake and gets re-run rather than fixed.
-    timeout-minutes: 30
+    # 40. The mutation harness runs the WHOLE unit suite once per mutant, so this
+    # job grows with BOTH numbers at once and it grows fast. Measured, same job,
+    # three consecutive controls:
+    #
+    #   before `teachers`        16m41s   (cap was 20 — a scheduled run was
+    #                                      KILLED at 20m03s and reported no
+    #                                      failing check, so it read as flake)
+    #   after  `teachers`        17m48s   (494 tests, 320 mutants)
+    #   after  `course-format`   22m29s   (494 tests, 336 mutants)
+    #
+    # Nearly five minutes for one control. Raised ahead of the next one rather
+    # than after it: this project has already paid once for finding the ceiling
+    # by hitting it, and a timeout kill is the least readable failure there is.
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
