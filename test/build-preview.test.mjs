@@ -824,36 +824,17 @@ test("two courses are still refused, however they are made", async () => {
 });
 
 
-// A liveness probe for the handful of tests below that run the BUILDER as a
-// subprocess with a real course backup. Those cannot be stubbed — the builder
-// fetches the .mbz itself, over https, through a host allowlist, in another
-// process — so when raw.githubusercontent.com throttles us they fail rather
-// than skip. Observed on a clean tree at 148dfb2: six tests red, all HTTP 429.
-//
-// Probe a REAL FILE and require 200. The bare host root answers 301 while every
-// file fetch is being refused, and `status < 500` treats 429 as healthy — both
-// of which made an earlier probe say "online" immediately before the tests
-// failed on the network.
-//
-// A skipped test asserts nothing, so verify.sh PRINTS the skip count. Do not
-// let this become the normal state: the fix is to stop needing the network,
-// which is recorded as a follow-up.
-const SAMPLE_MBZ_URL =
-  "https://raw.githubusercontent.com/DavidUCL/githubactionsplayground/" +
-  "4a0e7afcec0298462b9b28f5a93a65b164f84a56/fixtures/review-course-MOODLE_404_STABLE.mbz";
-const netUp = async () => {
-  try {
-    const res = await fetch(SAMPLE_MBZ_URL, { signal: AbortSignal.timeout(10000) });
-    return res.status === 200;
-  } catch { return false; }
-};
+// The five tests below run the BUILDER as a subprocess against a real course
+// backup. They used to reach raw.githubusercontent.com for it — see
+// test/helpers/net-fixtures.mjs for what that cost and why it is now served
+// from disk. `NODE_OPTIONS=--import=` propagates into the subprocess, so the
+// builder's own fetch is stubbed too.
 
 // Found by BOOTING, not by reading: the restore succeeded and the assertion
 // passed, then createUsers died with exit code 1 because the backup already
 // contained `student1`. Refuse at link-build time instead of half-building a
 // site.
-test("a backup whose users collide with the preview's is refused", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("a backup whose users collide with the preview's is refused", async () => {
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -887,8 +868,7 @@ test("a backup whose users collide with the preview's is refused", async (t) => 
 // Each restore refusal needs its own test: a mutant that stops gating the
 // BACKUP survived while the username-collision test passed, because the
 // collision check sits after the verdict check and never exercised it.
-test("a supplied backup that is not a course backup is refused", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("a supplied backup that is not a course backup is refused", async () => {
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -975,8 +955,7 @@ test("data-hosts narrows the allowlist that main() applies", async () => {
 // shortname, category, createCategory and visible — NOT numsections or format.
 // Both were dropped in silence while the summary still claimed them.
 
-test("the summary does not claim sections a restore ignored", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("the summary does not claim sections a restore ignored", async () => {
   const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -1005,8 +984,7 @@ test("the summary does not claim sections a restore ignored", async (t) => {
 // two things the bug does not touch — so it passed on the very mutant it
 // existed to catch. Read the SUMMARY THE RUN WROTE and compare it with the
 // LINK THAT RUN BUILT. Nothing else proves they agree.
-test("the summary's landing page is the one the link opens", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("the summary's landing page is the one the link opens", async () => {
   const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -1085,8 +1063,7 @@ test("the pinned sample course is the one the spec describes", async () => {
   assert.deepEqual(r.problems, []);
 });
 
-test("choosing the menu restores the sample course", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("choosing the menu restores the sample course", async () => {
   const { mkdtempSync, readFileSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");

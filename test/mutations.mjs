@@ -1042,7 +1042,21 @@ function stageTree() {
 
 function suitePasses(dir) {
   try {
-    execFileSync(process.execPath, ["--test", ...TEST_FILES], { cwd: dir, stdio: "pipe" });
+    // SERVE THE NET FIXTURES. `test/` is staged, so the helper and the captured
+    // bodies come with it. Without this every mutant run reaches
+    // raw.githubusercontent.com — 47 requests each, ~16,000 per gate — which is
+    // what got this repo rate-limited into a red tree in the first place, and
+    // what made the suite take four minutes instead of two seconds.
+    execFileSync(process.execPath, ["--test", ...TEST_FILES], {
+      cwd: dir,
+      stdio: "pipe",
+      env: {
+        ...process.env,
+        BV_NET_FIXTURES: "1",
+        BV_NET_FIXTURE_DIR: join(dir, "test", "fixtures", "net"),
+        NODE_OPTIONS: `--import=file://${join(dir, "test", "helpers", "net-fixtures.mjs")}`,
+      },
+    });
     return true;
   } catch {
     return false;

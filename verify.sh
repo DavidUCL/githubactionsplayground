@@ -55,21 +55,61 @@ check() {
 
 echo "=== verify.sh — boot-verify action gate ==="
 
-node --test test/*.test.mjs >/tmp/bv-verify-unit.log 2>&1
+# THE OFFLINE SUITE IS OFFLINE, and this asserts it rather than hoping.
+#
+# It used to make 47 requests to raw.githubusercontent.com per run — and the
+# mutation harness reruns the whole suite once per mutant, so a gate run made
+# on the order of 16,000. GitHub started answering 429, six tests went red on a
+# clean tree, and the first fix (skip guards) was worse: a skipped test kills no
+# mutants, so the harness reported a "vacuous assertion" about correct code.
+# Every URL is now captured to test/fixtures/net by
+# `node scripts/capture-net-fixtures.mjs`. MEASURED: 4m03s -> 1.9s, 47 -> 0.
+# SCOPED TO THE UNIT SUITE, never exported. Check 1o runs the real builder as a
+# subprocess precisely to exercise the real wiring — including its real network
+# fetches — so serving it fixtures makes it test something else. Exporting these
+# broke 1o and 1o-shape the first time this landed.
+BV_NET_FIXTURES=1 NODE_OPTIONS="--import=file://$PWD/test/helpers/net-fixtures.mjs" \
+    node --test test/*.test.mjs >/tmp/bv-verify-unit.log 2>&1
 UNIT_RC=$?
-# SKIPS ARE REPORTED, not buried in the log. A handful of tests reach
-# raw.githubusercontent.com and skip themselves when it is unreachable — which
-# is correct, but a test that skips asserts nothing, and a skip that becomes
-# permanent (a moved fixture repo, a probe URL that 404s forever) is a check
-# nobody notices has stopped checking. Printing the count is the cheapest thing
-# that makes that visible; it is not a gate, because being genuinely offline
-# must not fail the run.
-UNIT_SKIPPED=$(grep -cE '^ok .* # SKIP' /tmp/bv-verify-unit.log 2>/dev/null || echo 0)
+# A skip asserts nothing, so any skip at all is now worth seeing: with fixtures
+# there should be none, and one appearing means a test started opting out.
+UNIT_SKIPPED=$(grep -cE '^ok .* # SKIP' /tmp/bv-verify-unit.log 2>/dev/null || true)
+UNIT_SKIPPED=${UNIT_SKIPPED:-0}
 check "$UNIT_RC" 1 "unit suite, $UNIT_SKIPPED skipped (log: /tmp/bv-verify-unit.log)"
 if [[ "$UNIT_SKIPPED" -gt 0 ]]; then
-    echo "  note: $UNIT_SKIPPED test(s) skipped — network-dependent ones skip when their host is unreachable or throttling:"
+    echo "  note: $UNIT_SKIPPED test(s) skipped — with net fixtures in place this should be zero:"
     grep -E '^ok .* # SKIP' /tmp/bv-verify-unit.log | sed 's/^/    /' | head -8
 fi
+
+# ...and prove the suite really is being served by those fixtures, by BREAKING
+# them and requiring it to notice.
+#
+# The first version of this check counted outbound requests from a preload that
+# wrapped `fetch` — and it was VACUOUS: net-fixtures.mjs replaces globalThis.fetch
+# after that preload runs, so the counter was overwritten and its zero meant
+# nothing. Counting egress honestly needs socket-level interception, which is
+# more machinery than the risk deserves. What actually matters is the property
+# the fixtures exist for: the suite must DEPEND on them, so that a missing or
+# fallen-through fixture is loud rather than a silent return to the network.
+#
+# So: point the helper at an empty manifest. Every test that needs a URL must
+# fail. If the suite still passes, the fixtures are not being used and the tests
+# have found the network another way.
+FIXPLANT=$(mktemp -d)
+mkdir -p "$FIXPLANT/net"
+echo '{"capturedAt":"plant","entries":[]}' > "$FIXPLANT/net/manifest.json"
+if BV_NET_FIXTURES=1 BV_NET_FIXTURE_DIR="$FIXPLANT/net" \
+        NODE_OPTIONS="--import=file://$PWD/test/helpers/net-fixtures.mjs" \
+        node --test test/*.test.mjs >"$FIXPLANT/out.log" 2>&1; then
+    echo "CHECK 1a3 FAIL: the suite PASSED with every net fixture removed — it is not using them"
+    FAILED+=("1a3: the suite does not depend on its net fixtures")
+elif ! grep -q 'no captured response for' "$FIXPLANT/out.log"; then
+    echo "CHECK 1a3 FAIL: the suite failed without fixtures, but not because they were missing"
+    FAILED+=("1a3: failed for an unrelated reason")
+else
+    echo "CHECK 1a3 PASS: removing the net fixtures breaks the suite, so it is really served by them"
+fi
+rm -rf "$FIXPLANT"
 
 # Every mutant's anchor must still match its source line — 2.5s, and it runs
 # FIRST because it is the failure the slow run reports worst. A stale anchor is

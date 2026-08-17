@@ -1,0 +1,96 @@
+{
+  "capturedAt": "2026-08-17T16:19:07.830Z",
+  "entries": [
+    {
+      "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_500_STABLE/lib/plugins.json",
+      "file": "moodle-500-plugins.json",
+      "status": 200,
+      "bytes": 15760,
+      "sha256": "fc708e9554b9d95debeb41a101834cca0bfa23106926565bf1f2c7822dcdbd36",
+      "expect": "core component list; feeds fetchCoreComponents and the core-collision refusals",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/danmarsden/moodle-mod_attendance/8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c/version.php",
+      "file": "attendance-version.php",
+      "status": 200,
+      "bytes": 1169,
+      "sha256": "0a1f3cc0c0cbad109865b2085604c8eeb509ec2d834cda1c05de330328cbf443",
+      "expect": "a real plugin version.php, fetched when none is checked out",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/githubactionsplayground/4a0e7afcec0298462b9b28f5a93a65b164f84a56/fixtures/review-course-MOODLE_404_STABLE.mbz",
+      "file": "review-course.mbz",
+      "status": 200,
+      "bytes": 9821,
+      "sha256": "aac19b69245805ce2765002d76e1ba92304c6038a868cb827bc8a01c2372cefc",
+      "expect": "the sample course backup the `sample-content` menu restores",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
+      "file": "uploadcourse-backup.mbz",
+      "status": 200,
+      "bytes": 18941,
+      "sha256": "0199850d38e50abedb2c34e97f21603725b5938aecd75c11c4cc783cbd81fc7a",
+      "expect": "a core .mbz fixture, to prove the reader agrees with what Moodle emits",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json",
+      "file": "integration-test.json",
+      "status": 200,
+      "bytes": 1401,
+      "sha256": "dce277c0cf2d7b25ee8b3bc6c52acdfab31bb90ec1769b54b5dec780f7a3fcb2",
+      "expect": "a real published blueprint, for fetchBlueprint's success path",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/completion/tests/fixtures/legacy_course_completion.mbz",
+      "file": "legacy-course-completion.mbz",
+      "status": 200,
+      "bytes": 8806,
+      "sha256": "c7369a4106c43123268fa23f2af19f0b0b012c0811fea2b84c664e44f63ee62c",
+      "expect": "a core backup that CARRIES student1 — the username collision refusal",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/mod/quiz/tests/fixtures/moodle_311_quiz.mbz",
+      "file": "quiz-311.mbz",
+      "status": 200,
+      "bytes": 4940,
+      "sha256": "db4e8190f0dc187da59400e4c096772dc63f3f225c241de2fa78b3e8a312a570",
+      "expect": "an ACTIVITY backup, not a course backup — must be refused",
+      "source": "network"
+    },
+    {
+      "url": "https://moodle-playground.com/",
+      "file": "playground-redirect.html",
+      "status": 200,
+      "bytes": 21815,
+      "sha256": "61ccbb9becc6ae6484e0c3262a841f6171394d2e92d81378bbd3dcf4ea58f241",
+      "expect": "a cross-origin 301 that also STRIPS THE PATH — the shape fetchBlueprint's post-redirect host check exists for. Captured as the FINAL response, so the test proves the check on the redirected URL rather than the redirect itself.",
+      "finalUrl": "https://ateeducacion.github.io/moodle-playground/",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/moodle-mod_attendance/d0638b39df1c28fd93c27778ae2cbada7cc1660f/version.php",
+      "file": "missing-attendance-version.php",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "expect": "404 — the fixture SHA is not a real commit; the builder must report NOT CHECKED",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/moodle-format_thing/d0638b39df1c28fd93c27778ae2cbada7cc1660f/version.php",
+      "file": "missing-format-version.php",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "expect": "404 — same, for the course-format golden case",
+      "source": "network"
+    }
+  ]
+}

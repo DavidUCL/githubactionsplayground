@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Moodle Playground — Try Moodle in your browser, no server required</title>
+    <meta
+      name="description"
+      content="Moodle Playground runs a full Moodle site entirely in your browser using PHP WebAssembly — zero install, zero hosting. Spin up instant Moodle demos, test plugins and themes, prototype courses, and share reproducible Moodle setups with JSON blueprints."
+    >
+    <meta
+      name="keywords"
+      content="Moodle, Moodle demo, Moodle sandbox, Moodle playground, Moodle online, Moodle in browser, Moodle WebAssembly, Moodle WASM, PHP WebAssembly, Moodle blueprint, test Moodle plugins, try Moodle, Moodle themes, Moodle testing, LMS demo, open source LMS, Moodle developer, e-learning"
+    >
+    <meta name="author" content="Área de Tecnología Educativa (ATE)">
+    <meta name="robots" content="index, follow">
+    <meta name="theme-color" content="#f98012">
+    <link rel="canonical" href="https://moodle-playground.com/">
+
+    <!-- Open Graph / Facebook / LinkedIn -->
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Moodle Playground">
+    <meta property="og:locale" content="en_US">
+    <meta property="og:url" content="https://moodle-playground.com/">
+    <meta property="og:title" content="Moodle Playground — Try Moodle in your browser, no server required">
+    <meta
+      property="og:description"
+      content="A full Moodle site running in your browser via PHP WebAssembly. Instant demos, plugin and theme testing, reproducible course setups with JSON blueprints. No install, no server, no sign-up."
+    >
+    <meta property="og:image" content="https://moodle-playground.com/og-image.png">
+    <meta property="og:image:alt" content="Moodle Playground — Moodle running in your browser">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:title" content="Moodle Playground — Try Moodle in your browser, no server required">
+    <meta
+      name="twitter:description"
+      content="A full Moodle site running in your browser via PHP WebAssembly. Instant demos, plugin and theme testing, reproducible setups with JSON blueprints. No install required."
+    >
+    <meta name="twitter:image" content="https://moodle-playground.com/og-image.png">
+    <meta name="twitter:image:alt" content="Moodle Playground — Moodle running in your browser">
+
+    <link rel="icon" type="image/x-icon" href="favicon.ico">
+    <link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="apple-touch-icon.png">
+    <link rel="stylesheet" href="./src/styles/app.css">
+    <link rel="stylesheet" href="./src/styles/blueprint-editor.css">
+
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@type": "SoftwareApplication",
+      "name": "Moodle Playground",
+      "url": "https://moodle-playground.com/",
+      "description": "Moodle Playground runs a full Moodle site entirely in your browser using PHP WebAssembly. Spin up instant Moodle demos, test plugins and themes, and prototype courses with reproducible JSON blueprints — no install, no server.",
+      "applicationCategory": "EducationalApplication",
+      "applicationSubCategory": "Learning Management System",
+      "operatingSystem": "Any (runs in a modern web browser)",
+      "browserRequirements": "Requires a modern browser with WebAssembly and Service Worker support (Chrome, Firefox, Edge, Safari).",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "isAccessibleForFree": true,
+      "license": "https://opensource.org/licenses/MIT",
+      "keywords": "Moodle, LMS, WebAssembly, PHP, browser, demo, sandbox, blueprints, plugins, themes",
+      "author": {
+        "@type": "Organization",
+        "name": "Área de Tecnología Educativa (ATE)",
+        "url": "https://www3.gobiernodecanarias.org/medusa/ecoescuela/ate/"
+      },
+      "codeRepository": "https://github.com/ateeducacion/moodle-playground"
+    }
+    </script>
+  </head>
+  <body data-app="shell">
+    <div class="shell">
+      <header class="browser-toolbar" aria-label="Playground toolbar">
+        <div class="toolbar-brand" aria-label="Moodle Playground">
+          <img src="logo.png" alt="Moodle Playground" class="toolbar-brand__logo">
+          <img src="favicon-32x32.png" alt="Moodle Playground" class="toolbar-brand__icon">
+        </div>
+        <div class="browser-toolbar__center">
+          <form id="address-form" class="address-form">
+            <div class="nav-buttons">
+              <button type="button" id="back-button" class="icon-button" aria-label="Go back" title="Back" disabled>
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                  <path d="M10 3 5 8l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <button type="button" id="refresh-button" class="icon-button" aria-label="Refresh page" title="Refresh page">
+                <span aria-hidden="true">↻</span>
+              </button>
+              <button type="button" id="home-button" class="icon-button" aria-label="Go to homepage" title="Go to homepage">
+                <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                  <path d="M2.5 6.5V14h4v-4h3v4h4V6.5L8 2 2.5 6.5Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round" fill="none"/>
+                </svg>
+              </button>
+            </div>
+            <div class="address-form__input">
+              <input id="address-input" type="text" spellcheck="false" value="/" aria-label="URL inside the Moodle site">
+            </div>
+            <input type="submit" tabindex="-1" hidden>
+          </form>
+        </div>
+        <div class="browser-toolbar__actions">
+          <a href="docs/" class="icon-button icon-button--labeled" aria-label="Documentation" title="Documentation" target="_blank" rel="noreferrer">
+            <svg width="16" height="16" viewBox="0 0 18 18" fill="none" aria-hidden="true" focusable="false">
+              <path d="M3 2.5A1.5 1.5 0 0 1 4.5 1h6.586a1 1 0 0 1 .707.293l3.414 3.414a1 1 0 0 1 .293.707V15.5A1.5 1.5 0 0 1 14 17H4.5A1.5 1.5 0 0 1 3 15.5v-13Z" stroke="currentColor" stroke-width="1.4" fill="none"/>
+              <path d="M6 9h6M6 12h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="icon-button__label">Docs</span>
+          </a>
+          <a
+            href="https://github.com/ateeducacion/moodle-playground"
+            class="icon-button toolbar-github"
+            aria-label="GitHub repository"
+            title="GitHub repository"
+            target="_blank"
+            rel="noreferrer"
+          >
+            <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+              <path fill="currentColor" d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.4 0-.2-.01-.87-.01-1.58-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.97-.82-1.17-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.54.28-.89.51-1.09-1.78-.21-3.64-.92-3.64-4.08 0-.9.31-1.64.82-2.22-.08-.21-.36-1.06.08-2.2 0 0 .67-.22 2.2.85a7.38 7.38 0 0 1 4 0c1.53-1.07 2.2-.85 2.2-.85.44 1.14.16 1.99.08 2.2.51.58.82 1.31.82 2.22 0 3.17-1.87 3.87-3.65 4.08.29.26.54.75.54 1.52 0 1.1-.01 1.99-.01 2.26 0 .22.15.49.55.4A8.18 8.18 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"/>
+            </svg>
+          </a>
+          <span class="toolbar-separator" aria-hidden="true"></span>
+          <button type="button" id="panel-toggle-button" class="icon-button" aria-label="Toggle sidebar panel" aria-expanded="false" title="Toggle sidebar">
+            <svg width="17" height="15" viewBox="0 0 18 16" fill="none" aria-hidden="true" focusable="false">
+              <rect x="0.75" y="0.75" width="16.5" height="14.5" rx="2.25" stroke="currentColor" stroke-width="1.5" fill="none"/>
+              <path d="M11.5 1v14" stroke="currentColor" stroke-width="1.5"/>
+            </svg>
+          </button>
+        </div>
+      </header>
+
+      <div id="workspace" class="workspace is-panel-collapsed">
+        <section class="viewport">
+          <iframe id="site-frame" title="Moodle Playground" loading="eager"></iframe>
+        </section>
+
+        <aside id="side-panel" class="side-panel is-collapsed" aria-label="Playground panel">
+          <div class="side-panel__header">
+            <div class="side-panel__title">
+              <strong>Runtime</strong>
+              <span id="config-status" class="status-pill"><span class="dot"></span>Running</span>
+            </div>
+            <button type="button" id="panel-close-button" class="side-panel__close" aria-label="Close panel" title="Close panel">✕</button>
+          </div>
+
+          <div class="panel-tabs" role="tablist" aria-label="Playground panel tabs">
+            <button type="button" id="info-tab" class="panel-tab is-active" role="tab" aria-selected="true" data-panel-tab="info">Info</button>
+            <button type="button" id="logs-tab" class="panel-tab" role="tab" aria-selected="false" data-panel-tab="logs">Logs</button>
+            <button type="button" id="phpinfo-tab" class="panel-tab" role="tab" aria-selected="false" data-panel-tab="phpinfo">PHP</button>
+            <button type="button" id="blueprint-tab" class="panel-tab" role="tab" aria-selected="false" data-panel-tab="blueprint">Blueprint</button>
+          </div>
+
+          <section id="info-panel" class="side-panel__content" role="tabpanel" aria-labelledby="info-tab" data-panel-view="info">
+            <div class="info-stack">
+              <div class="info-section">
+                <div class="section-label">
+                  <span>Configuration</span>
+                </div>
+                <div class="config-grid">
+                  <div class="field">
+                    <label for="info-moodle-version">Moodle</label>
+                    <select id="info-moodle-version"></select>
+                  </div>
+                  <div class="field">
+                    <label for="info-php-version">PHP</label>
+                    <select id="info-php-version"></select>
+                  </div>
+                </div>
+                <div id="config-warning" class="warn-banner is-hidden" role="alert">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M8 1.6 1 14h14L8 1.6Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+                    <path d="M8 6.4v3.3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <circle cx="8" cy="11.7" r="0.6" fill="currentColor"/>
+                  </svg>
+                  <span>Applying will reset Moodle to a clean install. All current data will be lost.</span>
+                </div>
+                <div class="action-row">
+                  <button type="button" id="config-apply" class="danger grow is-hidden">Apply &amp; Reset</button>
+                </div>
+              </div>
+
+              <div class="info-section">
+                <div class="section-label"><span>Runtime</span></div>
+                <div class="value-row">
+                  <span class="vr-key">Runtime ID</span>
+                  <button type="button" id="runtime-id-chip" class="copy-chip" title="Copy runtime ID">
+                    <span id="runtime-id-value">-</span>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                      <rect x="5" y="5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+                      <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v7A1.5 1.5 0 0 0 4.5 12H5" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                    </svg>
+                  </button>
+                </div>
+                <div class="value-row">
+                  <span class="vr-key">Moodle release</span>
+                  <span id="moodle-release-value" title="">-</span>
+                </div>
+                <div class="value-row">
+                  <span class="vr-key">Playground build</span>
+                  <button type="button" id="build-id-chip" class="copy-chip" title="Copy Playground build ID">
+                    <span id="build-id-value">-</span>
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                      <rect x="5" y="5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+                      <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v7A1.5 1.5 0 0 0 4.5 12H5" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+
+              <div class="info-section info-section--bottom">
+                <div class="action-row">
+                  <button type="button" id="reset-button" class="danger grow">Reset Playground</button>
+                </div>
+                <p class="muted-help">Reset reinstalls the current configuration from scratch. Your courses and data are wiped.</p>
+              </div>
+            </div>
+          </section>
+
+          <section id="logs-panel" class="side-panel__content side-panel__content--stack is-hidden" role="tabpanel" aria-labelledby="logs-tab" data-panel-view="logs">
+            <div class="panel__row">
+              <span>Runtime log</span>
+              <span class="panel__row-actions">
+                <button type="button" id="copy-logs-button" class="icon-button icon-button--icon-only" title="Copy logs" aria-label="Copy logs">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <rect x="5" y="5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v7A1.5 1.5 0 0 0 4.5 12H5" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                  </svg>
+                </button>
+                <button type="button" id="clear-logs-button" class="icon-button icon-button--icon-only" title="Clear logs" aria-label="Clear logs">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M2.5 4h11" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/>
+                    <path d="M5.5 4V2.75A.75.75 0 0 1 6.25 2h3.5a.75.75 0 0 1 .75.75V4" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M4.5 4l.55 9.3a.7.7 0 0 0 .7.66h4.5a.7.7 0 0 0 .7-.66L11.5 4" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <pre id="log-panel" class="log-panel"></pre>
+          </section>
+
+          <section id="phpinfo-panel" class="side-panel__content side-panel__content--stack is-hidden" role="tabpanel" aria-labelledby="phpinfo-tab" data-panel-view="phpinfo">
+            <div class="panel__row">
+              <span>Runtime PHP Info</span>
+              <span class="panel__row-actions">
+                <button type="button" id="refresh-phpinfo-button" class="icon-button icon-button--icon-only" title="Refresh PHP info" aria-label="Refresh PHP info">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M13.5 8a5.5 5.5 0 1 1-1.6-3.9" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                    <path d="M13.5 1.5v3h-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <iframe id="phpinfo-frame" class="panel-frame" title="PHP Info diagnostics"></iframe>
+          </section>
+
+          <section id="blueprint-panel" class="side-panel__content side-panel__content--stack is-hidden" role="tabpanel" aria-labelledby="blueprint-tab" data-panel-view="blueprint">
+            <div class="panel__row">
+              <button type="button" id="run-button" class="icon-button icon-button--primary icon-button--wide" title="Run blueprint" disabled>
+                <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true" focusable="false">
+                  <path d="M4 2.5v11l10-5.5-10-5.5Z"/>
+                </svg>
+                <span>Run</span>
+              </button>
+              <span class="panel__row-actions">
+                <button type="button" id="export-button" class="icon-button icon-button--icon-only" title="Export blueprint JSON" aria-label="Export blueprint JSON">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M8 2v7m0 0L5 6m3 3 3-3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                </button>
+                <label class="import-button icon-button icon-button--icon-only" for="import-input" title="Import blueprint JSON" aria-label="Import blueprint JSON">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <path d="M8 9V2m0 0L5 5m3-3 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M3 11v1.5A1.5 1.5 0 0 0 4.5 14h7a1.5 1.5 0 0 0 1.5-1.5V11" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+                  </svg>
+                </label>
+                <input id="import-input" type="file" accept="application/json" hidden>
+                <button type="button" id="copy-button" class="icon-button icon-button--icon-only" title="Copy blueprint JSON" aria-label="Copy blueprint JSON">
+                  <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true" focusable="false">
+                    <rect x="5" y="5" width="8" height="9" rx="1.5" stroke="currentColor" stroke-width="1.3"/>
+                    <path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-5A1.5 1.5 0 0 0 3 3.5v7A1.5 1.5 0 0 0 4.5 12H5" stroke="currentColor" stroke-width="1.3" fill="none"/>
+                  </svg>
+                </button>
+              </span>
+            </div>
+            <div class="blueprint-editor-wrap">
+              <div
+                id="blueprint-editor"
+                class="blueprint-editor is-hidden"
+                role="textbox"
+                aria-multiline="true"
+                aria-label="Blueprint JSON editor"
+                tabindex="0"
+                spellcheck="false"
+              ></div>
+              <textarea
+                id="blueprint-textarea"
+                class="panel-textarea blueprint-editor-fallback"
+                spellcheck="false"
+                aria-label="Blueprint JSON editor"
+              ></textarea>
+              <p id="blueprint-status" class="blueprint-status" role="status" aria-live="polite">
+                Loading blueprint…
+              </p>
+            </div>
+          </section>
+
+          <footer class="side-panel__footer">
+            <div class="side-panel__footer-text">
+              <p>Made with &#10084;&#65039; by <a href="https://www3.gobiernodecanarias.org/medusa/ecoescuela/ate/" target="_blank" rel="noreferrer">Área de Tecnología Educativa</a></p>
+              <p class="side-panel__footer-disclaimer">
+                Moodle&#8482; is a registered trademark of
+                <a href="https://moodle.com/trademarks/" target="_blank" rel="noreferrer">Moodle Pty Ltd</a>.
+                This project is not affiliated with Moodle Pty Ltd.
+              </p>
+            </div>
+            <a
+              class="side-panel__footer-link"
+              href="https://github.com/ateeducacion/moodle-playground"
+              target="_blank"
+              rel="noreferrer"
+              aria-label="GitHub repository"
+              title="GitHub repository"
+            >
+              <svg viewBox="0 0 16 16" aria-hidden="true" focusable="false">
+                <path
+                  fill="currentColor"
+                  d="M8 0C3.58 0 0 3.67 0 8.2c0 3.63 2.29 6.71 5.47 7.8.4.08.55-.18.55-.4 0-.2-.01-.87-.01-1.58-2.01.38-2.53-.5-2.69-.96-.09-.24-.48-.97-.82-1.17-.28-.15-.68-.53-.01-.54.63-.01 1.08.59 1.23.84.72 1.24 1.87.89 2.33.68.07-.54.28-.89.51-1.09-1.78-.21-3.64-.92-3.64-4.08 0-.9.31-1.64.82-2.22-.08-.21-.36-1.06.08-2.2 0 0 .67-.22 2.2.85a7.38 7.38 0 0 1 4 0c1.53-1.07 2.2-.85 2.2-.85.44 1.14.16 1.99.08 2.2.51.58.82 1.31.82 2.22 0 3.17-1.87 3.87-3.65 4.08.29.26.54.75.54 1.52 0 1.1-.01 1.99-.01 2.26 0 .22.15.49.55.4A8.18 8.18 0 0 0 16 8.2C16 3.67 12.42 0 8 0Z"
+                />
+              </svg>
+            </a>
+          </footer>
+        </aside>
+      </div>
+    </div>
+
+    <script type="module" src="./src/shell/main.js"></script>
+  </body>
+</html>

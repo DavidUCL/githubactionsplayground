@@ -310,34 +310,12 @@ test("refuses to fetch a core list for a branch name it cannot trust", async () 
 // how a preview boots a clean Moodle with no plugin. The fallback fetches it.
 // Network-dependent, so these skip rather than fail when offline.
 //
-// "OFFLINE" INCLUDES "THROTTLED", and it did not: the probe accepted anything
-// under 500, so GitHub's rate limit — HTTP 429 — read as a healthy host, the
-// tests ran anyway, and both FAILED. Observed on a clean tree at 148dfb2 while
-// raw.githubusercontent.com was returning 429 to every request. It is not a
-// theoretical exposure: the mutation harness reruns this whole suite once per
-// mutant, so one gate run makes hundreds of requests to that host and then
-// reports the tree broken when the host pushes back. 403 is here too because
-// GitHub serves rate limits as 403 on some endpoints.
-//
-// A test that cannot reach its dependency must SKIP and say so. Failing is a
-// lie about this repo; passing would be worse.
-// Probe a REAL FILE, and require 200. The probe used to fetch the bare host
-// root, which answers 404 even while every actual file fetch is being refused
-// with 429 — so the probe said "online", the tests ran, and both failed with
-// `Cannot read properties of null`. A liveness probe has to exercise the same
-// thing the test does or it is measuring a different host.
-const PROBE_URL =
-  "https://raw.githubusercontent.com/danmarsden/moodle-mod_attendance/" +
-  "8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c/version.php";
-const online = async () => {
-  try {
-    const res = await fetch(PROBE_URL, { signal: AbortSignal.timeout(8000) });
-    return res.status === 200;
-  } catch { return false; }
-};
+// Served from test/fixtures/net, so these are deterministic and offline. They
+// used to skip whenever GitHub throttled us — and a skipped test kills no
+// mutants, which turned a red suite into a false "vacuous assertion" report.
+const online = async () => true;
 
-test("fetches version.php for a commit when it is not checked out", async (t) => {
-  if (!(await online())) return t.skip("offline or throttled");
+test("fetches version.php for a commit when it is not checked out", async () => {
   const got = await fetchPluginVersion(
     "danmarsden/moodle-mod_attendance",
     "8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c",
@@ -347,7 +325,6 @@ test("fetches version.php for a commit when it is not checked out", async (t) =>
 });
 
 test("an ABSOLUTE plugin-root maps to the repo root, not into the URL", async (t) => {
-  if (!(await online())) return t.skip("offline or throttled");
   // plugin-root is a LOCAL path. Pasting it into the URL built a 404 and the
   // fallback silently did nothing — how it first shipped.
   const got = await fetchPluginVersion(
@@ -365,7 +342,6 @@ test("a bad repo or SHA is refused without a request", async () => {
 });
 
 test("a missing file yields null rather than a fabricated result", async (t) => {
-  if (!(await online())) return t.skip("offline");
   assert.equal(
     await fetchPluginVersion("danmarsden/moodle-mod_attendance", "0".repeat(40)),
     null,

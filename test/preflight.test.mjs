@@ -425,20 +425,9 @@ test("an ordinary blueprint has no placeholder complaints", () => {
 // Extracted so the second caller (build-blueprint-preview.mjs) cannot
 // reimplement it and quietly drop the post-redirect re-check. Network tests
 // skip rather than fail when offline.
-// Probe a REAL FILE and require 200. `< 500` accepted GitHub's rate limit
-// (HTTP 429) as a healthy host, and the bare host root answers 301 even while
-// every file fetch is being refused — so the probe said "online", the test ran,
-// and it failed with `HTTP 429` on a clean tree. A liveness probe must exercise
-// the same thing the test does. Observed at 148dfb2.
-const netUp = async () => {
-  try {
-    const res = await fetch(
-      "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json",
-      { signal: AbortSignal.timeout(8000) },
-    );
-    return res.status === 200;
-  } catch { return false; }
-};
+// These used to gate on a liveness probe and skip when GitHub throttled us.
+// They are now served from test/fixtures/net — deterministic, offline, and
+// (unlike a skip) still killing their mutants.
 
 test("fetchBlueprint refuses a host outside the allowlist before requesting", async () => {
   await assert.rejects(
@@ -447,8 +436,7 @@ test("fetchBlueprint refuses a host outside the allowlist before requesting", as
   );
 });
 
-test("fetchBlueprint refuses a URL that REDIRECTS off the allowlist", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("fetchBlueprint refuses a URL that REDIRECTS off the allowlist", async () => {
   // moodle-playground.com 301s across origins AND strips the path — the exact
   // shape the post-redirect check exists for.
   await assert.rejects(
@@ -463,8 +451,7 @@ test("fetchBlueprint refuses non-https and userinfo", async () => {
   }
 });
 
-test("fetchBlueprint returns bytes and the final URL for a good fetch", async (t) => {
-  if (!(await netUp())) return t.skip("offline or throttled");
+test("fetchBlueprint returns bytes and the final URL for a good fetch", async () => {
   const { bytes, finalUrl } = await fetchBlueprint(
     "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/blueprints/integration-test.json",
     ["raw.githubusercontent.com"],
