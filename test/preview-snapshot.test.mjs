@@ -305,7 +305,13 @@ test("the action's own blueprint uses no risky step it did not generate itself",
       assert.equal(s.code.includes("\n"), false, `${name}: ${s.step} is multi-line`);
       // ...and NO `//` COMMENT, which is only safe to say because of the line
       // above. Every generator collapses its PHP onto one physical line, so a
-      // `//` comment silently swallows the entire rest of the program. Written
+      // `//` comment silently swallows the entire rest of the program.
+      //
+      // SCOPE, stated honestly: this walks the snapshot CASES, so it covers a
+      // generator only where some CASE reaches it. A generator no CASE exercises
+      // is NOT checked here — measured, by planting a `//` in one and watching
+      // the whole suite stay green. Every generator therefore needs a CASE, and
+      // `build-preview.test.mjs` checks the generators directly as well. Written
       // and shipped: a draft of the course-format assertion commented out its
       // own startdate fix, its comparison and both of its failing exits, and
       // would have exited 0 on every boot including the broken ones. It looked

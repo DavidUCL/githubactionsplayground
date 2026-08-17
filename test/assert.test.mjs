@@ -392,3 +392,55 @@ test("wrong extraction name → verify_fail/plugin_binding_mismatch", () => {
   );
   assert.equal(v.error_class, "plugin_binding_mismatch");
 });
+
+// ---- the exit-code maps must not collide ---------------------------------
+
+test("no two assertion generators claim the same exit code", async () => {
+  const { ASSERT_CODES } = await import("../scripts/restore-assert.mjs");
+  const { THEME_CODES } = await import("../scripts/theme-assert.mjs");
+  const { COURSE_CODES } = await import("../scripts/course-assert.mjs");
+  // `assert.mjs` merges these with object spread, so a code defined twice is
+  // silently won by whichever map is spread last — and the boot log would then
+  // explain a failure as the wrong thing entirely, which is worse than the
+  // "99 is not ours" silence the explainer is careful about elsewhere.
+  // Nothing checked this; a planted duplicate key left the whole suite green.
+  const maps = [
+    ["restore-assert.mjs", ASSERT_CODES],
+    ["theme-assert.mjs", THEME_CODES],
+    ["course-assert.mjs", COURSE_CODES],
+  ];
+  const owner = new Map();
+  for (const [module, codes] of maps) {
+    for (const code of Object.keys(codes)) {
+      // 0 is SUCCESS in every generator and is legitimately defined by more
+      // than one. It is the only shared code, and it is shared by meaning
+      // rather than by accident — every other number identifies one specific
+      // failure in one specific generator.
+      if (code === "0") continue;
+      const already = owner.get(code);
+      assert.equal(
+        already, undefined,
+        `exit code ${code} is claimed by BOTH ${already} and ${module} — ` +
+          `assert.mjs spreads them, so one silently wins and the boot log ` +
+          `would explain the failure as the wrong thing`,
+      );
+      owner.set(code, module);
+    }
+  }
+  // ...and a sanity floor, so deleting a whole map does not read as "disjoint".
+  assert.ok(owner.size >= 10, `expected every generator's failure codes, saw ${owner.size}`);
+  // Every generator numbers its failures in its own block of ten, so a new one
+  // starts at the next free block rather than picking numbers at random. This
+  // is what keeps the disjointness above easy to hold rather than lucky.
+  const blocks = new Map();
+  for (const [code, module] of owner) {
+    const block = Math.floor(Number(code) / 10);
+    const already = blocks.get(block);
+    assert.ok(
+      already === undefined || already === module,
+      `exit codes ${block}0-${block}9 are split between ${already} and ${module} — ` +
+        `keep one block per generator so the next one has an obvious free block`,
+    );
+    blocks.set(block, module);
+  }
+});
