@@ -140,12 +140,20 @@ export function buildThemeAssertion(name) {
  * DELIBERATELY NOT CRITICAL, and deliberately AFTER `login`. Compiling a
  * theme's SCSS is the most expensive thing in the whole blueprint and the one
  * most likely to exhaust the WASM heap — and a heap abort is not a PHP
- * exception, so no `try` in this file can catch it. If that happens with the
- * step marked critical, the boot ABORTS and the reviewer gets no preview at
- * all, which is the exact outcome this step exists to avoid: an unstyled site
- * is visible, survivable and better than nothing. It runs after `login` so that
- * everything the preview promises is already done before the expensive part is
- * attempted.
+ * exception, so no `try` in this file can catch it. It runs after `login` so
+ * that everything the preview promises is already done before the expensive
+ * part is attempted.
+ *
+ * THE `critical: false` HALF IS NOT A GUARANTEE ON THE HOST WE POINT AT, and
+ * this docblock used to imply it was. Measured 2026-08-17 by fetching both
+ * deployed bundles: daviducl.github.io — the action.yml default — serves an
+ * executor.js of 2,687 bytes containing the string "critical" ZERO times, and
+ * aborts on ANY step throw; ateeducacion.github.io serves 4,649 bytes and
+ * honours the flag per ADR-0005. So on the default host a failure here still
+ * takes the whole preview down. The AFTER-`login` half is what actually buys
+ * the reviewer something on both hosts: by the time this runs, the site is
+ * built and the reviewer is signed in. Re-measure rather than trust this —
+ * ateeducacion's bundle was rebuilt the same day it was written.
  *
  * @returns {{step: string, code: string, critical: boolean}}
  */

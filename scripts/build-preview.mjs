@@ -957,12 +957,16 @@ export function buildBlueprint({
   // compiled lazily on the reviewer's first page view.
   const activeTheme = themeName || (type === "theme" ? name : "");
   if (activeTheme) {
-    // `critical`, like everything else from createCategory onward. It was not,
-    // and the comment above claimed otherwise: on the DEPLOYED executor a
-    // non-critical failure is non-fatal (ADR-0005), so a setTheme that threw
-    // would let the boot carry on and the reviewer would get stock Boost. The
-    // warm-up below catches that case too, but a guard that only works because
-    // a later guard exists is one edit away from not working.
+    // `critical`, like everything else from createCategory onward. "The
+    // DEPLOYED executor" used to appear here as if there were one: there are
+    // two, and they differ. On ateeducacion a non-critical failure is non-fatal
+    // (ADR-0005), so a setTheme that threw would let the boot carry on and the
+    // reviewer would get stock Boost — which is why this flag is set. On
+    // daviducl.github.io, the action's own default, any throw aborts and the
+    // flag changes nothing. Setting it is right for both: it is the only one of
+    // the two that needs saying, and it costs nothing where it is ignored.
+    // (Measured 2026-08-17: executor.js is 2,687 bytes with zero occurrences of
+    // "critical" on the default host, 4,649 bytes and four on the other.)
     steps.push({ step: "setTheme", name: activeTheme, critical: true });
     // The proof goes here, before login: everything it detects is invisible, so
     // a failure must stop the link being produced at all. The CSS build is a

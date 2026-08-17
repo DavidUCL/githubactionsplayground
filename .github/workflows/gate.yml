@@ -81,7 +81,12 @@ jobs:
     # and that must not block a contributor's PR.
     if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 40, not 30. MEASURED on run 31994375185: this job took 23m36s against the
+    # 30-minute cap, while the offline job took 17m48s — the LIVE job is the one
+    # with less headroom, and it is the one every new browser arm lands in. It
+    # already waives two theme arms for an unreachable third-party proxy, so a
+    # timeout kill here would be doubly hard to read: cancelled, naming no check.
+    timeout-minutes: 40
     permissions:
       contents: read
     steps:
