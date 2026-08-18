@@ -265,6 +265,8 @@ export const DEFAULT_ORIGINS = [
 
 /** Course the reviewer lands in. */
 const COURSE_SHORTNAME = "REVIEW";
+/** Where the extra courses live, so the review course keeps its own category. */
+const EXTRA_CATEGORY = "Other courses";
 
 /**
  * The id the review course will have — DERIVED from the steps, not assumed.
@@ -292,18 +294,107 @@ const COURSE_SHORTNAME = "REVIEW";
  * Throws rather than guessing: a link that sends the reviewer to the wrong
  * course is worse than no link, and a wrong id is invisible on arrival.
  */
-export function reviewCourseId(steps) {
-  const makers = steps.filter((s) => s.step === "createCourse" || s.step === "restoreCourse");
-  if (makers.length !== 1) {
+/**
+ * Everything about the courses and enrolments that must hold before a link is
+ * built. Throws; never returns a verdict, because there is no caller that could
+ * sensibly carry on.
+ *
+ * EXPORTED SO IT CAN BE TESTED, and — the part that matters — actually tested.
+ * These are invariants over the builder's OWN output, so nothing outside can
+ * make them fail: with the checks inline, three mutants that gutted them
+ * survived a full gate run, which is the "guard with no reachable failure"
+ * shape this repo keeps rediscovering. Feeding this hand-built bad blueprints
+ * is the only way to know it works.
+ *
+ * `reviewCourseId()` is NOT called here. It runs earlier on every build to
+ * derive the landing page's course number and throws on the same conditions, so
+ * a second call would be a redundant guard — one was added here and its mutant
+ * survived precisely because deleting it changed nothing.
+ */
+export function checkCourseInvariants(steps, { loginUser, extraCourses = [] }) {
+  const created = steps.find((s) => s.step === "createUsers")?.users?.map((u) => u.username) ?? [];
+  const enrolments = steps.find((s) => s.step === "enrolUsers")?.enrolments ?? [];
+
+  // PER COURSE, not a flat set of usernames. The flat version passed a
+  // blueprint with three courses and enrolments in only one of them: nothing
+  // threw, the summary still said three courses, and a "my courses" block would
+  // show one while the reviewer blamed the plugin.
+  const inReview = new Set(
+    enrolments.filter((e) => e.course === COURSE_SHORTNAME).map((e) => e.username),
+  );
+  const unenrolled = created.filter((u) => !inReview.has(u));
+  if (unenrolled.length) {
     throw new Error(
-      `internal: the review course's id is only knowable when exactly one step ` +
-        `creates a course, found ${makers.length}`,
+      `internal: ${unenrolled.join(", ")} would be created but never enrolled in ` +
+        `${COURSE_SHORTNAME} — the account could not reach the review course, and ` +
+        `nothing on screen would say so`,
     );
   }
-  if (makers[0].shortname !== COURSE_SHORTNAME) {
+
+  // ...and whoever the reviewer arrives as must be able to SEE more than one
+  // course when there is more than one. Deliberately not a cross-product of
+  // users and courses: that would forbid the empty third course, which is the
+  // whole point of building three.
+  if (extraCourses.length && loginUser !== "admin") {
+    const courseCount = new Set(
+      enrolments.filter((e) => e.username === loginUser).map((e) => e.course),
+    ).size;
+    if (courseCount < 2) {
+      throw new Error(
+        `internal: ${loginUser} is enrolled in ${courseCount} course(s) but the ` +
+          `preview builds ${extraCourses.length + 1} — the extras would be invisible ` +
+          `to the account the reviewer actually arrives as`,
+      );
+    }
+  }
+
+  // Every course-maker must precede the enrolments, because `enrolUsers` looks
+  // a course up by shortname with MUST_EXIST. `order-rules.mjs` cannot hold
+  // this line for us: it deliberately has no course-before-enrol rule, and on
+  // the RESTORE path `checkReferences` is waived from the first opaque step
+  // onward — so a badly ordered blueprint passes the gate and dies in the
+  // reviewer's browser.
+  const names = steps.map((s) => s.step);
+  const lastMaker = Math.max(names.lastIndexOf("createCourse"), names.lastIndexOf("restoreCourse"));
+  const firstEnrol = names.indexOf("enrolUsers");
+  if (firstEnrol >= 0 && lastMaker > firstEnrol) {
     throw new Error(
-      `internal: the first course-creating step makes "${makers[0].shortname}", ` +
-        `not ${COURSE_SHORTNAME} — the landing page would point at the wrong course`,
+      "internal: a course is created after enrolUsers, which looks courses up by " +
+        "shortname with MUST_EXIST — the boot would die at the enrolment step",
+    );
+  }
+}
+
+export function reviewCourseId(steps) {
+  // Every course any step makes, IN ORDER. `createCourses` is plural and is in
+  // the gate's allowed list, so its entries are counted too — this builder does
+  // not emit it, but a foreign blueprint may, and a course it made would
+  // otherwise be invisible here while still taking an id from Moodle.
+  const made = [];
+  for (const s of steps) {
+    if (s.step === "createCourse" || s.step === "restoreCourse") made.push(s.shortname);
+    else if (s.step === "createCourses") for (const c of s.courses ?? []) made.push(c?.shortname);
+  }
+  if (made.length === 0) {
+    throw new Error("internal: no step creates a course, so there is no id to report");
+  }
+  // NOT "exactly one" any more — `courses` makes up to three. What has to hold
+  // is that OURS IS FIRST, because Moodle allocates ids in creation order and
+  // the activity add form the reviewer lands on carries a number. This is the
+  // structural invariant, and it is deliberately not `made.length !== courses`:
+  // that would compare the builder against its own input and pass whatever it
+  // built.
+  if (made[0] !== COURSE_SHORTNAME) {
+    throw new Error(
+      `internal: the FIRST course-creating step makes "${made[0]}", not ` +
+        `${COURSE_SHORTNAME} — the landing page would point at the wrong course`,
+    );
+  }
+  // ...and only once, or the second one aborts the boot on `shortnametaken`.
+  if (made.filter((n) => n === COURSE_SHORTNAME).length !== 1) {
+    throw new Error(
+      `internal: ${COURSE_SHORTNAME} is created more than once; the second would ` +
+        `abort the boot on shortnametaken`,
     );
   }
   // 1 is the site course; ours is the first one created after it.
@@ -357,6 +448,11 @@ export const COUNT_INPUTS = {
   teachers: { env: "TEACHERS", fallback: 1, min: 0, max: 2 },
   students: { env: "STUDENTS", fallback: 1, min: 1, max: 20 },
   sections: { env: "SECTIONS", fallback: 3, min: 1, max: 20 },
+  // 1 is the shape every preview had before the control existed. The cap is 3
+  // because the extras exist to make "several courses" observable, and the
+  // surfaces that only differentiate at three — the course list's filters,
+  // grouping and sort — are covered by three.
+  courses: { env: "COURSES", fallback: 1, min: 1, max: 3 },
 };
 
 /**
@@ -516,6 +612,22 @@ export function landingPath(type, name, { restored = false, courseFormat = "", c
  */
 /** student1..studentN, clamped: the URL is size-bound and 20 is already more
  * than any review needs. */
+/**
+ * The extra courses `courses: 2` and `courses: 3` add, in creation order.
+ *
+ * REVIEW2/REVIEW3 and not COURSE1/DEMO/TEST. A restored backup renames a
+ * clashing course with a `_1`/`_2` suffix, so a restore can never GENERATE
+ * these names — whereas `COURSE1` and `DEMO` are exactly what a hand-rolled
+ * `.mbz` contains. The asymmetry matters because the two failures are not
+ * equal: a clash on our side is `shortnametaken`, which throws under
+ * CLI_SCRIPT and aborts the boot; a clash on the restore's side is silent.
+ */
+export function extraCourseNames(courses) {
+  const { min, max } = COUNT_INPUTS.courses;
+  const count = Math.max(min, Math.min(max, Number(courses) || min));
+  return Array.from({ length: count - 1 }, (_, i) => `${COURSE_SHORTNAME}${i + 2}`);
+}
+
 /** Surnames, so a participants list reads as people. The first is "Review",
  * unchanged from before the count was adjustable — a display name is not a
  * contract, but changing one for symmetry is churn a reviewer has to check. */
@@ -830,6 +942,8 @@ export function buildBlueprint({
   // plugin under review decides (a format plugin previews itself) and topics is
   // the floor. Emitted UNCONDITIONALLY below.
   courseFormat = "",
+  // How many courses the preview builds, including the review course.
+  courses = COUNT_INPUTS.courses.fallback,
   // Language packs to install, already parsed and validated. The FIRST becomes
   // the site language.
   languagePacks = [],
@@ -904,6 +1018,7 @@ export function buildBlueprint({
   // combination is refused in main(), because the loser of a duplicate key
   // leaves no trace anywhere at all.
   const activeFormat = courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT);
+  const extraCourses = extraCourseNames(courses);
   const steps = [
     { step: "installMoodle" },
     {
@@ -1056,6 +1171,40 @@ export function buildBlueprint({
     ...(!restore && activeFormat !== DEFAULT_COURSE_FORMAT
       ? [buildCourseAssertion({ format: activeFormat, shortname: COURSE_SHORTNAME })]
       : []),
+    // The extra courses, AFTER the review course and its assertions.
+    //
+    // ORDER IS THE WHOLE POINT. Moodle allocates course ids in creation order,
+    // and the activity add form the reviewer lands on carries a NUMBER, so the
+    // review course must be created first or the link points somewhere else.
+    // `reviewCourseId()` enforces it structurally and the boot proves it.
+    //
+    // Their own category, and REVIEW keeps "Review" to itself. That is not
+    // tidiness: `create_course` sets `sortorder = 0`, so within one category the
+    // NEWEST course sorts first and the review course would appear last in its
+    // own category listing.
+    //
+    // Plain `createCourse` steps, one each, never the plural `createCourses`.
+    // The plural step exists and the gate allows it, but it hides the courses it
+    // makes from `reviewCourseId` and from the one-review-course guard, both of
+    // which walk step names.
+    ...(extraCourses.length
+      ? [
+          { step: "createCategory", name: EXTRA_CATEGORY, critical: true },
+          ...extraCourses.map((shortname) => ({
+            step: "createCourse",
+            fullname: `${label} · ${shortname}`,
+            shortname,
+            critical: true,
+            category: EXTRA_CATEGORY,
+            // INHERITED EXPLICITLY. The handler defaults a missing format to
+            // topics and a missing section count to 5, so leaving these off
+            // would ship one weeks course and two topics ones — the reviewer
+            // would be comparing courses that differ in a way nobody chose.
+            format: activeFormat,
+            numsections: sections,
+          })),
+        ]
+      : []),
     {
       step: "createUsers",
       critical: true,
@@ -1104,6 +1253,24 @@ export function buildBlueprint({
           course: COURSE_SHORTNAME,
           role: "editingteacher",
         })),
+        // ...and into the SECOND course too, but never the third.
+        //
+        // A SUBSET ON PURPOSE. Enrol everyone everywhere and
+        // `enrol_get_my_courses()`, `get_courses()` and the category API all
+        // return the same rows — so a plugin that ignores enrolment entirely
+        // looks identical to one that honours it, which is the single most
+        // useful thing three courses could have shown a reviewer. Leaving
+        // REVIEW3 empty keeps that discriminator. It also satisfies what the
+        // course-id assertion needs: the teacher is in more than one course, so
+        // the `require_login` refusal that used to make a wrong id loud is
+        // genuinely gone and the assertion is doing the work.
+        ...(extraCourses.length
+          ? teacherNames(teachers).map((u) => ({
+              username: u,
+              course: extraCourses[0],
+              role: "editingteacher",
+            }))
+          : []),
         ...studentNames(students).map((u) => ({
           username: u,
           course: COURSE_SHORTNAME,
@@ -1191,6 +1358,13 @@ export function buildBlueprint({
       // report and qtype preview, whose landing page REQUIRES admin and where
       // no other account was ever possible — noise in the one artifact a
       // reviewer is meant to read. Both conditions, therefore.
+      (extraCourses.length
+        ? `<li>Other courses: ${extraCourses.map((c) => `<code>${escapeHtml(c)}</code>`).join(", ")}` +
+          `. You are enrolled in <code>${escapeHtml(extraCourses[0])}</code> but NOT in ` +
+          `<code>${escapeHtml(extraCourses[extraCourses.length - 1])}</code>` +
+          `${extraCourses.length > 1 ? "" : " — the same course"}, deliberately: a plugin that ` +
+          `ignores enrolment shows both, one that honours it shows only the first</li>`
+        : "") +
       (teachers === 0 && loginUser === "admin"
         ? `<li>This preview has NO teacher, so you are an administrator — who can ` +
           `open anything. This is not what the site looks like to a teacher</li>`
@@ -1204,24 +1378,8 @@ export function buildBlueprint({
   // has no way to see the difference, and the account simply cannot reach the
   // course. Checked here rather than asserted in the boot, because it is
   // decidable at build time and a link should not exist at all.
-  const created = steps.find((s) => s.step === "createUsers").users.map((u) => u.username);
-  const enrolled = new Set(steps.find((s) => s.step === "enrolUsers").enrolments.map((e) => e.username));
-  const unenrolled = created.filter((u) => !enrolled.has(u));
-  if (unenrolled.length) {
-    throw new Error(
-      `internal: ${unenrolled.join(", ")} would be created but never enrolled — ` +
-        `the account could not reach the review course, and nothing on screen would say so`,
-    );
-  }
-  // The invariant is "exactly one course we control", not "exactly one
-  // createCourse" — a restore makes the course too, and the original guard
-  // refused that blueprint outright.
-  const courseSteps = steps.filter((s) => s.step === "createCourse" || s.step === "restoreCourse");
-  if (courseSteps.length !== 1) {
-    throw new Error(
-      `internal: the preview assumes exactly one course, found ${courseSteps.length}`,
-    );
-  }
+  checkCourseInvariants(steps, { loginUser, extraCourses });
+
   // Which theme the site ends up on. Two ways in, ONE step: the plugin under
   // review is itself a theme, or the `theme` box named one. They cannot both
   // apply — `planThemeControl` refuses that combination, because `set_config`
@@ -1429,6 +1587,7 @@ export function setOutput(name, value) {
 export function previewSummary({
   type, name, headSha, url, component, headRepo, extras, moodleBranch,
   signedInAs, php, restore, teachers, students, sections, courseFormat, languagePacks = [],
+  courseRoster = [],
   landingPage,
   versionPhp, core, risky, loginAs,
 }) {
@@ -1471,6 +1630,11 @@ export function previewSummary({
       // reviewer nothing different at all — the one genuinely invisible way
       // this control can be wrong, and it is cured by printing the number
       // rather than by asserting it inside the boot.
+      // The ROSTER, not a bare count. Names and order are what a reviewer can
+      // check against the screen; "3 course(s)" is a number they have no way to
+      // verify, and it would still read correctly if the builder made the wrong
+      // three.
+      courses: courseRoster.join(", "),
       course: restore
         ? `${teachers} teacher(s), ${students} student(s), restored from a backup ` +
           `(${restore.info.activityCount} activities)`
@@ -2016,6 +2180,7 @@ async function main() {
   const langs = parseLanguagePacks(process.env.LANGUAGE_PACKS);
   for (const reason of langs.problems) problems.add("language-packs", reason);
 
+  const courses = count("courses");
   const teachers = count("teachers");
   const students = count("students");
   const sections = count("sections");
@@ -2170,6 +2335,7 @@ async function main() {
     phpOverride,
     loginAs,
     courseFormat,
+    courses,
     languagePacks: langs.codes,
     teachers,
     students,
@@ -2243,6 +2409,12 @@ async function main() {
     // not anything the box says.
     courseFormat: courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT),
     languagePacks: langs.codes,
+    // Read off the finished blueprint, in creation order — so the summary names
+    // the courses that exist, and in the order whose FIRST entry decides the id
+    // the landing page carries.
+    courseRoster: blueprint.steps
+      .filter((st) => st.step === "createCourse" || st.step === "restoreCourse")
+      .map((st) => st.shortname),
     // READ BACK off the finished blueprint, not recomputed. This was a second
     // copy of the same derivation, and it had already grown a `courseFormat`
     // argument to stay in step with the first; the next argument would have

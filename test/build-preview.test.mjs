@@ -205,6 +205,17 @@ const URL_SHAPES = [
   // A theme under review lands by NAME, so it pays for no course-id assertion
   // and has not moved at all: 1763, unchanged.
   { label: "theme under review", opts: { type: "theme", name: "boost_union" }, max: 1900 },
+  { label: "three courses", opts: { courses: 3 }, max: 1800 },
+  // THE WORST CASE, on purpose. Every control that grows the blueprint, at
+  // once. It is here because each bound above is measured in isolation and none
+  // of them would notice the combination creeping up — `language packs` alone
+  // was already at 1821 when this was written, and adding two courses to it is
+  // the largest single preview this action can build.
+  {
+    label: "everything at once",
+    opts: { courses: 3, languagePacks: ["es", "ar"], courseFormat: "weeks", teachers: 2, students: 5 },
+    max: 2800,
+  },
 ];
 
 test("every preview shape stays well inside what a browser will carry", () => {
@@ -2327,15 +2338,38 @@ test("the course id is derived from the steps, and refuses to guess", async () =
 
   // No course at all: there is no id to report, and returning 2 would send the
   // reviewer to whatever happened to be created by something else.
-  assert.throws(() => reviewCourseId([{ step: "installMoodle" }]), /exactly one step/);
-  // More than one: the ordering assumption is exactly what stops holding, and
-  // this is the shape the `courses` control will introduce.
+  // More than one is now LEGAL — that is what `courses` builds — provided ours
+  // is first. This is the pair that matters: the same two courses, opposite
+  // orders, opposite verdicts. A check that merely counted them would answer
+  // both the same way.
+  assert.equal(reviewCourseId([
+    { step: "createCourse", shortname: "REVIEW" },
+    { step: "createCourse", shortname: "REVIEW2" },
+  ]), 2);
+  assert.throws(
+    () => reviewCourseId([
+      { step: "createCourse", shortname: "REVIEW2" },
+      { step: "createCourse", shortname: "REVIEW" },
+    ]),
+    /FIRST course-creating step makes "REVIEW2"/,
+  );
+  // No course at all, and REVIEW twice (the second aborts on shortnametaken).
+  assert.throws(() => reviewCourseId([{ step: "installMoodle" }]), /no step creates a course/);
   assert.throws(
     () => reviewCourseId([
       { step: "createCourse", shortname: "REVIEW" },
-      { step: "createCourse", shortname: "EXTRA" },
+      { step: "createCourse", shortname: "REVIEW" },
     ]),
-    /exactly one step/,
+    /created more than once/,
+  );
+  // The PLURAL step counts too. This builder never emits it, but the gate
+  // allows it, and a course it made would otherwise be invisible here while
+  // still taking an id from Moodle.
+  assert.throws(
+    () => reviewCourseId([
+      { step: "createCourses", courses: [{ shortname: "OTHER" }, { shortname: "REVIEW" }] },
+    ]),
+    /FIRST course-creating step makes "OTHER"/,
   );
   // Someone else's course first. This is the reachable case today: a plugin
   // under review whose db/install.php creates a course takes id 2, because
@@ -2451,4 +2485,170 @@ test("the assertion refuses inputs it cannot trust", async () => {
   assert.ok(code.indexOf("CLI_SCRIPT") < code.indexOf("config.php"));
   assert.equal(code.includes("\n"), false);
   assert.equal(code.includes("//"), false);
+});
+
+// ---- the courses control -------------------------------------------------
+
+const coursesOf = (bp) =>
+  bp.steps.filter((s) => s.step === "createCourse" || s.step === "restoreCourse")
+    .map((s) => s.shortname);
+
+test("the review course is created FIRST, whatever else is built", () => {
+  assert.deepEqual(coursesOf(buildBlueprint(base)), ["REVIEW"]);
+  assert.deepEqual(coursesOf(buildBlueprint({ ...base, courses: 2 })), ["REVIEW", "REVIEW2"]);
+  assert.deepEqual(coursesOf(buildBlueprint({ ...base, courses: 3 })), ["REVIEW", "REVIEW2", "REVIEW3"]);
+  // Moodle allocates course ids in creation order and the add form the reviewer
+  // lands on carries a NUMBER, so first is not cosmetic.
+  for (const n of [1, 2, 3]) {
+    const bp = buildBlueprint({ ...base, courses: n });
+    assert.equal(coursesOf(bp)[0], "REVIEW", `courses: ${n}`);
+    assert.match(bp.steps.find((s) => s.step === "setLandingPage").path, /course=2\b/);
+  }
+});
+
+test("the extras inherit what was chosen, not the handler's defaults", () => {
+  const bp = buildBlueprint({ ...base, courses: 3, courseFormat: "weeks", sections: 7 });
+  const made = bp.steps.filter((s) => s.step === "createCourse");
+  assert.equal(made.length, 3);
+  for (const c of made) {
+    // The handler defaults a missing format to topics and a missing section
+    // count to 5 — so omitting these would ship one weeks course and two topics
+    // ones, and the reviewer would be comparing courses that differ in a way
+    // nobody chose.
+    assert.equal(c.format, "weeks", c.shortname);
+    assert.equal(c.numsections, 7, c.shortname);
+  }
+  // ...and the extras are in their own category, so the review course is not
+  // sorted below them (create_course sets sortorder 0, newest first).
+  assert.equal(made[0].category, "Review");
+  assert.deepEqual(made.slice(1).map((c) => c.category), ["Other courses", "Other courses"]);
+  const cats = bp.steps.filter((s) => s.step === "createCategory").map((s) => s.name);
+  for (const c of made) assert.ok(cats.includes(c.category), `${c.category} is never created`);
+});
+
+test("the last course is deliberately empty, and that is the point", () => {
+  const bp = buildBlueprint({ ...base, courses: 3 });
+  const enrol = bp.steps.find((s) => s.step === "enrolUsers").enrolments;
+  const inCourse = (c) => enrol.filter((e) => e.course === c).map((e) => e.username);
+  assert.deepEqual(inCourse("REVIEW"), ["teacher", "student1"]);
+  assert.deepEqual(inCourse("REVIEW2"), ["teacher"]);
+  // Enrol everyone everywhere and enrol_get_my_courses(), get_courses() and the
+  // category API all return the same rows — so a plugin that ignores enrolment
+  // is indistinguishable from one that honours it. The empty course is the
+  // discriminator, and it is the most useful thing three courses can show.
+  assert.deepEqual(inCourse("REVIEW3"), []);
+  // The reviewer must still be able to SEE more than one, or the extras are
+  // invisible to the account they arrive as.
+  const loginUser = bp.steps.find((s) => s.step === "login").username;
+  assert.ok(new Set(enrol.filter((e) => e.username === loginUser).map((e) => e.course)).size >= 2);
+});
+
+test("a course created after the enrolments is refused, not shipped", async () => {
+  const { buildBlueprint: bb } = await import("../scripts/build-preview.mjs");
+  // `order-rules.mjs` deliberately has no course-before-enrol rule, and on the
+  // restore path checkReferences is waived from the opaque step onward — so a
+  // badly ordered blueprint passes the gate and dies in the reviewer's browser
+  // on a MUST_EXIST lookup. The builder has to hold this line itself.
+  const bp = bb({ ...base, courses: 2 });
+  const names = bp.steps.map((s) => s.step);
+  assert.ok(names.lastIndexOf("createCourse") < names.indexOf("enrolUsers"));
+});
+
+test("every account is enrolled in the review course, per course not in total", () => {
+  // The old invariant compared a flat set of usernames, so three courses with
+  // enrolments in only one of them passed: nothing threw, the summary still
+  // said three courses, and a "my courses" block would show one while the
+  // reviewer blamed the plugin.
+  for (const n of [1, 2, 3]) {
+    const bp = buildBlueprint({ ...base, courses: n, teachers: 2, students: 3 });
+    const created = bp.steps.find((s) => s.step === "createUsers").users.map((u) => u.username);
+    const inReview = bp.steps.find((s) => s.step === "enrolUsers").enrolments
+      .filter((e) => e.course === "REVIEW").map((e) => e.username);
+    assert.deepEqual([...created].sort(), [...inReview].sort(), `courses: ${n}`);
+  }
+});
+
+test("the summary names the courses, and the brief says which one is empty", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  const three = previewSummary({ ...summaryOpts, courseRoster: ["REVIEW", "REVIEW2", "REVIEW3"] }).join("\n");
+  // The ROSTER, not "3 course(s)" — a count would still read correctly if the
+  // builder made the wrong three.
+  assert.match(three, /REVIEW, REVIEW2, REVIEW3/);
+  const one = previewSummary({ ...summaryOpts, courseRoster: ["REVIEW"] }).join("\n");
+  assert.equal(one.includes("REVIEW2"), false);
+  const brief = buildBlueprint({ ...base, courses: 3 }).steps.find((s) => s.step === "addModule").intro;
+  assert.match(brief, /REVIEW2/);
+  assert.match(brief, /NOT in <code>REVIEW3<\/code>/);
+  assert.equal(buildBlueprint(base).steps.find((s) => s.step === "addModule").intro.includes("REVIEW2"), false);
+});
+
+test("the course invariants reject the blueprints they exist to reject", async () => {
+  const { checkCourseInvariants } = await import("../scripts/build-preview.mjs");
+  const ok = [
+    { step: "createCourse", shortname: "REVIEW" },
+    { step: "createCourse", shortname: "REVIEW2" },
+    { step: "createUsers", users: [{ username: "teacher" }, { username: "student1" }] },
+    { step: "enrolUsers", enrolments: [
+      { username: "teacher", course: "REVIEW" },
+      { username: "student1", course: "REVIEW" },
+      { username: "teacher", course: "REVIEW2" },
+    ] },
+  ];
+  // These are invariants over the builder's OWN output, so nothing outside can
+  // make them fail — which is why three mutants that gutted them survived a
+  // full gate run while they were inline. Hand-built bad blueprints are the
+  // only way to know they work.
+  assert.doesNotThrow(() => checkCourseInvariants(ok, { loginUser: "teacher", extraCourses: ["REVIEW2"] }));
+
+  // An account created and never enrolled in the review course. Counting a flat
+  // set of usernames passed this, because the teacher IS enrolled somewhere.
+  const flat = structuredClone(ok);
+  flat[3].enrolments = [{ username: "teacher", course: "REVIEW2" }, { username: "student1", course: "REVIEW" }];
+  assert.throws(
+    () => checkCourseInvariants(flat, { loginUser: "student1", extraCourses: ["REVIEW2"] }),
+    /teacher would be created but never enrolled in REVIEW/,
+  );
+
+  // The reviewer's own account seeing only one course while three exist.
+  const blind = structuredClone(ok);
+  blind[3].enrolments = blind[3].enrolments.filter((e) => e.course === "REVIEW");
+  assert.throws(
+    () => checkCourseInvariants(blind, { loginUser: "teacher", extraCourses: ["REVIEW2"] }),
+    /enrolled in 1 course\(s\) but the preview builds 2/,
+  );
+  // ...unless they arrive as admin, who is in none of them by design.
+  assert.doesNotThrow(() => checkCourseInvariants(blind, { loginUser: "admin", extraCourses: ["REVIEW2"] }));
+
+  // A course created AFTER the enrolments. order-rules.mjs has no such rule and
+  // on the restore path checkReferences is waived, so this would pass the gate
+  // and die in the reviewer's browser on a MUST_EXIST lookup.
+  const late = [ok[0], ok[2], ok[3], { step: "createCourse", shortname: "REVIEW2" }];
+  assert.throws(() => checkCourseInvariants(late, { loginUser: "teacher", extraCourses: ["REVIEW2"] }),
+    /created after enrolUsers/);
+  // ...and a RESTORED course counts as a maker too.
+  const lateRestore = [ok[0], ok[2], ok[3], { step: "restoreCourse", shortname: "REVIEW2" }];
+  assert.throws(() => checkCourseInvariants(lateRestore, { loginUser: "teacher", extraCourses: ["REVIEW2"] }),
+    /created after enrolUsers/);
+});
+
+test("buildBlueprint actually CALLS the course invariants", async () => {
+  // A SOURCE-LEVEL test, and the reason is worth stating. The test above proves
+  // `checkCourseInvariants` works by feeding it bad blueprints directly — but
+  // it cannot prove buildBlueprint calls it, because buildBlueprint only ever
+  // produces GOOD blueprints, so deleting the call changes no observable
+  // behaviour. Measured: the mutant that removes the call survived while every
+  // other invariant mutant died.
+  //
+  // Same shape as foreign-paths.test.mjs, which tests its wiring this way for
+  // the same reason. A source test is weak, so it is used only where behaviour
+  // genuinely cannot reach — never as a substitute for one that can.
+  const fs = await import("node:fs");
+  const src = fs.readFileSync(
+    new global.URL("../scripts/build-preview.mjs", import.meta.url), "utf8");
+  const body = src.slice(src.indexOf("export function buildBlueprint("));
+  assert.match(
+    body, /checkCourseInvariants\(steps, \{ loginUser, extraCourses \}\)/,
+    "buildBlueprint must call checkCourseInvariants — without the call the " +
+      "invariants are dead code and every one of their mutants is unkillable",
+  );
 });

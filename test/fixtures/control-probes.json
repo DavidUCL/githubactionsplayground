@@ -40,7 +40,8 @@
     "THEME": "",
     "TEACHERS": "1",
     "COURSE_FORMAT": "(default)",
-    "LANGUAGE_PACKS": ""
+    "LANGUAGE_PACKS": "",
+    "COURSES": "1"
   },
   "probes": [
     {
@@ -215,6 +216,20 @@
       "expect_steps_removed": [],
       "expect_summary_contains": "weeks format",
       "note": "probe is 'weeks', NOT 'topics': topics is the default, so probing it produces a byte-identical blueprint and the row would fail 'the input reaches nothing' on a correct build. And not 'singleactivity', which also moves the landing page and would make the row assert two things at once. target is 'shape' because a non-default format brings the format ASSERTION with it - a whole extra runPhpCode step - and an inserted step renumbers every index-normalised path after it. The assertion rides only a non-default format: at topics it could only ever pass, which is the inert-assertion shape this gate exists to refuse. expect_summary_contains has a SPACE in it deliberately: the summary carries the base64 blueprint blob, and a bare five-letter token can appear inside base64 by chance, but a space cannot."
+    },
+    {
+      "input": "courses",
+      "env": "COURSES",
+      "probe": "3",
+      "target": "shape",
+      "expect_steps_added": [
+        "createCategory",
+        "createCourse",
+        "createCourse"
+      ],
+      "expect_steps_removed": [],
+      "expect_summary_contains": "REVIEW, REVIEW2, REVIEW3",
+      "note": "target is 'shape': the control adds a category and two courses. expect_summary_contains pins the ROSTER, not a count - '3 course(s)' would still read correctly if the builder made the wrong three, and the summary carries a base64 blob in which a short token can appear by chance. This string has spaces and capitals, which base64 cannot produce. The review course is NOT in expect_steps_added: it exists at the baseline too, and what this control adds is the extras. That the review course stays FIRST is enforced structurally by reviewCourseId() and proved at boot by LIVE check 10, not here."
     },
     {
       "input": "language-packs",

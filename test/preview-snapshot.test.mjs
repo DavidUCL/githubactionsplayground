@@ -105,6 +105,17 @@ const CASES = {
     name: "attendance",
     languagePacks: ["es", "ar"],
   },
+  // Three courses. Pins the order (REVIEW first, or its id moves), the extras'
+  // names and category, that they inherit format and sections rather than
+  // taking the handler's defaults, and the deliberate enrolment subset.
+  courses: {
+    headRepo: "DavidUCL/moodle-mod_attendance",
+    headSha: SHA,
+    prNumber: "15",
+    type: "mod",
+    name: "attendance",
+    courses: 3,
+  },
   unknown: {
     headRepo: "DavidUCL/local_myplugin",
     headSha: SHA,

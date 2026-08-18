@@ -90,6 +90,25 @@ inputs:
     description: "How many sections the review course has (1-20, default 3)."
     required: false
     default: "3"
+  courses:
+    description: >-
+      How many courses the review site has: 1 (default), 2 or 3. The review
+      course is always the first one created, because the activity add form the
+      reviewer lands on names a course by NUMBER and Moodle allocates those in
+      creation order — the preview proves that before you arrive.
+
+      The extras are `REVIEW2` and `REVIEW3`, in their own category. You are
+      enrolled in `REVIEW2` but deliberately NOT in `REVIEW3`: with every course
+      enrolled, `enrol_get_my_courses()` and `get_courses()` return the same
+      rows, so a plugin that ignores enrolment looks exactly like one that
+      honours it. The empty course is what makes the difference visible.
+
+      Extras inherit the chosen course format and section count explicitly —
+      left to the handler's defaults they would come out as topics courses with
+      five sections, and the reviewer would be comparing courses that differ in
+      a way nobody chose.
+    required: false
+    default: "1"
   language-packs:
     description: >-
       Extra Moodle language packs to install, comma separated (e.g. `es` or
@@ -306,6 +325,7 @@ runs:
         STUDENTS: ${{ inputs.students }}
         SECTIONS: ${{ inputs.sections }}
         COURSE_FORMAT: ${{ inputs.course-format }}
+        COURSES: ${{ inputs.courses }}
         LANGUAGE_PACKS: ${{ inputs.language-packs }}
         SAMPLE_CONTENT: ${{ inputs.sample-content }}
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}

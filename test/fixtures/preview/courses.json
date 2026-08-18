@@ -1,0 +1,138 @@
+{
+  "preferredVersions": {
+    "php": "8.3",
+    "moodle": "MOODLE_500_STABLE"
+  },
+  "landingPage": "/course/modedit.php?add=attendance&course=2&section=1",
+  "steps": [
+    {
+      "step": "installMoodle"
+    },
+    {
+      "step": "setConfigs",
+      "configs": [
+        {
+          "name": "debug",
+          "value": "32767"
+        },
+        {
+          "name": "debugdisplay",
+          "value": "1"
+        },
+        {
+          "name": "noemailever",
+          "value": "1"
+        },
+        {
+          "name": "sendcoursewelcomemessage",
+          "value": "0",
+          "plugin": "enrol_manual"
+        }
+      ]
+    },
+    {
+      "step": "installMoodlePlugin",
+      "url": "https://github.com/DavidUCL/moodle-mod_attendance/archive/d0638b39df1c28fd93c27778ae2cbada7cc1660f.zip",
+      "pluginType": "mod",
+      "pluginName": "attendance",
+      "critical": true
+    },
+    {
+      "step": "createCategory",
+      "name": "Review",
+      "critical": true
+    },
+    {
+      "step": "createCourse",
+      "fullname": "PR #15 · d0638b3 · mod_attendance",
+      "shortname": "REVIEW",
+      "critical": true,
+      "category": "Review",
+      "format": "topics",
+      "numsections": 3
+    },
+    {
+      "step": "createCategory",
+      "name": "Other courses",
+      "critical": true
+    },
+    {
+      "step": "createCourse",
+      "fullname": "PR #15 · d0638b3 · mod_attendance · REVIEW2",
+      "shortname": "REVIEW2",
+      "critical": true,
+      "category": "Other courses",
+      "format": "topics",
+      "numsections": 3
+    },
+    {
+      "step": "createCourse",
+      "fullname": "PR #15 · d0638b3 · mod_attendance · REVIEW3",
+      "shortname": "REVIEW3",
+      "critical": true,
+      "category": "Other courses",
+      "format": "topics",
+      "numsections": 3
+    },
+    {
+      "step": "createUsers",
+      "critical": true,
+      "users": [
+        {
+          "username": "teacher",
+          "firstname": "Teacher",
+          "lastname": "Review"
+        },
+        {
+          "username": "student1",
+          "firstname": "Student",
+          "lastname": "One"
+        }
+      ]
+    },
+    {
+      "step": "enrolUsers",
+      "critical": true,
+      "enrolments": [
+        {
+          "username": "teacher",
+          "course": "REVIEW",
+          "role": "editingteacher"
+        },
+        {
+          "username": "teacher",
+          "course": "REVIEW2",
+          "role": "editingteacher"
+        },
+        {
+          "username": "student1",
+          "course": "REVIEW",
+          "role": "student"
+        }
+      ]
+    },
+    {
+      "step": "runPhpCode",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); $c = $DB->get_record('course', array('shortname' => 'REVIEW'), 'id', IGNORE_MISSING); if (!$c) { error_log('course-id: no REVIEW course'); exit(61); } $want = 2; error_log('course-id: REVIEW is ' . (int)$c->id . ', landing points at ' . $want); if ((int)$c->id !== $want) { exit(62); } exit(0);",
+      "critical": true
+    },
+    {
+      "step": "addModule",
+      "critical": true,
+      "module": "label",
+      "course": "REVIEW",
+      "section": 0,
+      "name": "Review brief",
+      "intro": "<p><strong>PR #15 · d0638b3 · mod_attendance</strong></p><ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code> — password <code>password</code></li><li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li><li>Student view: user menu → Switch role to… → Student. That is a VIEW only — log in as <code>student1</code> for anything that owns data</li><li>Other courses: <code>REVIEW2</code>, <code>REVIEW3</code>. You are enrolled in <code>REVIEW2</code> but NOT in <code>REVIEW3</code>, deliberately: a plugin that ignores enrolment shows both, one that honours it shows only the first</li></ul>"
+    },
+    {
+      "step": "login",
+      "username": "teacher",
+      "critical": true
+    },
+    {
+      "step": "setLandingPage",
+      "path": "/course/modedit.php?add=attendance&course=2&section=1"
+    }
+  ]
+}
