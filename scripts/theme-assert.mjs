@@ -26,8 +26,15 @@
 // HOW A PHP STEP SIGNALS FAILURE — measured, and not what you would guess. See
 // `scripts/restore-assert.mjs` and `playground/BOOT-MEASUREMENTS.md`: only
 // `define('CLI_SCRIPT', true)` BEFORE `require(config.php)`, followed by a
-// non-zero `exit()`, fails the step. A fatal error reports SUCCESS. An uncaught
-// exception reports SUCCESS.
+// non-zero `exit()`, fails the step *and says which failure it was*.
+//
+// A throw and a fatal error report SUCCESS only WITHOUT `CLI_SCRIPT`, which is the
+// only way that was ever measured until 2026-08-18. WITH it — and every
+// generator here defines it — a throw fails the step with exit code 1. The
+// recipe is unchanged: exit code 1 is the GENERIC one, so a throw cannot say
+// WHICH failure happened, writes no error_log line, and routes through
+// default_exception_handler, which builds a renderer inside a CLI script.
+// Always exit(N) explicitly.
 
 /** Exit codes. Distinct so the boot log's "exit code N" names the failure. */
 export const THEME_CODES = {
@@ -125,7 +132,8 @@ export function buildThemeAssertion(name) {
       // loaded".
       //
       // load() itself can throw on a broken config.php, and an uncaught throw
-      // reports SUCCESS in this runtime — hence the try with an exit.
+      // cannot say WHICH failure it was in this runtime (a throw exits 1, the
+      // generic code) — hence the try with an explicit exit.
       `try { $th = theme_config::load($t); } catch (Throwable $e) { exit(34); } ` +
       `if($th->name !== $t) exit(33); ` +
       `exit(0);`,

@@ -34,7 +34,15 @@
 //
 // See BOOT-MEASUREMENTS.md: `define('CLI_SCRIPT',true)` before
 // `require(config.php)` then a non-zero `exit()` is the only thing that fails a
-// step. A throw and a fatal error both report SUCCESS.
+// step *and says which failure it was*.
+//
+// A throw and a fatal error report SUCCESS only WITHOUT `CLI_SCRIPT`, which is the
+// only way that was ever measured until 2026-08-18. WITH it — and every
+// generator here defines it — a throw fails the step with exit code 1. The
+// recipe is unchanged: exit code 1 is the GENERIC one, so a throw cannot say
+// WHICH failure happened, writes no error_log line, and routes through
+// default_exception_handler, which builds a renderer inside a CLI script.
+// Always exit(N) explicitly.
 
 /** Exit codes this step can produce, for the boot-log explainer. Block 51-59. */
 export const LANG_CODES = {
