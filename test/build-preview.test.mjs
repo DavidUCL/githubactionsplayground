@@ -175,14 +175,43 @@ test("the encoding is gzip + base64url, which is what the parser detects", () =>
   assert.equal(bytes[1], 0x8b);
 });
 
-test("the URL stays well inside what a comment and a browser will carry", () => {
-  const url = buildPreviewUrl({
-    playgroundHost: "https://moodle-playground.com",
-    blueprint: buildBlueprint(base),
-  });
-  // Measured ~750; anything approaching 2000 means the blueprint grew a step
-  // it should not have, so keep the bound tight enough to notice.
-  assert.equal(url.length < 1200, true, `url was ${url.length} chars`);
+// A BOUND PER SHAPE, MEASURED — not one bound built from the cheapest blueprint
+// there is.
+//
+// The old version built only the bare `mod` preview and capped it at 1200 while
+// its comment claimed "~750". Measured 2026-08-18 it was 1144: 56 characters of
+// headroom, against a comment that implied 450. Every control added since has
+// been spending a budget nobody was reading, and the next step to land on the
+// default preview would have failed this test with a number nobody could
+// interpret. The ceiling that matters is the browser's, around 8000; these
+// numbers exist to make GROWTH visible, so they are stated per shape and each
+// one is the measured value plus room to move.
+const URL_SHAPES = [
+  { label: "bare mod", opts: {}, max: 1300 },
+  { label: "local (admin landing)", opts: { type: "local", name: "myplugin" }, max: 1300 },
+  { label: "course-format", opts: { courseFormat: "weeks" }, max: 1800 },
+  { label: "language packs", opts: { languagePacks: ["es", "ar"] }, max: 1800 },
+  { label: "theme under review", opts: { type: "theme", name: "boost_union" }, max: 1900 },
+];
+
+test("every preview shape stays well inside what a browser will carry", () => {
+  const seen = [];
+  for (const shape of URL_SHAPES) {
+    // The ACTION'S OWN DEFAULT HOST, which is 14 characters longer than
+    // moodle-playground.com — the old test measured the shorter one, so the
+    // guarded number was 14 short of every real link.
+    const url = buildPreviewUrl({
+      playgroundHost: "https://daviducl.github.io/moodle-playground",
+      blueprint: buildBlueprint({ ...base, ...shape.opts }),
+    });
+    seen.push(`${shape.label}=${url.length}`);
+    assert.ok(
+      url.length < shape.max,
+      `${shape.label}: url was ${url.length} chars, over its ${shape.max} bound. ` +
+        `If the growth is intended, raise THIS bound and say what added the bytes. ` +
+        `All shapes: ${seen.join(", ")}`,
+    );
+  }
 });
 
 // ---- the reviewer must be able to tell what they are looking at ----------
@@ -2049,16 +2078,19 @@ test("singleactivity moves the landing page, and only singleactivity does", () =
   // It hides every section but 0 and moves every other displayable activity to
   // section 1 — the review brief with it — then redirects a reviewer who lands
   // on the bare course page to "Adding a new Forum".
+  // BY NAME. /course/view.php resolves name= against the shortname through
+  // MUST_EXIST, so a missing course is a loud error page rather than whichever
+  // course happens to be number 2.
   assert.equal(
     landingPath("theme", "boost_union", { courseFormat: "singleactivity" }),
-    "/course/view.php?id=2&section=1",
+    "/course/view.php?name=REVIEW&section=1",
   );
   for (const f of ["topics", "weeks", "social", ""]) {
-    assert.equal(landingPath("theme", "boost_union", { courseFormat: f }), "/course/view.php?id=2", f);
+    assert.equal(landingPath("theme", "boost_union", { courseFormat: f }), "/course/view.php?name=REVIEW", f);
   }
   // A mod plugin lands on the add form, which is outside the redirect's guard,
   // so it is unaffected by the format.
-  assert.match(landingPath("mod", "attendance", { courseFormat: "singleactivity" }), /modedit\.php/);
+  assert.match(landingPath("mod", "attendance", { courseFormat: "singleactivity", courseId: 2 }), /modedit\.php/);
 });
 
 test("the format the summary names is the format the course is in", async () => {
@@ -2248,4 +2280,60 @@ test("the summary names the site language, and warns about what looks broken", a
   const none = previewSummary(summaryOpts).join("\n");
   assert.equal(none.includes("site language is"), false);
   assert.equal(none.includes("not English"), false);
+});
+
+// ---- the review course's id ----------------------------------------------
+
+test("the course id is derived from the steps, and refuses to guess", async () => {
+  const { reviewCourseId } = await import("../scripts/build-preview.mjs");
+  // Moodle numbers the site course 1 and the rest in creation order, so the
+  // first course a blueprint makes is 2. That is the ONLY reason the old
+  // `const COURSE_ID = 2` was right, and nothing checked it.
+  assert.equal(reviewCourseId([{ step: "installMoodle" }, { step: "createCourse", shortname: "REVIEW" }]), 2);
+  assert.equal(reviewCourseId([{ step: "restoreCourse", shortname: "REVIEW" }]), 2);
+
+  // No course at all: there is no id to report, and returning 2 would send the
+  // reviewer to whatever happened to be created by something else.
+  assert.throws(() => reviewCourseId([{ step: "installMoodle" }]), /exactly one step/);
+  // More than one: the ordering assumption is exactly what stops holding, and
+  // this is the shape the `courses` control will introduce.
+  assert.throws(
+    () => reviewCourseId([
+      { step: "createCourse", shortname: "REVIEW" },
+      { step: "createCourse", shortname: "EXTRA" },
+    ]),
+    /exactly one step/,
+  );
+  // Someone else's course first. This is the reachable case today: a plugin
+  // under review whose db/install.php creates a course takes id 2, because
+  // installMoodlePlugin runs before createCourse.
+  assert.throws(
+    () => reviewCourseId([{ step: "createCourse", shortname: "DECOY" }]),
+    /makes "DECOY", not REVIEW/,
+  );
+});
+
+test("only the mod landing carries a course number, and it is the derived one", () => {
+  const bp = buildBlueprint(base);
+  const landing = bp.steps.find((s) => s.step === "setLandingPage").path;
+  assert.match(landing, /course=2\b/);
+  // Everything else that lands in the course does it by NAME, so those pages
+  // cannot point at the wrong course however the numbering turns out.
+  for (const opts of [{ type: "theme", name: "boost_union" }, { type: "format", name: "tiles" }]) {
+    const p = buildBlueprint({ ...base, ...opts }).steps.find((s) => s.step === "setLandingPage").path;
+    assert.match(p, /name=REVIEW/);
+    assert.equal(/[?&]id=/.test(p), false, `${opts.type} should not carry a course id`);
+  }
+});
+
+test("the summary's landing page IS the link's, not a second derivation", async () => {
+  const { previewSummary, landingPageOf } = await import("../scripts/build-preview.mjs");
+  // It used to be recomputed, and had already grown one argument to stay in
+  // step; the next would have been the course id. Read back off the blueprint,
+  // the two cannot disagree — and a reviewer only ever sees one of them.
+  const bp = buildBlueprint({ ...base, courseFormat: "singleactivity", type: "theme", name: "boost_union" });
+  const path = landingPageOf(bp);
+  assert.equal(path, bp.steps.find((s) => s.step === "setLandingPage").path);
+  assert.match(previewSummary({ ...summaryOpts, landingPage: path }).join("\n"), /section=1/);
+  assert.throws(() => landingPageOf({ steps: [] }), /no landing page/);
 });

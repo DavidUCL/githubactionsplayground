@@ -209,7 +209,13 @@ test("the Moodle branch is pinned, so previews do not drift between reviewers", 
 test("landing pages take no required params, so none can error at the reviewer", () => {
   // An earlier qtype guess pointed at question.php, which needs a `cmid` and
   // would have shown a Moodle error reading as "your plugin is broken".
-  assert.match(landingPath("mod", "attendance"), /modedit\.php\?add=attendance/);
+  // `mod` is the one landing that still needs a course NUMBER — modedit.php
+  // takes required_param('course', PARAM_INT) and has no name form — so the id
+  // is a required argument and omitting it throws rather than defaulting to a
+  // number that might be wrong.
+  assert.match(landingPath("mod", "attendance", { courseId: 2 }), /modedit\.php\?add=attendance/);
+  assert.match(landingPath("mod", "attendance", { courseId: 2 }), /course=2\b/);
+  assert.throws(() => landingPath("mod", "attendance"), /needs the review course's id/);
   assert.match(landingPath("theme", "boost_union"), /course\/view/);
   assert.match(landingPath("format", "tiles"), /course\/view/);
   assert.equal(landingPath("qtype", "essay"), "/admin/qtypes.php");

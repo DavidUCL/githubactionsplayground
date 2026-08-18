@@ -262,10 +262,52 @@ export const DEFAULT_ORIGINS = [
   "https://daviducl.github.io",
 ];
 
-/** Course the reviewer lands in. Fixed shortname; id 2 because exactly one
- * course is created and the site course is 1. */
+/** Course the reviewer lands in. */
 const COURSE_SHORTNAME = "REVIEW";
-const COURSE_ID = 2;
+
+/**
+ * The id the review course will have — DERIVED from the steps, not assumed.
+ *
+ * Moodle numbers the site course 1 and allocates the rest in creation order, so
+ * the first course a blueprint creates is 2. That is the only reason the old
+ * `const COURSE_ID = 2` was ever right, and nothing checked it.
+ *
+ * WHY IT MATTERS, and it is reachable today: `installMoodlePlugin` runs BEFORE
+ * `createCourse` and triggers Moodle's plugin upgrade, so a plugin under review
+ * whose own `db/install.php` creates a course takes id 2 — and the reviewer is
+ * sent to the plugin's course instead of the review course. It is currently
+ * survivable because the reviewer arrives as a teacher who is not enrolled
+ * there, so they get a permission error rather than a plausible wrong page.
+ * It stops being survivable when `courses` lands.
+ *
+ * WHAT THIS CAN AND CANNOT SEE. It proves the ORDER of the steps we emit: that
+ * exactly one of them makes a course, that it is ours, and that it is first.
+ * It cannot see anything Moodle does on its own — a plugin's `install.php`
+ * creating a course, a restored database, a deleted course leaving a gap, a
+ * site whose `SITEID` is not 1. Proving the id at runtime needs a boot-time
+ * assertion, which lands with `courses`, where a second course exists to test
+ * it against.
+ *
+ * Throws rather than guessing: a link that sends the reviewer to the wrong
+ * course is worse than no link, and a wrong id is invisible on arrival.
+ */
+export function reviewCourseId(steps) {
+  const makers = steps.filter((s) => s.step === "createCourse" || s.step === "restoreCourse");
+  if (makers.length !== 1) {
+    throw new Error(
+      `internal: the review course's id is only knowable when exactly one step ` +
+        `creates a course, found ${makers.length}`,
+    );
+  }
+  if (makers[0].shortname !== COURSE_SHORTNAME) {
+    throw new Error(
+      `internal: the first course-creating step makes "${makers[0].shortname}", ` +
+        `not ${COURSE_SHORTNAME} — the landing page would point at the wrong course`,
+    );
+  }
+  // 1 is the site course; ours is the first one created after it.
+  return 2;
+}
 
 /**
  * The counted controls, in ONE place: the fallback when the box is empty, and
@@ -373,7 +415,7 @@ export function derivePlugin(repoFullName, overrides = {}) {
  * course_modules and bypasses the plugin's own add_instance(), so a working
  * mod plugin often renders blank — land on the add form instead.
  */
-export function landingPath(type, name, { restored = false, courseFormat = "" } = {}) {
+export function landingPath(type, name, { restored = false, courseFormat = "", courseId } = {}) {
   // A RESTORED course is not created by us, so its id is not knowable when the
   // link is built — "Course restored (id 2)" held in every boot measured, but
   // it holds only while nothing else makes a course first, and that is exactly
@@ -400,16 +442,34 @@ export function landingPath(type, name, { restored = false, courseFormat = "" } 
   // `display($course, $section != 0)`, which draws the orphaned-activities page
   // — the one holding the brief. So `&section=1` both stops the redirect and
   // shows the reviewer the thing they need.
+  // BY NAME, not by id. `/course/view.php` resolves `name=` against the course
+  // shortname through MUST_EXIST, so a course that is not there is a loud error
+  // page instead of somebody else's course. Five characters, and one fewer
+  // place that has to be right about numbering.
   const courseView = (fmt) =>
     fmt === "singleactivity"
-      ? `/course/view.php?id=${COURSE_ID}&section=1`
-      : `/course/view.php?id=${COURSE_ID}`;
+      ? `/course/view.php?name=${COURSE_SHORTNAME}&section=1`
+      : `/course/view.php?name=${COURSE_SHORTNAME}`;
   switch (type) {
     case "mod":
       // CONFIRMED in a browser: the real add form, which runs the plugin's own
       // mod_form. Deliberately NOT pre-adding via addModule — that writes
       // straight to course_modules and bypasses add_instance().
-      return `/course/modedit.php?add=${name}&course=${COURSE_ID}&section=1`;
+      //
+      // THE ONE LANDING THAT STILL NEEDS A NUMBER. `/course/modedit.php` takes
+      // `required_param('course', PARAM_INT)` and has no name form; every other
+      // route to a plugin's add form needs the id too (`course/mod.php`), or a
+      // module id that does not exist yet (`mod/<name>/view.php`,
+      // `modedit?update=`), or costs the reviewer three clicks through the
+      // course page with `edit=1` unreachable behind a sesskey. So the id is
+      // required here rather than defaulted — a caller that has not derived it
+      // is a caller that has not thought about which course this is.
+      if (!Number.isInteger(courseId)) {
+        throw new Error(
+          `internal: a mod landing needs the review course's id; got ${JSON.stringify(courseId)}`,
+        );
+      }
+      return `/course/modedit.php?add=${name}&course=${courseId}&section=1`;
     case "theme":
     case "format":
       // Both are applied to the course, so a content page shows them working.
@@ -659,6 +719,19 @@ export function checkLoginAs({ loginAs, teachers, students }) {
  * Exported because main() is not reachable from a test: with this inline, the
  * mutant that replaces it with a constant SURVIVED a full gate run.
  */
+/**
+ * The page the finished blueprint sends the reviewer to, read back off the
+ * `setLandingPage` step rather than recomputed. See `signedInAsOf` — same
+ * reason, same failure it prevents.
+ */
+export function landingPageOf(blueprint) {
+  const step = blueprint.steps.find((s) => s.step === "setLandingPage");
+  if (!step?.path) {
+    throw new Error("internal: the blueprint has no landing page to report");
+  }
+  return step.path;
+}
+
 export function signedInAsOf(blueprint) {
   const login = blueprint.steps.find((s) => s.step === "login");
   if (!login?.username) {
@@ -965,14 +1038,20 @@ export function buildBlueprint({
     // emits no createCourse step at all, which is why the box is REFUSED
     // alongside a restore rather than quietly dropped.
     //
-    // NOT unconditional, and this is a departure from the written plan, made on
-    // a measurement: the assertion is ~1.4 KB of PHP and takes the preview URL
-    // from ~750 characters to 2117 on EVERY preview. `topics` is the default
-    // and resolves to itself unless core itself is broken, so at the default
-    // the step can only ever pass — the inert-assertion shape this project
-    // gates against. Every case where the format CAN be wrong is a case where
-    // it differs from the default: the box was set, or a format plugin is under
-    // review and previews itself under its own name.
+    // NOT unconditional, and this is a departure from the written plan. THE
+    // REASON IS INERTNESS, NOT SIZE — this comment used to say the assertion
+    // took the URL "from ~750 characters to 2117 on EVERY preview", which was
+    // wrong: that figure was taken before the `//` comments were stripped out
+    // of the generated PHP and was never re-measured. Measured 2026-08-18 on
+    // the action's own default host: 1158 without, 1669 with, a delta of 511.
+    // Real, but not the argument.
+    //
+    // The argument is that `topics` is the default and resolves to itself
+    // unless core itself is broken, so at the default the step could only ever
+    // pass — the inert-assertion shape this project gates against. Every case
+    // where the format CAN be wrong is a case where it differs from the
+    // default: the box was set, or a format plugin is under review and previews
+    // itself under its own name.
     ...(!restore && activeFormat !== DEFAULT_COURSE_FORMAT
       ? [buildCourseAssertion({ format: activeFormat, shortname: COURSE_SHORTNAME })]
       : []),
@@ -1036,8 +1115,12 @@ export function buildBlueprint({
   // reviewer arrives as — and the login STEP itself is pushed much further
   // down, after the theme. Two derivations of the same fact is how the summary
   // and the link came to disagree in the first place, so there is exactly one.
+  // Derived from the steps just built, so it is a fact about THIS blueprint
+  // rather than a constant that happens to be right.
+  const courseId = reviewCourseId(steps);
   const landing =
-    landingOverride || landingPath(type, name, { restored: Boolean(restore), courseFormat: activeFormat });
+    landingOverride ||
+    landingPath(type, name, { restored: Boolean(restore), courseFormat: activeFormat, courseId });
   // `login-as` overrides the derived default. Derivation is a good default —
   // admin for admin pages, teacher elsewhere — but it cannot know you want to
   // see the plugin as a learner, and nothing else lets you.
@@ -2138,16 +2221,13 @@ async function main() {
     // not anything the box says.
     courseFormat: courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT),
     languagePacks: langs.codes,
-    landingPage:
-      landingOverride ||
-      landingPath(type, name, {
-        restored: Boolean(restore),
-        // The summary must compute the landing page the SAME way the link did.
-        // singleactivity is the one format that changes it, and a summary
-        // naming a different page from the one the link opens is invisible to
-        // the reviewer, who sees only one of them.
-        courseFormat: courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT),
-      }),
+    // READ BACK off the finished blueprint, not recomputed. This was a second
+    // copy of the same derivation, and it had already grown a `courseFormat`
+    // argument to stay in step with the first; the next argument would have
+    // been the course id. A summary naming a different page from the one the
+    // link opens is invisible to the reviewer, who only ever sees one of them
+    // — the same failure the "signed in as" row had.
+    landingPage: landingPageOf(blueprint),
     versionPhp: declared ? declared.path : "",
     core,
     risky,
