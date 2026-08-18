@@ -187,10 +187,23 @@ test("the encoding is gzip + base64url, which is what the parser detects", () =>
 // numbers exist to make GROWTH visible, so they are stated per shape and each
 // one is the measured value plus room to move.
 const URL_SHAPES = [
-  { label: "bare mod", opts: {}, max: 1300 },
+  // 1500, raised deliberately in the commit that added the course-id assertion:
+  // a bare `mod` preview is the ONE shape whose landing carries a course number,
+  // so it is the one shape that pays for the assertion. Measured 1118 -> 1358.
+  { label: "bare mod", opts: {}, max: 1500 },
+  // UNCHANGED at 1300, and that is the point: an admin landing names no course,
+  // so it gets no assertion. If this bound ever needs raising, the assertion has
+  // started being emitted where it can only compare a value with itself.
   { label: "local (admin landing)", opts: { type: "local", name: "myplugin" }, max: 1300 },
-  { label: "course-format", opts: { courseFormat: "weeks" }, max: 1800 },
-  { label: "language packs", opts: { languagePacks: ["es", "ar"] }, max: 1800 },
+  // These two carry BOTH their own assertion and the course-id one, because
+  // they are `mod` previews and land on the add form. Measured 1799 and 1821
+  // after the course-id assertion; raised to 2000 because one character of
+  // headroom is not headroom — the whole point of these numbers is to make
+  // growth visible early enough to ask about it.
+  { label: "course-format", opts: { courseFormat: "weeks" }, max: 2000 },
+  { label: "language packs", opts: { languagePacks: ["es", "ar"] }, max: 2000 },
+  // A theme under review lands by NAME, so it pays for no course-id assertion
+  // and has not moved at all: 1763, unchanged.
   { label: "theme under review", opts: { type: "theme", name: "boost_union" }, max: 1900 },
 ];
 
@@ -292,6 +305,10 @@ test("every step name is one the playground actually registers", () => {
   const known = new Set([
     "installMoodle", "login", "setConfigs", "installMoodlePlugin", "createCategory",
     "createCourse", "createUsers", "enrolUsers", "addModule", "setTheme", "setLandingPage",
+    // The builder's own assertions. The playground registers them all as
+    // `runPhpCode`, so WHICH assertion a step is cannot be told from its name —
+    // which is why the tests here select on each generator's exit-code block.
+    "runPhpCode",
   ]);
   for (const s of buildBlueprint(base).steps) {
     assert.equal(known.has(s.step), true, `unknown step: ${s.step}`);
@@ -834,7 +851,11 @@ test("without a restore the blueprint is unchanged", async () => {
   const names = bp.steps.map((s) => s.step);
   assert.ok(names.includes("createCourse"));
   assert.ok(!names.includes("restoreCourse"));
-  assert.ok(!names.includes("runPhpCode"));
+  // No RESTORE assertion — block 2x. There IS a course-id assertion (block 6x),
+  // because this preview lands on the add form, which names a course by number.
+  // Selected by exit-code block, since both are `runPhpCode` steps.
+  assert.equal(phpIn(bp, 2).length, 0);
+  assert.equal(phpIn(bp, 6).length, 1);
   assert.match(bp.steps.find((s) => s.step === "setLandingPage").path, /course=2/);
 });
 
@@ -2012,7 +2033,17 @@ test("the reported account is read off the blueprint, not assumed", async () => 
 // ---- the course-format control -------------------------------------------
 
 const courseOf = (bp) => bp.steps.find((s) => s.step === "createCourse");
-const phpOf = (bp) => bp.steps.filter((s) => s.step === "runPhpCode");
+// SELECT ON THE EXIT-CODE BLOCK, not on the step name. Every assertion this
+// builder emits is a `runPhpCode` step, so counting by name silently conflated
+// them the moment a second one could appear in the same blueprint — and it now
+// can. Each generator owns a block of ten (21-24 restore, 31-34 theme, 41-44
+// course format, 51-53 language packs, 61-62 course id) and a test enforces the
+// blocks are disjoint, so the block IS the identity.
+const phpIn = (bp, block) =>
+  bp.steps.filter(
+    (s) => s.step === "runPhpCode" && new RegExp(`exit\\(${block}\\d\\)`).test(s.code),
+  );
+const phpOf = (bp) => phpIn(bp, 4);
 
 test("the format is stated in the blueprint, always, never left to the handler", () => {
   // `phpCreateCourses` defaults a missing format to topics, so omitting the key
@@ -2263,9 +2294,11 @@ test("the install step and its assertion travel together, before any user exists
   // The assertion is the very next step. The install step CANNOT fail — its PHP
   // and its JS each swallow everything — so nothing else would notice.
   assert.equal(order[order.indexOf("installLanguagePack") + 1], "runPhpCode");
-  // Nothing at all when the box is empty.
+  // Nothing at all when the box is empty. Selected by EXIT-CODE BLOCK, not by
+  // step name: a bare `mod` preview now carries a course-id assertion, which is
+  // also a `runPhpCode`, so counting by name would assert the wrong thing here.
   assert.equal(langStepOf(buildBlueprint(base)), undefined);
-  assert.equal(buildBlueprint(base).steps.filter((s) => s.step === "runPhpCode").length, 0);
+  assert.equal(phpIn(buildBlueprint(base), 5).length, 0);
 });
 
 test("the summary names the site language, and warns about what looks broken", async () => {
@@ -2336,4 +2369,86 @@ test("the summary's landing page IS the link's, not a second derivation", async 
   assert.equal(path, bp.steps.find((s) => s.step === "setLandingPage").path);
   assert.match(previewSummary({ ...summaryOpts, landingPage: path }).join("\n"), /section=1/);
   assert.throws(() => landingPageOf({ steps: [] }), /no landing page/);
+});
+
+// ---- the course-id assertion ---------------------------------------------
+
+test("the expected id comes from the landing string, not from what built it", async () => {
+  const { buildCourseIdAssertion, landingCourseId } = await import("../scripts/course-id-assert.mjs");
+  // THE STRONGEST TEST IN THIS COMMIT. The whole point of the assertion is that
+  // its two sides come from different places: the runtime reads mdl_course, and
+  // the expected value is parsed back out of the landing string the reviewer
+  // will open. Derive it from `reviewCourseId()` instead and it compares a
+  // value with itself — two hashes of the same file, which this repo has
+  // shipped once already.
+  //
+  // A `landing-path` override is the ONLY input that makes the two disagree, so
+  // it is honoured rather than skipped; skipping it would make that mutant
+  // unkillable and the assertion decorative.
+  const bp = buildBlueprint({ ...base, landingOverride: "/course/view.php?id=9" });
+  const step = bp.steps.find((s) => s.step === "runPhpCode" && /exit\(62\)/.test(s.code));
+  assert.ok(step, "an overridden landing that names a course must still be checked");
+  assert.match(step.code, /\$want = 9;/);
+  // ...and NOT 2, which is what reviewCourseId() returns for this blueprint.
+  assert.equal(/\$want = 2;/.test(step.code), false);
+});
+
+test("only a landing that names a course by number is checked", () => {
+  const carries = (opts) =>
+    buildBlueprint({ ...base, ...opts }).steps.some(
+      (s) => s.step === "runPhpCode" && /exit\(62\)/.test(s.code),
+    );
+  // The add form takes required_param('course', PARAM_INT) — the one landing
+  // that cannot use a name, and so the one that needs proving.
+  assert.equal(carries({}), true);
+  // These land by name or on an admin page. Emitting it there would compare
+  // reviewCourseId() with itself AND cost ~245 characters of URL to say
+  // nothing — measured on a `local` preview.
+  assert.equal(carries({ type: "theme", name: "boost_union" }), false);
+  assert.equal(carries({ type: "format", name: "tiles" }), false);
+  assert.equal(carries({ type: "local", name: "myplugin" }), false);
+  assert.equal(carries({ type: "block", name: "x" }), false);
+});
+
+test("a course number is recognised where it means a course, and nowhere else", async () => {
+  const { landingCourseId } = await import("../scripts/course-id-assert.mjs");
+  assert.equal(landingCourseId("/course/modedit.php?add=quiz&course=2&section=1"), 2);
+  assert.equal(landingCourseId("/course/view.php?id=7"), 7);
+  assert.equal(landingCourseId("/course/view.php?name=REVIEW"), null);
+  assert.equal(landingCourseId("/admin/plugins.php"), null);
+  // `id=` OUTSIDE /course/view.php is a course MODULE id, a user id or a
+  // category id. A blanket `id=` would embed a cmid as a course id and fail a
+  // perfectly correct build.
+  assert.equal(landingCourseId("/mod/quiz/view.php?id=7"), null);
+  assert.equal(landingCourseId("/user/profile.php?id=3"), null);
+  assert.equal(landingCourseId("/course/index.php?categoryid=4"), null);
+});
+
+test("an add form with no course number is refused, not shipped", () => {
+  // modedit.php would answer required_param with an error page reading as
+  // "your plugin is broken". A refusal must not look like an absence.
+  assert.throws(
+    () => buildBlueprint({ ...base, landingOverride: "/course/modedit.php?add=quiz" }),
+    /activity add form with no course number/,
+  );
+});
+
+test("the assertion refuses inputs it cannot trust", async () => {
+  const { buildCourseIdAssertion } = await import("../scripts/course-id-assert.mjs");
+  for (const bad of [0, -1, 2.5, "2", null, undefined, NaN]) {
+    assert.throws(() => buildCourseIdAssertion({ courseId: bad, shortname: "REVIEW" }),
+      /positive integer id/, String(bad));
+  }
+  assert.throws(() => buildCourseIdAssertion({ courseId: 2, shortname: "rev iew" }), /unsafe course shortname/);
+  const { code } = buildCourseIdAssertion({ courseId: 2, shortname: "REVIEW" });
+  // IGNORE_MISSING plus an explicit test, never MUST_EXIST — not because a
+  // throw is invisible (measured 2026-08-18: under CLI_SCRIPT it fails), but
+  // because a throw exits 1, the GENERIC code, so it could not tell 61 from 62.
+  assert.match(code, /IGNORE_MISSING/);
+  assert.equal(code.includes("MUST_EXIST"), false);
+  assert.match(code, /\(int\)\$c->id !== \$want/);
+  assert.match(code, /^<\?php define\('CLI_SCRIPT',true\);/);
+  assert.ok(code.indexOf("CLI_SCRIPT") < code.indexOf("config.php"));
+  assert.equal(code.includes("\n"), false);
+  assert.equal(code.includes("//"), false);
 });

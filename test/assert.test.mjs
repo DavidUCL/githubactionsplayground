@@ -400,6 +400,7 @@ test("no two assertion generators claim the same exit code", async () => {
   const { THEME_CODES } = await import("../scripts/theme-assert.mjs");
   const { COURSE_CODES } = await import("../scripts/course-assert.mjs");
   const { LANG_CODES } = await import("../scripts/lang-assert.mjs");
+  const { COURSE_ID_CODES } = await import("../scripts/course-id-assert.mjs");
   // `assert.mjs` merges these with object spread, so a code defined twice is
   // silently won by whichever map is spread last — and the boot log would then
   // explain a failure as the wrong thing entirely, which is worse than the
@@ -410,6 +411,7 @@ test("no two assertion generators claim the same exit code", async () => {
     ["theme-assert.mjs", THEME_CODES],
     ["course-assert.mjs", COURSE_CODES],
     ["lang-assert.mjs", LANG_CODES],
+    ["course-id-assert.mjs", COURSE_ID_CODES],
   ];
   const owner = new Map();
   for (const [module, codes] of maps) {

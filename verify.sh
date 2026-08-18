@@ -1374,6 +1374,74 @@ import("./scripts/lang-assert.mjs").then(async (m) => {
         echo "CHECK 9 PASS: a real pack boots, and missing / unselected / English-fallback packs exit 51, 52, 51"
     fi
 
+    # LIVE 10 — the course-id assertion must be able to fail, AND to pass.
+    #
+    # Nothing downloads: every arm builds its courses with core steps, so all
+    # four run on a GitHub runner and none is waivable.
+    #
+    # ARMS 1 AND 4 ARE A PAIR AND MUST BE READ TOGETHER. `decoy` puts another
+    # course before REVIEW; `after` puts one after it. Both blueprints contain
+    # exactly TWO courses, and they must come out opposite ways — 62 and green.
+    # An implementation that counted courses, or that checked "REVIEW exists",
+    # would give the same answer to both, and the pair is the only thing here
+    # that notices. Delete either arm and the other stops meaning anything.
+    #
+    # Arm 3 is the GREEN one and is not optional: an assertion that can never
+    # exit 0 satisfies every failing arm while breaking every real preview.
+    ci_boot() { # $1=label $2=mode -> echoes the observed outcome
+        local CI_OUT="$WORK/ci_$1"
+        mkdir -p "$CI_OUT"
+        CI_DIR="$CI_OUT" CI_MODE="$2" node -e '
+import("./scripts/course-id-assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const c = await import("node:crypto");
+  const mode = process.env.CI_MODE;
+  const mk = (shortname) => ({ step: "createCourse", fullname: shortname, shortname,
+    category: "Review", numsections: 1, format: "topics", critical: true });
+  const courses =
+    mode === "decoy" ? [mk("DECOY"), mk("REVIEW")]
+    : mode === "after" ? [mk("REVIEW"), mk("DECOY")]
+    : mode === "missing" ? [mk("DECOY")]
+    : [mk("REVIEW")];
+  const bp = { preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps: [
+    { step: "installMoodle" },
+    { step: "createCategory", name: "Review", critical: true },
+    ...courses,
+    m.buildCourseIdAssertion({ courseId: 2, shortname: "REVIEW" }),
+    { step: "setLandingPage", path: "/" }] };
+  const body = JSON.stringify(bp, null, 2);
+  fs.writeFileSync(`${process.env.CI_DIR}/blueprint.json`, body);
+  const sha = c.createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(`${process.env.CI_DIR}/preflight.json`,
+    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }));
+  fs.writeFileSync(`${process.env.CI_DIR}/expectations.json`, JSON.stringify({
+    blueprintUrl: "loopback", blueprintSha256: sha, stepCount: bp.steps.length,
+    stepNames: bp.steps.map((s) => s.step), pluginSteps: [] }));
+});
+' >/dev/null 2>&1
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$CI_OUT" \
+            BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/ci-$1.json" \
+            node scripts/boot-capture.mjs >>/tmp/bv-verify-courseid.log 2>&1
+        grep -oE 'failed with exit code [0-9]+|Blueprint step [0-9]+/[0-9]+: setLandingPage|Blueprint failed at step [0-9]+:[a-zA-Z]+.*' \
+            "$CI_OUT/boot-log.txt" 2>/dev/null | head -1
+    }
+    : >/tmp/bv-verify-courseid.log
+    CI_DECOY=$(ci_boot decoy decoy)
+    CI_MISSING=$(ci_boot missing missing)
+    CI_GREEN=$(ci_boot green green)
+    CI_AFTER=$(ci_boot after after)
+    CI_PROBLEMS=""
+    [[ "$CI_DECOY" == *"exit code 62"* ]] || CI_PROBLEMS+="a course created BEFORE REVIEW did not move its id (got: ${CI_DECOY:-nothing}) — that is the reachable case, a plugin whose install.php makes a course; "
+    [[ "$CI_MISSING" == *"exit code 61"* ]] || CI_PROBLEMS+="a missing REVIEW course was NOT caught (got: ${CI_MISSING:-nothing}); "
+    [[ "$CI_GREEN" == *"setLandingPage"* ]] || CI_PROBLEMS+="a CORRECT blueprint did not complete (got: ${CI_GREEN:-nothing}) — an assertion that can never pass satisfies every other arm here; "
+    [[ "$CI_AFTER" == *"setLandingPage"* ]] || CI_PROBLEMS+="a second course created AFTER REVIEW was treated as a failure (got: ${CI_AFTER:-nothing}) — with the decoy arm this is the pair that kills a course-COUNTING implementation, which would answer both the same way; "
+    if [[ -n "$CI_PROBLEMS" ]]; then
+        echo "CHECK 10 FAIL: the course-id assertion is not doing its job — $CI_PROBLEMS"
+        FAILED+=("10: course-id assertion cannot fail, or cannot pass")
+    else
+        echo "CHECK 10 PASS: a course before REVIEW exits 62, a missing one 61, and REVIEW-then-extra still boots"
+    fi
+
     # LIVE 7 — the theme control, in a real browser.
     #
     # Nothing offline can prove any of this. The failures the `theme` control

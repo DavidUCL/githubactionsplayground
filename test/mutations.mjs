@@ -596,6 +596,40 @@ const MUTATIONS = [
   ["landing: let the summary name a different page from the link",
     "scripts/build-preview.mjs",
     "    landingPage: landingPageOf(blueprint),", '    landingPage: "/",'],
+  // --- the course-id assertion ---
+  // THE mutant for this commit: derive the expected id from the same place the
+  // landing string came from. Two hashes of one file always agree. It is killed
+  // by the landing-path probe row (whose probe makes the two disagree) and by a
+  // pure test, not by any LIVE arm — the arms pass a literal id to the
+  // generator, so they cannot see the wiring.
+  ["courseid: compare the assertion against the value that built the landing",
+    "scripts/build-preview.mjs",
+    "    steps.push(buildCourseIdAssertion({ courseId: landingId, shortname: COURSE_SHORTNAME }));",
+    "    steps.push(buildCourseIdAssertion({ courseId, shortname: COURSE_SHORTNAME }));"],
+  ["courseid: emit the assertion everywhere, including where it is inert",
+    "scripts/build-preview.mjs",
+    "  if (landingId !== null) {", "  if (true) {"],
+  ["courseid: never emit the assertion at all", "scripts/build-preview.mjs",
+    "  if (landingId !== null) {", "  if (false) {"],
+  ["courseid: ship an add form with no course number", "scripts/build-preview.mjs",
+    '  if (landing.startsWith("/course/modedit.php") && landingId === null) {', "  if (false) {"],
+  ["courseid: read a module id as a course id", "scripts/course-id-assert.mjs",
+    '  if (s.startsWith("/course/view.php")) {', "  if (true) {"],
+  ["courseid: use MUST_EXIST, which cannot say which failure it was",
+    "scripts/course-id-assert.mjs",
+    "    $c = $DB->get_record('course', array('shortname' => '${shortname}'), 'id', IGNORE_MISSING);\n    if (!$c) { error_log('course-id: no ${shortname} course'); exit(61); }",
+    "    $c = $DB->get_record('course', array('shortname' => '${shortname}'), 'id', MUST_EXIST);"],
+  ["courseid: stop comparing the ids at all", "scripts/course-id-assert.mjs",
+    "    if ((int)$c->id !== $want) { exit(62); }\n", ""],
+  ["courseid: compare as strings, so 2 and \"2\" differ", "scripts/course-id-assert.mjs",
+    "    if ((int)$c->id !== $want) { exit(62); }", "    if ($c->id !== $want) { exit(62); }"],
+  ["courseid: build an assertion from an id it cannot trust", "scripts/course-id-assert.mjs",
+    "  if (!Number.isInteger(courseId) || courseId < 1) {", "  if (false) {"],
+  // Finding A: the multiset cancellation is symmetric, so no probe row notices
+  // BOTH assertions disappearing. This mutant is what covers it.
+  ["restore: drop the restore assertion as well as the course-id one",
+    "scripts/build-preview.mjs",
+    "    ...(restore ? [buildRestoreAssertion({", "    ...(false ? [buildRestoreAssertion({"],
   ["mbz: stop reporting the users a backup creates", "scripts/mbz.mjs",
     "  const usernames = usersXml", "  const usernames = false"],
 

@@ -8,6 +8,7 @@ import { ASSERT_CODES } from "./restore-assert.mjs";
 import { THEME_CODES, THEME_CSS_FAILURE_MARKER } from "./theme-assert.mjs";
 import { COURSE_CODES } from "./course-assert.mjs";
 import { LANG_CODES } from "./lang-assert.mjs";
+import { COURSE_ID_CODES } from "./course-id-assert.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { ERROR_CLASSES } from "./validate-verdict.mjs";
@@ -45,7 +46,9 @@ const RESOLVER_FALLBACK_MARKERS = [
 ];
 
 /** Exit codes the BUILDER generates assertions for, and what each one means. */
-const BUILDER_EXIT_CODES = { ...ASSERT_CODES, ...THEME_CODES, ...COURSE_CODES, ...LANG_CODES };
+const BUILDER_EXIT_CODES = {
+  ...ASSERT_CODES, ...THEME_CODES, ...COURSE_CODES, ...LANG_CODES, ...COURSE_ID_CODES,
+};
 /** `... failed with exit code 23`, as the boot log renders a non-zero exit. */
 const EXIT_CODE_RE = /failed with exit code (\d+)/;
 

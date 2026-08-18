@@ -84,6 +84,11 @@
       ]
     },
     {
+      "step": "runPhpCode",
+      "code": "<?php define('CLI_SCRIPT',true); require('/www/moodle/config.php'); $c = $DB->get_record('course', array('shortname' => 'REVIEW'), 'id', IGNORE_MISSING); if (!$c) { error_log('course-id: no REVIEW course'); exit(61); } $want = 2; error_log('course-id: REVIEW is ' . (int)$c->id . ', landing points at ' . $want); if ((int)$c->id !== $want) { exit(62); } exit(0);",
+      "critical": true
+    },
+    {
       "step": "addModule",
       "critical": true,
       "module": "label",

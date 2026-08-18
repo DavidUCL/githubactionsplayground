@@ -28,6 +28,7 @@ import { buildRestoreAssertion } from "./restore-assert.mjs";
 import { buildThemeAssertion, buildThemeCssWarmup } from "./theme-assert.mjs";
 import { buildCourseAssertion } from "./course-assert.mjs";
 import { buildLangAssertion, parseLanguagePacks } from "./lang-assert.mjs";
+import { buildCourseIdAssertion, landingCourseId } from "./course-id-assert.mjs";
 import { checkCourseBackup } from "./mbz.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
@@ -1121,6 +1122,27 @@ export function buildBlueprint({
   const landing =
     landingOverride ||
     landingPath(type, name, { restored: Boolean(restore), courseFormat: activeFormat, courseId });
+
+  // The id the reviewer's landing page will actually open, parsed back out of
+  // the finished string. DELIBERATELY NOT `courseId` — that is what produced
+  // the string, and comparing a value against itself is the failure this
+  // assertion exists to prevent. A `landing-path` override is honoured, number
+  // and all, because it is the ONE input that can make the two disagree.
+  const landingId = landingCourseId(landing);
+  if (landing.startsWith("/course/modedit.php") && landingId === null) {
+    // `modedit.php` does `required_param('course', PARAM_INT)`, so this would
+    // be a Moodle error page reading as "your plugin is broken". Refuse to
+    // build a link at all rather than emit an assertion that cannot run.
+    throw new Error(
+      `internal: the landing page is an activity add form with no course number: ${landing}`,
+    );
+  }
+  // Emitted ONLY when the landing names a course by number. Everywhere else it
+  // would compare `reviewCourseId()` with itself — inert, and 245 characters of
+  // URL to say nothing.
+  if (landingId !== null) {
+    steps.push(buildCourseIdAssertion({ courseId: landingId, shortname: COURSE_SHORTNAME }));
+  }
   // `login-as` overrides the derived default. Derivation is a good default —
   // admin for admin pages, teacher elsewhere — but it cannot know you want to
   // see the plugin as a learner, and nothing else lets you.

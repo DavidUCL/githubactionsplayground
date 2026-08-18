@@ -85,15 +85,12 @@
       "input": "plugin-type",
       "env": "PLUGIN_TYPE",
       "probe": "block",
-      "target": "blueprint",
-      "expect_paths": [
-        "landingPage",
-        "steps[*].fullname",
-        "steps[*].intro",
-        "steps[*].path",
-        "steps[*].pluginType",
-        "steps[*].username"
-      ]
+      "target": "shape",
+      "expect_steps_added": [],
+      "expect_steps_removed": [
+        "runPhpCode"
+      ],
+      "note": "target is 'shape' since the course-id assertion landed: a block plugin lands on /admin/blocks.php, which names no course by number, so probing this input REMOVES a step rather than changing fields. It cost this row its six declared field paths; those are replaced by a hand-written test (\"only a landing that names a course by number is checked\") rather than by a second diff engine."
     },
     {
       "input": "plugin-name",
@@ -124,13 +121,15 @@
     {
       "input": "landing-path",
       "env": "LANDING_PATH",
-      "probe": "/my/",
+      "probe": "/course/view.php?id=9",
       "target": "blueprint",
       "expect_paths": [
         "landingPage",
+        "steps[*].code",
         "steps[*].path"
       ],
-      "expect_in_summary": true
+      "expect_in_summary": true,
+      "note": "The probe is a landing that NAMES A COURSE BY NUMBER, not /my/. It used to be /my/, which carries no course id, so probing it REMOVED the course-id assertion and changed ten paths. Pointing it at /course/view.php?id=9 keeps the row on target:blueprint AND makes it the row that kills the two-hashes-of-one-file mutant: the assertion's $want becomes 9 while reviewCourseId() still returns 2, so an implementation that derived the expected id from reviewCourseId() produces a different steps[*].code here and the row fails."
     },
     {
       "input": "built-by",
@@ -300,10 +299,9 @@
       "env": "RESTORE_COURSE_URL",
       "probe": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
       "target": "shape",
-      "note": "Changes the step LIST, not just field values: createCourse becomes restoreCourse and the post-restore assertion is inserted. Index-normalised field paths cannot express that \u2014 inserting a step makes every later step compare against a different one. Uses the users=0 fixture: a backup carrying student1 is refused, because createUsers would fail mid-boot.",
+      "note": "Changes the step LIST, not just field values: createCourse becomes restoreCourse and the post-restore assertion is inserted. Index-normalised field paths cannot express that \u2014 inserting a step makes every later step compare against a different one. Uses the users=0 fixture: a backup carrying student1 is refused, because createUsers would fail mid-boot. NOTE the runPhpCode cancellation: the baseline carries the course-id assertion and this probe carries the restore assertion, so the multiset diff nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added rather than present in expect_steps_removed. THIS ROW THEREFORE DOES NOT PROVE THE RESTORE ASSERTION SHIPS - deleting BOTH assertions also nets to zero and this row stays green. A mutant covers that; do not re-add the claim here.",
       "expect_steps_added": [
-        "restoreCourse",
-        "runPhpCode"
+        "restoreCourse"
       ],
       "expect_steps_removed": [
         "createCourse"
@@ -315,13 +313,12 @@
       "probe": "review-course",
       "target": "shape",
       "expect_steps_added": [
-        "restoreCourse",
-        "runPhpCode"
+        "restoreCourse"
       ],
       "expect_steps_removed": [
         "createCourse"
       ],
-      "note": "A menu, resolved to the pinned sample-course address inside the builder, so the form never carries a long URL. Same shape change as restore-course-url because it feeds the same setting \u2014 that is deliberate: two names for one thing is how a menu and a box end up disagreeing."
+      "note": "A menu, resolved to the pinned sample-course address inside the builder, so the form never carries a long URL. Same shape change as restore-course-url because it feeds the same setting \u2014 that is deliberate: two names for one thing is how a menu and a box end up disagreeing. NOTE the runPhpCode cancellation: the baseline carries the course-id assertion and this probe carries the restore assertion, so the multiset diff nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added rather than present in expect_steps_removed. THIS ROW THEREFORE DOES NOT PROVE THE RESTORE ASSERTION SHIPS - deleting BOTH assertions also nets to zero and this row stays green. A mutant covers that; do not re-add the claim here."
     }
   ]
 }
