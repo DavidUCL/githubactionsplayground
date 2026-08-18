@@ -81,9 +81,23 @@ def changed_values(a, b, path=""):
     return out
 
 
+# Serve the builder's own fetches from the captured fixtures.
+#
+# 1o exists to prove that a form input reaches its artifact — the wiring. The
+# builder's network calls are incidental to that, and there are 54 of them per
+# run across 12 URLs, so this check was one GitHub rate limit away from failing
+# for a reason that has nothing to do with wiring (Quinn saw it once in five
+# runs). The fixture map THROWS on a URL nobody captured, so a control that
+# starts fetching something new is a loud failure here rather than a silent
+# dependency on the weather.
+FIXTURE_PRELOAD = os.path.join(ROOT, "test", "helpers", "net-fixtures.mjs")
+
+
 def run_builder(env_overrides, baseline):
     d = tempfile.mkdtemp()
     env = dict(os.environ)
+    env["BV_NET_FIXTURES"] = "1"
+    env["NODE_OPTIONS"] = f"--import=file://{FIXTURE_PRELOAD}"
     env.update(baseline)
     env.update(env_overrides)
     env["OUT_DIR"] = os.path.join(d, "out")

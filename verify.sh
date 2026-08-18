@@ -111,6 +111,29 @@ else
 fi
 rm -rf "$FIXPLANT"
 
+# ...and the same for check 1o's builder subprocesses, which are a SEPARATE
+# path: `probe-controls.py` runs `node scripts/build-preview.mjs` itself, and
+# that inherits every fetch the builder makes — 54 requests across 12 URLs per
+# run, which made this check fail once in five runs while GitHub was throttling.
+# 1o exists to prove a form input reaches its artifact; the network is
+# incidental to that and must not be able to redden it.
+#
+# Passing does NOT prove the fixtures are in use — without them the check would
+# pass over the real network too. Breaking them is the only proof.
+OFIXPLANT=$(mktemp -d)
+mkdir -p "$OFIXPLANT/net"
+echo '{"capturedAt":"plant","entries":[]}' > "$OFIXPLANT/net/manifest.json"
+if BV_NET_FIXTURE_DIR="$OFIXPLANT/net" python3 scripts/probe-controls.py >"$OFIXPLANT/out.log" 2>&1; then
+    echo "CHECK 1o-offline FAIL: 1o PASSED with every net fixture removed — its builds are still on the network"
+    FAILED+=("1o-offline: the probe harness does not use the net fixtures")
+elif ! grep -q 'must not reach the network' "$OFIXPLANT/out.log"; then
+    echo "CHECK 1o-offline FAIL: 1o failed without fixtures, but not because they were missing"
+    FAILED+=("1o-offline: failed for an unrelated reason")
+else
+    echo "CHECK 1o-offline PASS: the probe harness's builds are served from fixtures, not the network"
+fi
+rm -rf "$OFIXPLANT"
+
 # Every mutant's anchor must still match its source line — 2.5s, and it runs
 # FIRST because it is the failure the slow run reports worst. A stale anchor is
 # not a weak test, it is a mutant that never executed: the assertion it guards
@@ -734,7 +757,7 @@ rm -rf "$UNMET_TMP"
 # a reader who is told only "two controls collide" has to guess which.
 OVERLAP_TMP=$(mktemp -d)
 if python3 - "$OVERLAP_TMP" <<'PY_OVERLAP'
-import json, shutil, sys, yaml
+import json, os, shutil, sys, yaml
 out = sys.argv[1]
 table = json.load(open("test/fixtures/control-probes.json"))
 keep = {"teachers", "students"}
@@ -752,6 +775,11 @@ yaml.safe_dump(action, open(f"{out}/action.yml", "w"))
 # changes the teacher count too, the two diffs differ, and the plant passes
 # while proving nothing — which is what the first draft of it did.
 shutil.copytree("scripts", f"{out}/scripts")
+# The checker resolves its ROOT from __file__, so running it out of this copy
+# means the net-fixture preload and the captured bodies must be here too.
+os.makedirs(f"{out}/test", exist_ok=True)
+shutil.copytree("test/helpers", f"{out}/test/helpers")
+shutil.copytree("test/fixtures/net", f"{out}/test/fixtures/net")
 src = open("scripts/build-preview.mjs").read()
 for old, new in [
     ('  const teachers = count("teachers");',

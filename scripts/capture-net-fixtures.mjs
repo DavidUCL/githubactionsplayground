@@ -100,6 +100,69 @@ export const URLS = [
       "test proves the check on the redirected URL rather than the redirect itself.",
     followRedirect: true,
   },
+  // --- what CHECK 1o's probe harness fetches ---------------------------------
+  // 1o runs the real builder as a subprocess, twice per input, so it inherits
+  // every fetch the builder makes: 54 requests across 12 URLs per run. Those
+  // are incidental to what 1o tests (that a form input reaches its artifact),
+  // and they made it fail spuriously once in five runs while GitHub was
+  // throttling. Captured so the check measures wiring, not the weather.
+  {
+    file: "plugins-405.json",
+    url: `${RAW}/moodle/moodle/MOODLE_405_STABLE/lib/plugins.json`,
+    expect: "core component list for the 4.5 branch — the moodle-branch probe row",
+    local: ["git", ["-C", "/home/ccaeday/dev/moodle", "show", "v4.5.11:lib/plugins.json"]],
+    localNote: "pinned, for the same reason as the 5.0 one",
+  },
+  {
+    file: "boost-union-version.php",
+    url: `${RAW}/moodle-an-hochschulen/moodle-theme_boost_union/649c2d7b22fee1de767d145b7ec5a95543e9a305/version.php`,
+    expect: "the theme probe row's version.php — must declare theme_boost_union",
+  },
+  {
+    file: "boost-union-config.php",
+    url: `${RAW}/moodle-an-hochschulen/moodle-theme_boost_union/649c2d7b22fee1de767d145b7ec5a95543e9a305/config.php`,
+    expect:
+      "the theme probe row's config.php. Sets $THEME->parents in BOTH arms of a " +
+      "Workplace check, which is the case the parser must warn about rather than " +
+      "refuse — the row would stop testing that if this drifted.",
+  },
+  {
+    file: "coursework-version.php",
+    url: `${RAW}/ucl-isd/moodle-mod_coursework/bafa3ed5f12f339b492c9e73f2bec13304920588/version.php`,
+    expect: "the extra-plugins probe row's version.php (read-only; nothing is written to ucl-isd)",
+  },
+  {
+    file: "boost-union-archive.zip",
+    url: "https://github.com/moodle-an-hochschulen/moodle-theme_boost_union/archive/649c2d7b22fee1de767d145b7ec5a95543e9a305.zip",
+    expect:
+      "the theme archive EXISTENCE check. The builder sends HEAD and follows a 302 " +
+      "to codeload; only the status matters, so the body is not used.",
+    headOnly: true,
+  },
+  {
+    file: "coursework-archive.zip",
+    url: "https://github.com/ucl-isd/moodle-mod_coursework/archive/bafa3ed5f12f339b492c9e73f2bec13304920588.zip",
+    expect: "the extra-plugins archive existence check; HEAD, status only",
+    headOnly: true,
+  },
+  {
+    file: "probe-attendance-a.php",
+    url: `${RAW}/DavidUCL/moodle-mod_attendance/${"a".repeat(40)}/version.php`,
+    expect: "404 — the probe baseline's head-sha is not a real commit",
+    allowMissing: true,
+  },
+  {
+    file: "probe-attendance-b.php",
+    url: `${RAW}/DavidUCL/moodle-mod_attendance/${"b".repeat(40)}/version.php`,
+    expect: "404 — the head-sha probe row's alternate sha",
+    allowMissing: true,
+  },
+  {
+    file: "probe-coursework-a.php",
+    url: `${RAW}/DavidUCL/moodle-mod_coursework/${"a".repeat(40)}/version.php`,
+    expect: "404 — the head-repo probe row",
+    allowMissing: true,
+  },
   // The rest are EXPECTED FAILURES. They are captured too, because "this URL
   // 404s" is an assertion the suite makes and a fixture that quietly turned
   // into a 200 would change what those tests prove.
@@ -130,12 +193,15 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * polite costs nothing and is the difference between a complete manifest and a
  * partial one.
  */
-async function fetchOnce(url, attempts = 4) {
+async function fetchOnce(url, attempts = 4, spec = null) {
   let last = { status: 0, bytes: Buffer.alloc(0), error: "not attempted" };
   for (let i = 0; i < attempts; i += 1) {
     if (i) await sleep(3000 * 2 ** (i - 1));
     try {
-      const res = await fetch(url, { signal: AbortSignal.timeout(30000) });
+      const res = await fetch(url, {
+        method: spec?.headOnly ? "HEAD" : "GET",
+        signal: AbortSignal.timeout(30000),
+      });
       const bytes = Buffer.from(await res.arrayBuffer());
       // res.url is the FINAL url after redirects. fetchBlueprint checks the
       // host AFTER following, so a fixture that loses this tests nothing —
@@ -163,7 +229,7 @@ async function main() {
 
   for (const spec of URLS) {
     await sleep(1500);
-    const got = await fetchOnce(spec.url);
+    const got = await fetchOnce(spec.url, 4, spec);
     let bytes = got.bytes;
     let status = got.status;
     let source = "network";

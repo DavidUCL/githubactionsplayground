@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-08-17T16:19:07.830Z",
+  "capturedAt": "2026-08-18T11:08:02.224Z",
   "entries": [
     {
       "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_500_STABLE/lib/plugins.json",
@@ -72,6 +72,89 @@
       "sha256": "61ccbb9becc6ae6484e0c3262a841f6171394d2e92d81378bbd3dcf4ea58f241",
       "expect": "a cross-origin 301 that also STRIPS THE PATH — the shape fetchBlueprint's post-redirect host check exists for. Captured as the FINAL response, so the test proves the check on the redirected URL rather than the redirect itself.",
       "finalUrl": "https://ateeducacion.github.io/moodle-playground/",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_405_STABLE/lib/plugins.json",
+      "file": "plugins-405.json",
+      "status": 200,
+      "bytes": 15590,
+      "sha256": "cb2b9b2c31710513491275987ad8ddf2044d4b2f4e545d9e245b690fc7f21f68",
+      "expect": "core component list for the 4.5 branch — the moodle-branch probe row",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/moodle-an-hochschulen/moodle-theme_boost_union/649c2d7b22fee1de767d145b7ec5a95543e9a305/version.php",
+      "file": "boost-union-version.php",
+      "status": 200,
+      "bytes": 1222,
+      "sha256": "3656f5ab6fbcb5e963cbf64961d4400990a5f7025ca7d74cae29b022dda26afa",
+      "expect": "the theme probe row's version.php — must declare theme_boost_union",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/moodle-an-hochschulen/moodle-theme_boost_union/649c2d7b22fee1de767d145b7ec5a95543e9a305/config.php",
+      "file": "boost-union-config.php",
+      "status": 200,
+      "bytes": 9518,
+      "sha256": "3e941203b913011e516bbacc7f5f4fe7056375e5e99246a7529f4f4f09589827",
+      "expect": "the theme probe row's config.php. Sets $THEME->parents in BOTH arms of a Workplace check, which is the case the parser must warn about rather than refuse — the row would stop testing that if this drifted.",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/ucl-isd/moodle-mod_coursework/bafa3ed5f12f339b492c9e73f2bec13304920588/version.php",
+      "file": "coursework-version.php",
+      "status": 200,
+      "bytes": 1168,
+      "sha256": "d28cca840e168d22111ea3ebcdf142ac7ae7f31a46a1b429c4b29bcf0c452f0b",
+      "expect": "the extra-plugins probe row's version.php (read-only; nothing is written to ucl-isd)",
+      "source": "network"
+    },
+    {
+      "url": "https://github.com/moodle-an-hochschulen/moodle-theme_boost_union/archive/649c2d7b22fee1de767d145b7ec5a95543e9a305.zip",
+      "file": "boost-union-archive.zip",
+      "status": 200,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "expect": "the theme archive EXISTENCE check. The builder sends HEAD and follows a 302 to codeload; only the status matters, so the body is not used.",
+      "finalUrl": "https://codeload.github.com/moodle-an-hochschulen/moodle-theme_boost_union/zip/649c2d7b22fee1de767d145b7ec5a95543e9a305",
+      "source": "network"
+    },
+    {
+      "url": "https://github.com/ucl-isd/moodle-mod_coursework/archive/bafa3ed5f12f339b492c9e73f2bec13304920588.zip",
+      "file": "coursework-archive.zip",
+      "status": 200,
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "expect": "the extra-plugins archive existence check; HEAD, status only",
+      "finalUrl": "https://codeload.github.com/ucl-isd/moodle-mod_coursework/zip/bafa3ed5f12f339b492c9e73f2bec13304920588",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/moodle-mod_attendance/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/version.php",
+      "file": "probe-attendance-a.php",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "expect": "404 — the probe baseline's head-sha is not a real commit",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/moodle-mod_attendance/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb/version.php",
+      "file": "probe-attendance-b.php",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "expect": "404 — the head-sha probe row's alternate sha",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/moodle-mod_coursework/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/version.php",
+      "file": "probe-coursework-a.php",
+      "status": 404,
+      "bytes": 14,
+      "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
+      "expect": "404 — the head-repo probe row",
       "source": "network"
     },
     {
