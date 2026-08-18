@@ -2652,3 +2652,39 @@ test("buildBlueprint actually CALLS the course invariants", async () => {
       "invariants are dead code and every one of their mutants is unkillable",
   );
 });
+
+test("a course backup that DECLARES an oversized body is refused unread", async () => {
+  // The behavioural discriminator between `readCapped` and the
+  // `Buffer.from(await res.arrayBuffer())` it replaced. Both accept every small
+  // body, so only a content-length that disagrees with the body separates them:
+  // one refuses before reading, the other reads and then measures — which is
+  // the whole point of the change, since a hostile URL is not obliged to send a
+  // small body.
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { execFileSync } = await import("node:child_process");
+  const dir = mkdtempSync(join(tmpdir(), "cap-"));
+  const url =
+    "https://raw.githubusercontent.com/DavidUCL/githubactionsplayground/" +
+    `${"c".repeat(40)}/fixtures/huge.mbz`;
+  let out = "";
+  try {
+    execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env,
+        HEAD_REPO: "DavidUCL/moodle-mod_attendance",
+        HEAD_SHA: "a".repeat(40),
+        PLUGIN_TYPE: "mod", PLUGIN_NAME: "attendance",
+        RESTORE_COURSE_URL: url,
+        OUT_DIR: dir, GITHUB_OUTPUT: join(dir, "gho"), GITHUB_STEP_SUMMARY: join(dir, "sum"),
+      },
+      encoding: "utf8", stdio: "pipe",
+    });
+    assert.fail("an oversized backup must be refused");
+  } catch (err) {
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  assert.match(out, /restore-course-url/);
+  assert.match(out, /declares 99999999 bytes, over the \d+ cap/);
+});

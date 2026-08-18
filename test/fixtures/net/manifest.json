@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-08-18T11:08:02.224Z",
+  "capturedAt": "2026-08-18T15:52:43.980Z",
   "entries": [
     {
       "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_500_STABLE/lib/plugins.json",
@@ -156,6 +156,18 @@
       "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
       "expect": "404 — the head-repo probe row",
       "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/githubactionsplayground/cccccccccccccccccccccccccccccccccccccccc/fixtures/huge.mbz",
+      "file": "oversized-declared.mbz",
+      "status": 200,
+      "bytes": 17,
+      "sha256": "8d0c0f3b985386e8210e16b90173f260802bacdb1c88a2b8fd3820e90fa84980",
+      "expect": "a course backup whose content-length is over the cap — the builder must refuse it without reading the body",
+      "source": "synthetic",
+      "headers": {
+        "content-length": "99999999"
+      }
     },
     {
       "url": "https://raw.githubusercontent.com/DavidUCL/moodle-mod_attendance/d0638b39df1c28fd93c27778ae2cbada7cc1660f/version.php",

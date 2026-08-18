@@ -23,7 +23,7 @@ import { sanitiseForLog } from "./sanitise.mjs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
-import { gateBlueprint, assertNoPlaceholders, checkUrl } from "./preflight.mjs";
+import { gateBlueprint, assertNoPlaceholders, checkUrl, readCapped } from "./preflight.mjs";
 import { buildRestoreAssertion } from "./restore-assert.mjs";
 import { buildThemeAssertion, buildThemeCssWarmup } from "./theme-assert.mjs";
 import { buildCourseAssertion } from "./course-assert.mjs";
@@ -2252,10 +2252,13 @@ async function main() {
         if (!res.ok) {
           problems.add("restore-course-url", `HTTP ${res.status} fetching the course backup`);
         } else {
-          const bytes = Buffer.from(await res.arrayBuffer());
-          if (bytes.length > MAX_MBZ_BYTES) {
-            problems.add("restore-course-url", `the backup is ${bytes.length} bytes, over the ${MAX_MBZ_BYTES} cap`);
-          } else {
+          // STREAMED against the cap, never `arrayBuffer()` first. Reading the
+          // whole body and measuring it afterwards has already paid the cost the
+          // cap exists to refuse — a hostile URL exhausted the runner instead of
+          // being turned away. `readCapped` throws, and the catch below turns
+          // that into a refusal naming the field.
+          const bytes = await readCapped(res, MAX_MBZ_BYTES, "the course backup");
+          {
             const verdict = checkCourseBackup(bytes);
             if (!verdict.ok) problems.add("restore-course-url", verdict.reason);
             else {

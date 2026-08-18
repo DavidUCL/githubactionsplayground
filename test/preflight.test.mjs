@@ -566,3 +566,59 @@ test("expectations report installTheme as a theme however it declares itself", (
   // blaming the wrong thing.
   assert.equal(step.pluginType, "theme");
 });
+
+// ---- the size cap must be applied WHILE reading -------------------------
+
+test("a body over the cap is refused without being held in memory", async () => {
+  const { readCapped } = await import("../scripts/preflight.mjs");
+  // THE BUG THIS EXISTS TO CATCH, which shipped on the course-backup path:
+  // `Buffer.from(await res.arrayBuffer())` followed by a length check has
+  // already held the whole body by the time it measures it, so a hostile URL
+  // exhausts the runner rather than being turned away.
+  let pulled = 0;
+  const body = new ReadableStream({
+    pull(controller) {
+      pulled += 1;
+      if (pulled > 100) return controller.close();
+      controller.enqueue(new Uint8Array(1000));
+    },
+  });
+  const res = new Response(body);
+  await assert.rejects(
+    () => readCapped(res, 5000, "the course backup"),
+    // Named, so the refusal says WHICH download was too big — it used to say
+    // "blueprint" whatever it was reading.
+    /the course backup larger than 5000 bytes/,
+  );
+  // It stopped early rather than draining the stream: 5000/1000 chunks plus the
+  // one that crossed the line. Without a streaming cap this would be 101.
+  assert.ok(pulled <= 7, `read ${pulled} chunks before giving up`);
+});
+
+test("a declared length over the cap is refused before a byte is read", async () => {
+  const { readCapped } = await import("../scripts/preflight.mjs");
+  // A body that EXPLODES if anyone reads it. Counting pulls cannot show this —
+  // a ReadableStream pulls itself on a later tick whether or not a reader ever
+  // arrives — but the identity of the error can: if readCapped touched the
+  // body we would see "boom", and if it short-circuited on the header we see
+  // the declared-length refusal.
+  const body = new ReadableStream({
+    pull() { throw new Error("boom: the body was read"); },
+  });
+  const res = new Response(body, { headers: { "content-length": "99999999" } });
+  await assert.rejects(
+    () => readCapped(res, 5000, "the course backup"),
+    /declares 99999999 bytes, over the 5000 cap/,
+  );
+  // content-length is only a hint, so the streaming cap stays authoritative —
+  // but where a server sends one, refusing before reading anything is strictly
+  // better than refusing after the last byte.
+});
+
+test("a body inside the cap is returned whole", async () => {
+  const { readCapped } = await import("../scripts/preflight.mjs");
+  const res = new Response(new Uint8Array([1, 2, 3, 4]));
+  assert.deepEqual([...(await readCapped(res, 100, "x"))], [1, 2, 3, 4]);
+  // ...and a missing content-length is not treated as zero-and-refused.
+  assert.equal((await readCapped(new Response(new Uint8Array(10)), 100, "x")).length, 10);
+});

@@ -666,6 +666,16 @@ const MUTATIONS = [
     "scripts/build-preview.mjs",
     "    else if (s.step === \"createCourses\") for (const c of s.courses ?? []) made.push(c?.shortname);\n",
     ""],
+  // --- the download size cap ---
+  // It shipped as `Buffer.from(await res.arrayBuffer())` followed by a length
+  // check, which has already held the whole body by the time it measures it.
+  ["cap: hold the whole body before measuring it", "scripts/build-preview.mjs",
+    'const bytes = await readCapped(res, MAX_MBZ_BYTES, "the course backup");',
+    "const bytes = Buffer.from(await res.arrayBuffer());"],
+  ["cap: stop capping the stream at all", "scripts/preflight.mjs",
+    "    if (total > limit) throw new Error(`${what} larger than ${limit} bytes`);\n", ""],
+  ["cap: ignore a declared length over the cap", "scripts/preflight.mjs",
+    "  if (Number.isFinite(declared) && declared > limit) {", "  if (false) {"],
   ["mbz: stop reporting the users a backup creates", "scripts/mbz.mjs",
     "  const usernames = usersXml", "  const usernames = false"],
 

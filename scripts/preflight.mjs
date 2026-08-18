@@ -115,13 +115,34 @@ const MAX_DEPTH = 32;
 // or an attempt to exhaust the runner.
 const MAX_BLUEPRINT_BYTES = 1_000_000;
 
-/** Read a fetch response body, aborting past `limit` bytes. */
-async function readCapped(res, limit) {
+/**
+ * Read a fetch response body, ABORTING past `limit` bytes.
+ *
+ * The cap has to be applied WHILE reading, not after. `await res.arrayBuffer()`
+ * holds the entire body in memory first and only then lets you measure it — so
+ * a caller that checks the length afterwards has already paid the cost it was
+ * trying to refuse, and a hostile URL exhausts the runner rather than being
+ * turned away. This repo shipped exactly that on the course-backup path.
+ *
+ * `content-length` is checked first where the server sends one: refusing before
+ * a single byte arrives is strictly better, and it is only a hint, so the
+ * streaming cap below stays authoritative.
+ *
+ * @param {Response} res
+ * @param {number} limit bytes
+ * @param {string} what named in the error, so the caller's message says which
+ *   download was refused rather than always saying "blueprint"
+ */
+export async function readCapped(res, limit, what = "blueprint") {
+  const declared = Number(res.headers?.get?.("content-length"));
+  if (Number.isFinite(declared) && declared > limit) {
+    throw new Error(`${what} declares ${declared} bytes, over the ${limit} cap`);
+  }
   const chunks = [];
   let total = 0;
   for await (const chunk of res.body) {
     total += chunk.length;
-    if (total > limit) throw new Error(`blueprint larger than ${limit} bytes`);
+    if (total > limit) throw new Error(`${what} larger than ${limit} bytes`);
     chunks.push(chunk);
   }
   return Buffer.concat(chunks);
@@ -527,7 +548,7 @@ export async function fetchBlueprint(blueprintUrl, blueprintHosts) {
   const finalProblem = checkUrl(res.url, blueprintHosts);
   if (finalProblem) fail("blueprint_host_denied", `after redirect: ${finalProblem}`);
   try {
-    return { bytes: await readCapped(res, MAX_BLUEPRINT_BYTES), finalUrl: res.url };
+    return { bytes: await readCapped(res, MAX_BLUEPRINT_BYTES, "blueprint"), finalUrl: res.url };
   } catch (err) {
     return fail("blueprint_fetch_failed", err.message);
   }

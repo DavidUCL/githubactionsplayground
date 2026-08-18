@@ -163,6 +163,21 @@ export const URLS = [
     expect: "404 — the head-repo probe row",
     allowMissing: true,
   },
+  // --- SYNTHETIC, not captured from anywhere -------------------------------
+  // A tiny body that CLAIMS to be enormous. There is no such URL on the
+  // internet and there does not need to be: the property under test is that the
+  // builder refuses a download on its declared size before reading it, and the
+  // only way to observe that cheaply is a `content-length` that disagrees with
+  // the body. Serving a genuinely over-cap body would mean committing 64 MB to
+  // test a size check.
+  {
+    file: "oversized-declared.mbz",
+    url: `${RAW}/DavidUCL/githubactionsplayground/${"c".repeat(40)}/fixtures/huge.mbz`,
+    expect:
+      "a course backup whose content-length is over the cap — the builder must " +
+      "refuse it without reading the body",
+    synthetic: { body: "not a real backup", headers: { "content-length": "99999999" } },
+  },
   // The rest are EXPECTED FAILURES. They are captured too, because "this URL
   // 404s" is an assertion the suite makes and a fixture that quietly turned
   // into a 200 would change what those tests prove.
@@ -228,6 +243,19 @@ async function main() {
   let failed = 0;
 
   for (const spec of URLS) {
+    if (spec.synthetic) {
+      // Written, not fetched. Recorded with source "synthetic" so the manifest
+      // never claims a body came from a host that never served it.
+      const bytes = Buffer.from(spec.synthetic.body);
+      writeFileSync(join(OUT, spec.file), bytes);
+      entries.push({
+        url: spec.url, file: spec.file, status: 200, bytes: bytes.length,
+        sha256: sha256(bytes), expect: spec.expect, source: "synthetic",
+        headers: spec.synthetic.headers,
+      });
+      console.log(`synth  200  ${String(bytes.length).padStart(8)}  ${spec.file}`);
+      continue;
+    }
     await sleep(1500);
     const got = await fetchOnce(spec.url, 4, spec);
     let bytes = got.bytes;
