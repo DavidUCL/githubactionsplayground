@@ -174,7 +174,26 @@ def main():
 
     signatures = {}
     for name, row in sorted(rows.items()):
-        res = run_builder({row["env"]: row["probe"]}, baseline_env)
+        # `env_extra` lets ONE row set more than one variable.
+        #
+        # Some controls are only valid as a pair — `restore-database-sha256` is
+        # required whenever `restore-database-url` is set — and probing one
+        # alone is REFUSED, which forces both rows to `target: refusal`. Quinn
+        # measured what that costs: with both rows refusing, this check passes
+        # even with the step emission deleted, so it observes nothing about the
+        # control at all. `run_builder` already merged a dict; only this call
+        # site passed a single variable.
+        #
+        # Deferred in an earlier round as "no row needs one yet". One does now.
+        overrides = {row["env"]: row["probe"]}
+        for key, value in (row.get("env_extra") or {}).items():
+            if key == row["env"]:
+                fail(
+                    f"{name}: env_extra sets {key}, which is the row's own env var — "
+                    f"put the value in `probe` instead, or the two silently disagree"
+                )
+            overrides[key] = value
+        res = run_builder(overrides, baseline_env)
         target = row["target"]
 
         # `expect_paths` is only READ on a blueprint row. Declared on a shape,

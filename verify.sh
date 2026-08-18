@@ -740,6 +740,66 @@ else
 fi
 rm -rf "$UNMET_TMP"
 
+# ...and prove `env_extra` is actually applied. It lets one probe row set more
+# than one variable, which is what a control whose inputs are only valid as a
+# PAIR needs — probing one alone is refused, and two `refusal` rows leave this
+# check passing even with the step emission deleted.
+#
+# The row below asks for a student count AND a section count and declares the
+# fields both of them change. If `env_extra` is dropped, only the students move
+# and the row fails "declares fields it does not change". Built now rather than
+# with its first real user, because machinery whose self-test arrives later is
+# what this repo twice mistook for a working check.
+EXTRA_TMP=$(mktemp -d)
+if python3 - "$EXTRA_TMP" <<'PY_EXTRA'
+import json, os, shutil, sys, yaml
+out = sys.argv[1]
+table = json.load(open("test/fixtures/control-probes.json"))
+row = next(r for r in table["probes"] if r["input"] == "students")
+row["probe"] = "5"
+row["env_extra"] = {"SECTIONS": "7"}
+row["expect_paths"] = sorted(set(row["expect_paths"]) | {"steps[*].numsections"})
+row.pop("expect_summary_contains", None)
+table["probes"] = [row]
+json.dump(table, open(f"{out}/probes.json", "w"))
+action = yaml.safe_load(open("preview/action.yml"))
+action["inputs"] = {k: v for k, v in action["inputs"].items() if k == "students"}
+yaml.safe_dump(action, open(f"{out}/action.yml", "w"))
+PY_EXTRA
+then
+    EXTRA_OUT=$(PROBE_TABLE="$EXTRA_TMP/probes.json" PROBE_ACTION="$EXTRA_TMP/action.yml" \
+        python3 scripts/probe-controls.py 2>&1)
+    if [[ $? -ne 0 ]]; then
+        echo "CHECK 1o-envextra FAIL: a row using env_extra did not pass — $EXTRA_OUT"
+        FAILED+=("1o-envextra: env_extra is not applied")
+    else
+        # ...and the same row WITHOUT env_extra must fail, or the pass above
+        # proves only that the row was satisfiable anyway.
+        python3 - "$EXTRA_TMP" <<'PY_EXTRA2'
+import json, sys
+out = sys.argv[1]
+table = json.load(open(f"{out}/probes.json"))
+table["probes"][0].pop("env_extra")
+json.dump(table, open(f"{out}/probes-noextra.json", "w"))
+PY_EXTRA2
+        NOEXTRA_OUT=$(PROBE_TABLE="$EXTRA_TMP/probes-noextra.json" PROBE_ACTION="$EXTRA_TMP/action.yml" \
+            python3 scripts/probe-controls.py 2>&1)
+        if [[ $? -eq 0 ]]; then
+            echo "CHECK 1o-envextra FAIL: the row passed WITHOUT env_extra, so it proves nothing"
+            FAILED+=("1o-envextra: the self-test is vacuous")
+        elif [[ "$NOEXTRA_OUT" != *"numsections"* ]]; then
+            echo "CHECK 1o-envextra FAIL: it failed for the WRONG reason — $NOEXTRA_OUT"
+            FAILED+=("1o-envextra: failed for an unrelated reason")
+        else
+            echo "CHECK 1o-envextra PASS: env_extra is applied, and the row fails without it"
+        fi
+    fi
+else
+    echo "CHECK 1o-envextra FAIL: the plant could not be built"
+    FAILED+=("1o-envextra: the plant could not be built")
+fi
+rm -rf "$EXTRA_TMP"
+
 # ...and the fourth branch: two controls that produce the IDENTICAL blueprint
 # diff are two names for one thing. That is the env-swap bug — `MOODLE_BRANCH:
 # ${{ inputs.built-by }}` — which once passed a 17-check gate.
@@ -931,6 +991,43 @@ else
         echo "CHECK 1u-cross PASS: 1u names the two boxes that were crossed"
     fi
 fi
+
+# ...and the hole those two plants do NOT cover: a `with:` key the CALLED action
+# never declares. The name is referenced, so the reference check is satisfied;
+# check 1o cannot see it because its list comes from preview/action.yml; GitHub
+# logs "Unexpected input(s)" as a WARNING and runs green. The control simply
+# does not exist and every check passes. Deferred twice as "no user yet" — the
+# restore-database pair adds two `with:` lines at once, so it has one now.
+FWD_CALLEE=$(mktemp -d)
+mkdir -p "$FWD_CALLEE/.github/workflows"
+cp -r preview "$FWD_CALLEE/preview"
+python3 - "$FWD_CALLEE" <<'PY_CALLEE'
+import pathlib, sys
+out = pathlib.Path(sys.argv[1])
+src = pathlib.Path(".github/workflows/preview-a-plugin.yml").read_text()
+anchor = "          courses: ${{ inputs.courses }}"
+assert src.count(anchor) == 1, "the courses forwarding line moved"
+plant = src.replace(anchor, anchor + "\n          not-a-real-input: ${{ inputs.courses }}", 1)
+(out / ".github/workflows/preview-a-plugin.yml").write_text(plant)
+PY_CALLEE
+if [[ $? -ne 0 ]]; then
+    echo "CHECK 1u-callee FAIL: the plant could not be built"
+    FAILED+=("1u-callee: the plant could not be built")
+else
+    CALLEE_OUT=$(cd "$FWD_CALLEE" && FORWARD_WORKFLOWS=.github/workflows/preview-a-plugin.yml \
+        python3 "$OLDPWD/scripts/check-forwarding.py" 2>&1)
+    CALLEE_RC=$?
+    if [[ $CALLEE_RC -eq 0 ]]; then
+        echo "CHECK 1u-callee FAIL: 1u ACCEPTED a with: key the action does not declare"
+        FAILED+=("1u-callee: the callee-input check does not fire")
+    elif [[ "$CALLEE_OUT" != *'passes "not-a-real-input" to ./preview'* ]]; then
+        echo "CHECK 1u-callee FAIL: it failed for the WRONG reason — $CALLEE_OUT"
+        FAILED+=("1u-callee: failed for an unrelated reason")
+    else
+        echo "CHECK 1u-callee PASS: a with: key the action does not declare is named"
+    fi
+fi
+rm -rf "$FWD_CALLEE"
 rm -rf "$FWD_TMP"
 
 # A push workflow that defines ONLY tags/tags-ignore never runs on a branch

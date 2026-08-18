@@ -121,6 +121,93 @@ def with_keys(text):
     return WITH_ENTRY.findall(text)
 
 
+# GitHub's own limit on a workflow_dispatch form. Documented, and it applies to
+# the REST payload `gh workflow run` sends as well as to the YAML.
+MAX_DISPATCH_INPUTS = 25
+
+
+def check_input_ceiling(path, inputs):
+    """The form must stay under GitHub's 25-input limit.
+
+    DISPATCH FORMS ONLY. A composite action carries no such cap — `preview/`
+    already declares more than 25 inputs and is perfectly legal — so a check
+    that counted every `inputs:` block would fail on the commit that pushes the
+    action past 25 while the form is still well inside it.
+
+    The count is the thing worth guarding rather than the header comment that
+    states it: the comment is edited by the same hand in the same commit, but
+    the 26th input is refused by GitHub at dispatch time with an error that
+    names nothing useful.
+    """
+    if len(inputs) <= MAX_DISPATCH_INPUTS:
+        return []
+    return [
+        f"{path}: the form declares {len(inputs)} dispatch inputs and GitHub's "
+        f"limit is {MAX_DISPATCH_INPUTS} — the form stops rendering, and a saved "
+        f"`gh workflow run` command fails with an error that names no field"
+    ]
+
+
+def check_callee_inputs(path, doc):
+    """Every `with:` key must be an input the called action actually declares.
+
+    THE FAILURE THIS CATCHES, and it is the one hole left in the wiring checks.
+    The form declares an input, forwards it with a `with:` line, and the callee
+    action never declares it:
+
+        - uses: ./preview
+          with:
+            restore-database-url: ${{ inputs.restore-database-url }}
+
+    The name IS referenced, so the reference check above is satisfied. Check 1o
+    never sees it, because its `declared` set comes from `preview/action.yml`.
+    Check 1c only notices if some script reads the env var. GitHub logs
+    "Unexpected input(s)" as a WARNING and runs the job green. The control
+    simply does not exist, and every check passes.
+
+    Read from the PARSED YAML, not the text: a step's `uses` and `with` belong
+    to one mapping, and pairing them by regex over the raw file means guessing
+    which `with:` belongs to which step.
+    """
+    problems = []
+    for job in (doc.get("jobs") or {}).values():
+        if not isinstance(job, dict):
+            continue
+        for step in job.get("steps") or []:
+            if not isinstance(step, dict):
+                continue
+            uses = str(step.get("uses") or "")
+            # Local actions only. A third-party `uses:` is somebody else's
+            # contract and its action.yml is not on disk to read.
+            if not uses.startswith("./"):
+                continue
+            with_block = step.get("with")
+            if not isinstance(with_block, dict):
+                continue
+            action = None
+            for name in ("action.yml", "action.yaml"):
+                candidate = pathlib.Path(uses) / name
+                if candidate.is_file():
+                    action = candidate
+                    break
+            if action is None:
+                problems.append(f"{path}: step uses '{uses}' but no action.yml is there")
+                continue
+            try:
+                declared = set((yaml.safe_load(action.read_text()) or {}).get("inputs") or {})
+            except yaml.YAMLError as err:
+                problems.append(f"{path}: {action} will not parse as YAML — {err}")
+                continue
+            for key in with_block:
+                if key not in declared:
+                    problems.append(
+                        f"{path}: passes \"{key}\" to {uses}, which declares no such "
+                        f"input — GitHub logs 'Unexpected input(s)' as a WARNING, the "
+                        f"run goes green, and the value reaches nothing"
+                    )
+    return problems
+
+
 def scan(path):
     """@returns (declared_input_count, problems). Raises on an unusable file."""
     raw = path.read_text()
@@ -153,6 +240,9 @@ def scan(path):
                 f'{", ".join(sorted(referenced))} — two boxes are crossed, so each '
                 f"silently does the other's job"
             )
+
+    problems.extend(check_callee_inputs(path, doc))
+    problems.extend(check_input_ceiling(path, inputs))
 
     for name in inputs:
         # The DECLARATION is `  theme:`; a REFERENCE is `${{ inputs.theme }}`.
