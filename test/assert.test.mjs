@@ -401,6 +401,7 @@ test("no two assertion generators claim the same exit code", async () => {
   const { COURSE_CODES } = await import("../scripts/course-assert.mjs");
   const { LANG_CODES } = await import("../scripts/lang-assert.mjs");
   const { COURSE_ID_CODES } = await import("../scripts/course-id-assert.mjs");
+  const { DB_ASSERT_CODES } = await import("../scripts/db-assert.mjs");
   // `assert.mjs` merges these with object spread, so a code defined twice is
   // silently won by whichever map is spread last — and the boot log would then
   // explain a failure as the wrong thing entirely, which is worse than the
@@ -412,6 +413,7 @@ test("no two assertion generators claim the same exit code", async () => {
     ["course-assert.mjs", COURSE_CODES],
     ["lang-assert.mjs", LANG_CODES],
     ["course-id-assert.mjs", COURSE_ID_CODES],
+    ["db-assert.mjs", DB_ASSERT_CODES],
   ];
   const owner = new Map();
   for (const [module, codes] of maps) {
@@ -432,7 +434,7 @@ test("no two assertion generators claim the same exit code", async () => {
     }
   }
   // ...and a sanity floor, so deleting a whole map does not read as "disjoint".
-  assert.ok(owner.size >= 10, `expected every generator's failure codes, saw ${owner.size}`);
+  assert.ok(owner.size >= 20, `expected every generator's failure codes, saw ${owner.size}`);
   // Every generator numbers its failures in its own block of ten, so a new one
   // starts at the next free block rather than picking numbers at random. This
   // is what keeps the disjointness above easy to hold rather than lucky.
