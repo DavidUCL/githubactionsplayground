@@ -148,6 +148,17 @@ const MUTATIONS = [
   ["preview: stop disabling the enrolment welcome mail", "scripts/build-preview.mjs",
     '        { name: "sendcoursewelcomemessage", value: "0", plugin: "enrol_manual" },', ""],
 
+  // --- source hygiene ------------------------------------------------------
+  // The scanner that stops a literal control byte reaching a source file. Its
+  // whole risk is being subtly wrong about the byte range and passing forever.
+  ["hygiene: stop noticing control bytes below space", "test/source-hygiene.test.mjs",
+    "if ((b < 0x20 && b !== 0x09 && b !== 0x0a && b !== 0x0d) || b === 0x7f) found.push(i);",
+    "if (b === 0x7f) found.push(i);"],
+  ["hygiene: stop noticing DEL", "test/source-hygiene.test.mjs",
+    "|| b === 0x7f) found.push(i);", ") found.push(i);"],
+  ["hygiene: scan nothing and call the tree clean", "test/source-hygiene.test.mjs",
+    "else if (TEXT_EXT.has(extname(name)) || name === \"verify.sh\") out.push(full);", ""],
+
   // --- restoring a whole database -----------------------------------------
   // Every one of these is a state `restoreDatabase` reports as a SUCCESSFUL
   // step, so a weak assertion here is invisible everywhere else.
