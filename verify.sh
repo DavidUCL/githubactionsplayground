@@ -1607,6 +1607,19 @@ import("./scripts/course-id-assert.mjs").then(async (m) => {
     # No waiver: the snapshot is a public pinned file and every arm runs the
     # same four core steps. It is 7.6 MB per boot, which is the cost of proving
     # this at all.
+    #
+    # MEASURED 2026-08-19, first run, five separate boots of the real host:
+    #   correct snapshot                    all 4 steps, reached setLandingPage
+    #   restoreDatabase step removed        exit 72 at the assertion
+    #   identity of a different file        exit 72
+    #   5.0 snapshot onto MOODLE_404 code   exit 74
+    #   administrator that is not there     exit 75
+    #
+    # The 4.4 arm settles a question that was open when this was written: older
+    # code DOES boot far enough on a restored newer database to reach the
+    # assertion, rather than dying earlier with something else. That is the
+    # whole hazard — the site comes up looking fine — and it is why the check
+    # can name it rather than merely observing that the boot failed.
     DB_SNAP="https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/data/integration-test.sq3"
     DB_IDENT="rk4Xj3c2Erah6qDHBMIHpTo1EvU0FeOelocalhost"
     db_boot() { # $1=label $2=identity $3=moodle-branch $4=admin $5=restore(yes|no)
