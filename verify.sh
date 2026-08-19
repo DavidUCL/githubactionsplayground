@@ -1609,7 +1609,7 @@ import("./scripts/course-id-assert.mjs").then(async (m) => {
     # this at all.
     DB_SNAP="https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/data/integration-test.sq3"
     DB_IDENT="rk4Xj3c2Erah6qDHBMIHpTo1EvU0FeOelocalhost"
-    db_boot() { # $1=label $2=identity $3=branch $4=admin $5=restore(yes|no)
+    db_boot() { # $1=label $2=identity $3=moodle-branch $4=admin $5=restore(yes|no)
         local DB_OUT="$WORK/db_$1"
         mkdir -p "$DB_OUT"
         DB_DIR="$DB_OUT" DB_ID="$2" DB_BR="$3" DB_ADM="$4" DB_DO="$5" DB_URL="$DB_SNAP" node -e '
@@ -1618,7 +1618,6 @@ import("./scripts/db-assert.mjs").then(async (m) => {
   const c = await import("node:crypto");
   const step = m.buildDatabaseAssertion({
     identity: process.env.DB_ID,
-    branch: process.env.DB_BR,
     adminUsername: process.env.DB_ADM,
   });
   const restore = process.env.DB_DO === "yes"
@@ -1630,7 +1629,7 @@ import("./scripts/db-assert.mjs").then(async (m) => {
     step,
     { step: "setLandingPage", path: "/" },
   ];
-  const bp = { preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps };
+  const bp = { preferredVersions: { moodle: process.env.DB_BR }, steps };
   const body = JSON.stringify(bp, null, 2);
   fs.writeFileSync(`${process.env.DB_DIR}/blueprint.json`, body);
   const sha = c.createHash("sha256").update(body).digest("hex");
@@ -1657,11 +1656,15 @@ import("./scripts/db-assert.mjs").then(async (m) => {
         fi
     }
     : >/tmp/bv-verify-db.log
-    DB_GOOD=$(db_boot good "$DB_IDENT" 500 admin yes)
-    DB_NOSWAP=$(db_boot noswap "$DB_IDENT" 500 admin no)
-    DB_WRONGID=$(db_boot wrongid "0123456789abcdef0123456789abcdef" 500 admin yes)
-    DB_WRONGBR=$(db_boot wrongbranch "$DB_IDENT" 403 admin yes)
-    DB_WRONGADM=$(db_boot wrongadmin "$DB_IDENT" 500 nosuchadmin yes)
+    DB_GOOD=$(db_boot good "$DB_IDENT" MOODLE_500_STABLE admin yes)
+    DB_NOSWAP=$(db_boot noswap "$DB_IDENT" MOODLE_500_STABLE admin no)
+    DB_WRONGID=$(db_boot wrongid "0123456789abcdef0123456789abcdef" MOODLE_500_STABLE admin yes)
+    # A 5.0 snapshot restored onto 4.4 code. NOT a contrived value handed to the
+    # assertion — the actual mismatch, read from the running version.php and the
+    # restored config table, which is what Moodle can no longer report itself
+    # once the restore has reset allversionshash.
+    DB_WRONGBR=$(db_boot wrongbranch "$DB_IDENT" MOODLE_404_STABLE admin yes)
+    DB_WRONGADM=$(db_boot wrongadmin "$DB_IDENT" MOODLE_500_STABLE nosuchadmin yes)
     DB_PROBLEMS=""
     [[ "$DB_GOOD" == *"setLandingPage"* ]] || DB_PROBLEMS+="a CORRECT snapshot did not complete (got: ${DB_GOOD:-nothing}) — an assertion that can never pass would satisfy every other arm here; "
     [[ "$DB_NOSWAP" == *"exit code 72"* ]] || DB_PROBLEMS+="a site that NEVER RESTORED was not caught (got: ${DB_NOSWAP:-nothing}) — this is the vacuity arm: without it the assertion could be passing on anything; "

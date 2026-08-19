@@ -47,7 +47,15 @@ function isPostablePreviewUrl(value, allowedOrigins) {
 }
 
 /** @returns {string} markdown for the sticky comment */
-export function renderComment({ url, plugin, headSha, runUrl, user = "admin", allowedOrigins = DEFAULT_ORIGINS, riskySteps = [] }) {
+export function renderComment({
+  url, plugin, headSha, runUrl, user = "admin",
+  // WHETHER that account is an administrator, which the name no longer settles:
+  // under a restored database the administrator comes from the snapshot and may
+  // be called anything. Defaulted from the name so an older caller — and every
+  // preview that restores nothing — behaves exactly as before.
+  isAdmin = user === "admin",
+  allowedOrigins = DEFAULT_ORIGINS, riskySteps = [],
+}) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
   if (!COMPONENT_RE.test(String(plugin))) throw new Error(`bad plugin: ${plugin}`);
@@ -93,7 +101,7 @@ export function renderComment({ url, plugin, headSha, runUrl, user = "admin", al
     // reviewer arrived as admin — the one case where the caveat matters, since
     // an administrator passes capability checks a plugin's own code relies on
     // and is not enrolled, so completion never evaluates for them.
-    ...(user === "admin"
+    ...(isAdmin
       ? [
           "",
           "**You are an administrator here.** Admin bypasses the capability",
@@ -134,6 +142,11 @@ function main() {
     headSha: process.env.HEAD_SHA || "",
     runUrl: process.env.RUN_URL || "",
     user: process.env.PREVIEW_USER || "admin",
+    // Absent means "fall back to the name", which is what every caller did
+    // before this existed and is right for every preview without a restore.
+    isAdmin: process.env.PREVIEW_USER_IS_ADMIN
+      ? process.env.PREVIEW_USER_IS_ADMIN === "true"
+      : (process.env.PREVIEW_USER || "admin") === "admin",
     riskySteps: (process.env.RISKY_STEPS || "").split(",").map((r) => r.trim()).filter(Boolean),
   });
   if (process.env.GITHUB_OUTPUT) {

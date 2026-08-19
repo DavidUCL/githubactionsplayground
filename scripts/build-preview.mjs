@@ -314,7 +314,15 @@ const EXTRA_CATEGORY = "Other courses";
  * a second call would be a redundant guard — one was added here and its mutant
  * survived precisely because deleting it changed nothing.
  */
-export function checkCourseInvariants(steps, { loginUser, extraCourses = [] }) {
+export function checkCourseInvariants(steps, {
+  loginUser, extraCourses = [],
+  // WHETHER `loginUser` is an administrator. Defaulted from the name so every
+  // existing caller behaves exactly as before; passed explicitly by the builder
+  // because under a restored database the administrator comes from the snapshot
+  // and Moodle does not require it to be called "admin" — the name stopped
+  // answering the question.
+  isAdmin = loginUser === "admin",
+}) {
   const created = steps.find((s) => s.step === "createUsers")?.users?.map((u) => u.username) ?? [];
   const enrolments = steps.find((s) => s.step === "enrolUsers")?.enrolments ?? [];
 
@@ -338,7 +346,7 @@ export function checkCourseInvariants(steps, { loginUser, extraCourses = [] }) {
   // course when there is more than one. Deliberately not a cross-product of
   // users and courses: that would forbid the empty third course, which is the
   // whole point of building three.
-  if (extraCourses.length && loginUser !== "admin") {
+  if (extraCourses.length && !isAdmin) {
     const courseCount = new Set(
       enrolments.filter((e) => e.username === loginUser).map((e) => e.course),
     ).size;
@@ -1045,7 +1053,6 @@ export function buildBlueprint({
     ...(dbSnapshot
       ? [buildDatabaseAssertion({
           identity: dbSnapshot.facts.identity,
-          branch: dbSnapshot.facts.branch,
           adminUsername: dbSnapshot.facts.adminUsername,
         }),
         // The administrator arrived WITH the snapshot, carrying the source
@@ -1384,6 +1391,9 @@ export function buildBlueprint({
   // that is perfectly good. Resolved to the name actually read out of the file.
   const loginUser =
     dbSnapshot && derivedUser === "admin" ? dbSnapshot.facts.adminUsername : derivedUser;
+  // Asked of the RESOLVED account, so the builder and `main()` are answering the
+  // same question about the same name.
+  const arrivesAsAdmin = isAdministrator(loginUser, dbSnapshot);
 
   // Read back off the steps rather than recomputed, so the brief cannot name a
   // set of accounts the blueprint did not actually create.
@@ -1454,7 +1464,7 @@ export function buildBlueprint({
           `${extraCourses.length > 1 ? "" : " — the same course"}, deliberately: a plugin that ` +
           `ignores enrolment shows both, one that honours it shows only the first</li>`
         : "") +
-      (teachers === 0 && loginUser === "admin"
+      (teachers === 0 && arrivesAsAdmin
         ? `<li>This preview has NO teacher, so you are an administrator — who can ` +
           `open anything. This is not what the site looks like to a teacher</li>`
         : "") +
@@ -1467,7 +1477,7 @@ export function buildBlueprint({
   // has no way to see the difference, and the account simply cannot reach the
   // course. Checked here rather than asserted in the boot, because it is
   // decidable at build time and a link should not exist at all.
-  checkCourseInvariants(steps, { loginUser, extraCourses });
+  checkCourseInvariants(steps, { loginUser, extraCourses, isAdmin: arrivesAsAdmin });
 
   // Which theme the site ends up on. Two ways in, ONE step: the plugin under
   // review is itself a theme, or the `theme` box named one. They cannot both
@@ -1726,6 +1736,30 @@ function riskyNotes(risky) {
  * wide and a boot dies five steps in, too narrow and every real snapshot is
  * refused.
  */
+/**
+ * Is the account the reviewer arrives as a site ADMINISTRATOR?
+ *
+ * Its own function because the answer stopped being readable off the name. A
+ * preview that restores a database signs in as that snapshot's administrator,
+ * and Moodle does not require one to be called "admin" — so three separate
+ * `=== "admin"` tests quietly changed meaning: the course-invariant exemption
+ * (which then demanded enrolments an administrator does not need and refused to
+ * build a link at all), the review brief's caveat, and the PR comment's.
+ *
+ * ONE definition, called by the builder and again by `main()` for the output,
+ * rather than the same expression written twice. Deriving the reviewer's
+ * account in more than one place is how the summary and the link came to
+ * disagree about it before.
+ */
+export function isAdministrator(username, dbSnapshot = null) {
+  const name = String(username ?? "");
+  // An empty name is nobody. Guarded first so the comparison below cannot match
+  // a snapshot whose administrator could not be read — "" === "" would report
+  // the reviewer as an administrator on the strength of two missing values.
+  if (!name) return false;
+  return name === "admin" || name === String(dbSnapshot?.facts?.adminUsername ?? "");
+}
+
 export function snapshotReservations() {
   return {
     // The MAXIMUM of every count, not the counts actually chosen — the same
@@ -1757,6 +1791,13 @@ export function previewSummary({
   type, name, headSha, url, component, headRepo, extras, moodleBranch,
   signedInAs, php, restore, dbSnapshot, teachers, students, sections, courseFormat,
   languagePacks = [],
+  // WHETHER the reviewer arrives as an administrator. Not answered by
+  // `signedInAs` any more: under a restore the administrator is the snapshot's
+  // and may be called anything, and the caveat below — that an administrator
+  // bypasses the capability checks a plugin relies on — is exactly as true for
+  // an account called `siteadmin`. Defaulted from the name so every caller that
+  // restores nothing behaves precisely as before.
+  arrivesAsAdmin = signedInAs === "admin",
   courseRoster = [],
   landingPage,
   versionPhp, core, risky, loginAs,
@@ -1866,7 +1907,7 @@ export function previewSummary({
           "",
         ]
       : []),
-    ...(teachers === 0 && signedInAs === "admin"
+    ...(teachers === 0 && arrivesAsAdmin
       ? [
           "> **No teacher was created, so you arrive as `admin`.** An administrator",
           "> can open anything, which is not what the site looks like to a teacher —",
@@ -2670,7 +2711,15 @@ async function main() {
   // summary naming a different account from the one the link signs you in as is
   // exactly the kind of wrong a reviewer cannot see.
   const signedInAs = signedInAsOf(blueprint);
+  // Read off the finished blueprint like `signedInAs` itself, then answered by
+  // the same function the builder used — not by a second copy of the expression.
+  const previewUserIsAdmin = isAdministrator(signedInAs, dbSnapshot);
   setOutput("preview-user", signedInAs);
+  // A SEPARATE output, because the name no longer answers the question. Under a
+  // restored database the administrator is the snapshot's and may be called
+  // anything; `render-comment` cannot tell that from `siteadmin` alone, and its
+  // admin caveat simply disappeared.
+  setOutput("preview-user-is-admin", String(previewUserIsAdmin));
   setOutput("risky-steps", risky.join(","));
   setOutput("preview-url", url);
   if (risky.length) {
@@ -2693,6 +2742,9 @@ async function main() {
     php: phpOverride || phpForBranch(moodleBranch),
     restore,
     dbSnapshot,
+    // Read back off the finished blueprint like `signedInAs` itself, then
+    // matched against the administrator the snapshot was found to have.
+    arrivesAsAdmin: previewUserIsAdmin,
     teachers,
     students,
     sections,

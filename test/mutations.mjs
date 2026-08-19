@@ -178,7 +178,7 @@ const MUTATIONS = [
   ["snapshot: treat an empty raw-HTML row as an injection", "scripts/snapshot.mjs",
     'if (config(name) !== "") facts.rawHtml.push(name);', "facts.rawHtml.push(name);"],
   ["snapshot: let a snapshot with no administrator through", "scripts/snapshot.mjs",
-    "facts.usernames.length && !facts.adminUsername", "false"],
+    "if (!facts.adminUsername) {", "if (false) {"],
   ["preview: reserve `admin` against the snapshot", "scripts/build-preview.mjs",
     '    ).filter((u) => u !== "admin"),', "    ),"],
   ["preview: reserve only the accounts this preview happens to make",
@@ -527,6 +527,36 @@ const MUTATIONS = [
   ["teachers: drop the count when deriving the login", "scripts/build-preview.mjs",
     "  const derivedUser = loginAs || previewUser(landing, teachers);",
     "  const derivedUser = loginAs || previewUser(landing);"],
+  // The three places that asked "is this an administrator?" by comparing the
+  // NAME. Each failed silently and differently once a snapshot could supply an
+  // administrator called something else.
+  ["preview: answer the output's role question without the snapshot", "scripts/build-preview.mjs",
+    "  const previewUserIsAdmin = isAdministrator(signedInAs, dbSnapshot);",
+    "  const previewUserIsAdmin = isAdministrator(signedInAs);"],
+  ["preview: demand course enrolments of a renamed administrator",
+    "scripts/build-preview.mjs",
+    "  checkCourseInvariants(steps, { loginUser, extraCourses, isAdmin: arrivesAsAdmin });",
+    "  checkCourseInvariants(steps, { loginUser, extraCourses });"],
+  ["summary: key the administrator caveat on the account name again",
+    "scripts/build-preview.mjs",
+    "    ...(teachers === 0 && arrivesAsAdmin", '    ...(teachers === 0 && signedInAs === "admin"'],
+  ["comment: key the administrator caveat on the account name again",
+    "scripts/render-comment.mjs",
+    "    ...(isAdmin", '    ...(user === "admin"'],
+  ["preview: report every restored administrator as not an admin",
+    "scripts/build-preview.mjs",
+    '  return name === "admin" || name === String(dbSnapshot?.facts?.adminUsername ?? "");',
+    '  return name === "admin";'],
+  ["preview: let an unreadable administrator match an empty account name",
+    "scripts/build-preview.mjs",
+    "  if (!name) return false;\n  return name ===", "  return name ==="],
+  ["preview: ask the role of the requested name, not the resolved one",
+    "scripts/build-preview.mjs",
+    "  const arrivesAsAdmin = isAdministrator(loginUser, dbSnapshot);",
+    "  const arrivesAsAdmin = isAdministrator(loginUser);"],
+  ["snapshot: let an empty user table pass as having an administrator",
+    "scripts/snapshot.mjs",
+    "  if (!facts.adminUsername) {", "  if (facts.usernames.length && !facts.adminUsername) {"],
   ["preview: sign in as the literal name `admin` under a restore",
     "scripts/build-preview.mjs",
     "    dbSnapshot && derivedUser === \"admin\" ? dbSnapshot.facts.adminUsername : derivedUser;",
@@ -535,10 +565,10 @@ const MUTATIONS = [
     '      `<ul><li>Logins: ${roster.map((u) => `<code>${escapeHtml(u)}</code>`).join(", ")}` +',
     '      `<ul><li>Logins: <code>admin</code>, <code>teacher</code>, <code>student1</code>` +'],
   ["teachers: drop the no-teacher caveat from the review brief", "scripts/build-preview.mjs",
-    '      (teachers === 0 && loginUser === "admin"', "      (false"],
+    "      (teachers === 0 && arrivesAsAdmin", "      (false"],
   ["teachers: warn about admin on every preview whose landing needs one",
     "scripts/build-preview.mjs",
-    '    ...(teachers === 0 && signedInAs === "admin"', '    ...(signedInAs === "admin"'],
+    "    ...(teachers === 0 && arrivesAsAdmin", "    ...(arrivesAsAdmin"],
   ["teachers: stop refusing a login the counts cannot create", "scripts/build-preview.mjs",
     '  if (loginAs.startsWith("teacher") && !teacherNames(teachers).includes(loginAs)) {',
     "  if (false) {"],
@@ -557,7 +587,7 @@ const MUTATIONS = [
     "`The link logs you in as **\\`${user}\\`**. The review brief on the course`,",
     "`The link logs you in as **\\`${user}\\`**. \\`admin\\`, \\`teacher\\` and \\`student1\\` all exist,`,"],
   ["comment: drop the admin caveat again", "scripts/render-comment.mjs",
-    '    ...(user === "admin"\n      ? [', '    ...(false\n      ? ['],
+    "    ...(isAdmin\n      ? [", "    ...(false\n      ? ["],
   // --- the course-format control ---
   ["format: stop stating the format in the blueprint", "scripts/build-preview.mjs",
     "          format: activeFormat,\n          numsections: sections,\n        },",
@@ -713,7 +743,7 @@ const MUTATIONS = [
   ["courses: let a course be created after the enrolments", "scripts/build-preview.mjs",
     "  if (firstEnrol >= 0 && lastMaker > firstEnrol) {", "  if (false) {"],
   ["courses: stop checking the invariants at all", "scripts/build-preview.mjs",
-    "  checkCourseInvariants(steps, { loginUser, extraCourses });", ""],
+    "  checkCourseInvariants(steps, { loginUser, extraCourses, isAdmin: arrivesAsAdmin });", ""],
   ["courses: let the reviewer's account see only one of several courses",
     "scripts/build-preview.mjs",
     "    if (courseCount < 2) {", "    if (false) {"],
@@ -1272,6 +1302,13 @@ const KNOWN_SURVIVORS = new Map([
   ["rev: identifier check honours installTheme's declared type again", "forcing theme changes nothing observable at the identifier check"],
   ["rev: free-text landing-path swallows the sentinel again", "checkLandingPath refuses '(default)' either way, so the opt() removal is invisible"],
   ["1c: accept an empty standard list as success", "needs fetchCoreComponents' parsing split out to be testable without a network stub"],
+  // main() has no end-to-end test, so the SITE of this call is unpinned even
+  // though the function it calls is covered heavily. Dropping the second
+  // argument makes `preview-user-is-admin` false for a restored preview whose
+  // administrator is not called "admin" — which drops the PR comment's "you are
+  // an administrator here" caveat, the bug this whole predicate was extracted to
+  // fix. Killing it needs main() under test, not another test of isAdministrator.
+  ["preview: answer the output's role question without the snapshot", "main() is not unit-tested; isAdministrator itself is pinned, its call site is not"],
 ]);
 
 const survivors = [];

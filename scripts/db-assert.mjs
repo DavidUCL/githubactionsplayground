@@ -67,8 +67,6 @@ export const DB_ASSERT_CODES = {
 const IDENTITY = /^[A-Za-z0-9._-]+$/;
 /** Moodle usernames are lowercased and restricted; anything else is not one. */
 const USERNAME = /^[a-z0-9._@-]+$/;
-/** The branch rows Moodle writes are digits ("500", "403"). */
-const BRANCH = /^[0-9]+$/;
 /**
  * Short identities make the comparison meaningless — a 3-character value
  * collides by accident. The reader refuses these at build time too; this is
@@ -80,14 +78,20 @@ const MIN_IDENTITY = 20;
 /**
  * Build the post-restore assertion step.
  *
- * @param {{identity: string, branch: string, adminUsername: string}} expected
+ * There is deliberately NO `branch` argument. The version comparison is made
+ * between the RUNNING code's version.php and the RESTORED database, both read
+ * inside the reviewer's browser, so it also catches the playground resolving
+ * `preferredVersions` to a build other than the one the blueprint asked for —
+ * which no value computed at build time could see. This did carry one for a
+ * while: validated, documented, and never once used by the generated program.
+ *
+ * @param {{identity: string, adminUsername: string}} expected
  *   Taken from the snapshot the builder actually downloaded and hashed — never
  *   hand-typed, or it becomes a second source of truth that stops matching.
  * @returns {{step: string, code: string, critical: boolean}}
  */
 export function buildDatabaseAssertion(expected) {
   const identity = String(expected?.identity ?? "");
-  const branch = String(expected?.branch ?? "");
   // The snapshot's OWN administrator, as read out of the file at build time —
   // not the account the preview signs in as. teacher/student1 are created by
   // createUsers AFTER the restore, so asserting them here would fail on every
@@ -100,9 +104,6 @@ export function buildDatabaseAssertion(expected) {
       `database assertion: unusable siteidentifier ${JSON.stringify(identity)} — ` +
         `refusing to build an assertion that would compare nothing`,
     );
-  }
-  if (!BRANCH.test(branch)) {
-    throw new Error(`database assertion: unusable Moodle branch ${JSON.stringify(branch)}`);
   }
   if (!USERNAME.test(adminUsername)) {
     throw new Error(`database assertion: unusable username ${JSON.stringify(adminUsername)}`);

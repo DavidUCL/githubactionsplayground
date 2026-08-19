@@ -20,6 +20,7 @@ import {
   checkPhpForBranch,
   studentNames,
   snapshotReservations,
+  isAdministrator,
   previewSummary,
 } from "../scripts/build-preview.mjs";
 
@@ -2649,7 +2650,8 @@ test("buildBlueprint actually CALLS the course invariants", async () => {
     new global.URL("../scripts/build-preview.mjs", import.meta.url), "utf8");
   const body = src.slice(src.indexOf("export function buildBlueprint("));
   assert.match(
-    body, /checkCourseInvariants\(steps, \{ loginUser, extraCourses \}\)/,
+    body,
+    /checkCourseInvariants\(steps, \{ loginUser, extraCourses, isAdmin: arrivesAsAdmin \}\)/,
     "buildBlueprint must call checkCourseInvariants — without the call the " +
       "invariants are dead code and every one of their mutants is unkillable",
   );
@@ -2906,4 +2908,74 @@ test("the risky note describes what each risky step actually does", () => {
   assert.match(both, /can rewrite Moodle after installing/);
   assert.match(both, /`writeFile`/);
   assert.ok(!/`restoreDatabase`.*can rewrite Moodle after installing/s.test(both.split("\n")[0]));
+});
+
+// The account's NAME stopped answering "is this an administrator?" the moment a
+// restored database could supply one called anything. Three separate places
+// asked it that way, and each failed differently and silently.
+
+test("a restored preview with extra courses does not demand enrolments of its admin", () => {
+  // The invariant requires whoever arrives to reach more than one course when
+  // more than one is built — and exempts an administrator, who reaches all of
+  // them without an enrolment. Keyed on the NAME, a snapshot whose admin is
+  // called `siteadmin` failed that exemption and refused to build a link at all.
+  const renamed = { ...SNAPSHOT, facts: { ...SNAPSHOT.facts, adminUsername: "siteadmin" } };
+  assert.doesNotThrow(() =>
+    buildBlueprint({ ...base, type: "block", name: "html", courses: 3, dbSnapshot: renamed }));
+  const steps = buildBlueprint({ ...base, type: "block", name: "html", courses: 3, dbSnapshot: renamed }).steps;
+  assert.equal(steps.find((s) => s.step === "login").username, "siteadmin");
+});
+
+test("the in-course brief still warns a reviewer arriving as a renamed administrator", () => {
+  const renamed = { ...SNAPSHOT, facts: { ...SNAPSHOT.facts, adminUsername: "siteadmin" } };
+  const brief = (opts) =>
+    buildBlueprint({ ...base, type: "block", name: "html", teachers: 0, ...opts })
+      .steps.find((s) => s.name === "Review brief").intro;
+  // An administrator bypasses the capability checks a plugin relies on. That is
+  // exactly as true of `siteadmin`, and the caveat used to vanish for it.
+  assert.match(brief({ dbSnapshot: renamed }), /you are an administrator/);
+  assert.match(brief({}), /you are an administrator/);
+  // ...and still silent when the reviewer chose a real account.
+  assert.ok(!/you are an administrator/.test(brief({ dbSnapshot: renamed, loginAs: "student1" })));
+});
+
+test("the summary caveat is keyed on the role, and defaults to the name", async () => {
+  const { previewSummary } = await import("../scripts/build-preview.mjs");
+  const opts = {
+    type: "mod", name: "attendance", headSha: SHA, url: "https://x", component: "mod_attendance",
+    headRepo: base.headRepo, extras: { list: "", themeSummary: "" },
+    moodleBranch: "MOODLE_500_STABLE", php: "8.3", teachers: 0, students: 1, sections: 3,
+    courseFormat: "topics", courseRoster: ["REVIEW"], landingPage: "/x", versionPhp: "",
+    core: { ok: true, standard: new Set() }, risky: [], loginAs: "",
+  };
+  // Told explicitly, the name is irrelevant.
+  assert.match(
+    previewSummary({ ...opts, signedInAs: "siteadmin", arrivesAsAdmin: true }).join("\n"),
+    /No teacher was created/,
+  );
+  assert.ok(!previewSummary({ ...opts, signedInAs: "siteadmin" }).join("\n")
+    .includes("No teacher was created"), "unset, a non-admin name means not an admin");
+  // ...and the default still reads the name, so every caller that restores
+  // nothing behaves exactly as it did.
+  assert.match(previewSummary({ ...opts, signedInAs: "admin" }).join("\n"), /No teacher was created/);
+});
+
+test("who counts as an administrator is decided in one place", () => {
+  // Three separate `=== "admin"` tests used to answer this, and each broke
+  // differently once a restored database could supply an administrator called
+  // something else.
+  assert.equal(isAdministrator("admin"), true);
+  assert.equal(isAdministrator("teacher"), false);
+  const snap = { facts: { adminUsername: "siteadmin" } };
+  assert.equal(isAdministrator("siteadmin", snap), true);
+  assert.equal(isAdministrator("admin", snap), true, "`admin` is still an admin");
+  assert.equal(isAdministrator("student1", snap), false);
+  // An empty name is nobody, and — the trap — must not match a snapshot whose
+  // administrator could not be read. "" === "" would report the reviewer as an
+  // administrator on the strength of two missing values.
+  assert.equal(isAdministrator("", { facts: {} }), false);
+  assert.equal(isAdministrator("", null), false);
+  assert.equal(isAdministrator(undefined, { facts: { adminUsername: "" } }), false);
+  // A name that only matches because the snapshot was not consulted.
+  assert.equal(isAdministrator("siteadmin"), false, "without the snapshot it is just a name");
 });

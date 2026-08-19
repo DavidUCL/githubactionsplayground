@@ -178,3 +178,26 @@ test("the comment says so when the blueprint modifies Moodle itself", () => {
 test("an ordinary preview carries no such warning", () => {
   assert.doesNotMatch(renderComment(ok), /modifies Moodle itself/);
 });
+
+test("the comment's administrator caveat follows the role, not the name", async () => {
+  const { renderComment } = await import("../scripts/render-comment.mjs");
+  const body = (opts) =>
+    renderComment({
+      url: "https://daviducl.github.io/moodle-playground?blueprint=x",
+      plugin: "mod_attendance", headSha: "a".repeat(40),
+      runUrl: "https://github.com/o/r/actions/runs/1", ...opts,
+    });
+  // An administrator bypasses the capability checks a plugin relies on and is
+  // not enrolled — the one caveat the comment exists to carry. A preview that
+  // restores a database signs in as that snapshot's administrator, which Moodle
+  // does not require to be called `admin`, and this simply disappeared.
+  assert.match(body({ user: "siteadmin", isAdmin: true }), /You are an administrator here/);
+  assert.ok(!/You are an administrator here/.test(body({ user: "siteadmin" })),
+    "with nothing said, a non-admin name is not an administrator");
+  // The default reads the name, so every caller that predates the flag is
+  // unchanged.
+  assert.match(body({ user: "admin" }), /You are an administrator here/);
+  assert.ok(!/You are an administrator here/.test(body({ user: "teacher" })));
+  // ...and an explicit false wins over a name that says otherwise.
+  assert.ok(!/You are an administrator here/.test(body({ user: "admin", isAdmin: false })));
+});

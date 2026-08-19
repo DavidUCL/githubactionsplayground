@@ -13,7 +13,6 @@ import { gateBlueprint } from "../scripts/preflight.mjs";
 
 const ok = {
   identity: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
-  branch: "500",
   adminUsername: "admin",
 };
 
@@ -80,8 +79,6 @@ test("refuses values that would not survive being embedded", () => {
     () => buildDatabaseAssertion({ ...ok, identity: `a'.exit(0).'${"b".repeat(20)}` }),
     /unusable siteidentifier/,
   );
-  assert.throws(() => buildDatabaseAssertion({ ...ok, branch: "5.0" }), /unusable Moodle branch/);
-  assert.throws(() => buildDatabaseAssertion({ ...ok, branch: "" }), /unusable Moodle branch/);
   assert.throws(() => buildDatabaseAssertion({ ...ok, adminUsername: "ad'min" }), /unusable username/);
   assert.throws(() => buildDatabaseAssertion({ ...ok, adminUsername: "Admin" }), /unusable username/);
 });
@@ -110,6 +107,19 @@ test("the snapshot's own administrator is checked, and deleted rows do not count
 // The trap this guard exists for: if version.php did not set $branch and the
 // config row were absent too, `(string)null !== (string)false` compares "" with
 // "" and PASSES — reporting a matching Moodle having read neither value.
+test("the version comparison reads BOTH sides in the browser, not from the builder", () => {
+  // Nothing about the expected version is computed at build time and embedded.
+  // That is deliberate: comparing the running code's version.php against the
+  // restored database also catches the playground resolving `preferredVersions`
+  // to a different build than the blueprint asked for, which a build-time
+  // constant could never see. The generator carried a `branch` argument for a
+  // while that was validated, documented and never used by the program.
+  const { code } = buildDatabaseAssertion(ok);
+  assert.match(code, /require\('\/www\/moodle\/version\.php'\)/);
+  assert.match(code, /\$cfg\('branch'\)/);
+  assert.ok(!/'\d{3}'/.test(code), "no version value may be baked into the program");
+});
+
 test("the version comparison is guarded on both sides before it is made", () => {
   const { code } = buildDatabaseAssertion(ok);
   const guard = code.indexOf("$branch === null || $dbbranch === false");

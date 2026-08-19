@@ -203,13 +203,17 @@ test("a snapshot whose administrator is not called `admin` is NOT refused", asyn
   assert.deepEqual(checkSnapshot(facts, RESERVED), []);
 });
 
-test("a snapshot with no users at all is refused for having no administrator", () => {
-  const empty = { identity: "x".repeat(32), rawHtml: [], courses: [], usernames: [], branch: "500" };
-  // Guarding on `usernames.length` is what makes the empty case a real risk:
-  // an unguarded check reads "no users" as "nothing to object to".
-  const problems = checkSnapshot({ ...empty, usernames: ["someone"] }, RESERVED);
-  assert.equal(problems.length, 1);
-  assert.match(problems[0], /names no administrator/);
+test("a snapshot with no administrator is refused, empty user table included", () => {
+  const base = { identity: "x".repeat(32), rawHtml: [], courses: [], branch: "500" };
+  // BOTH shapes. Guarding this on `usernames.length` let the empty table
+  // through, and an empty table cannot mean "unreadable" — inspectSnapshot's
+  // SELECT would have thrown and refused the file — so it means the table is
+  // there and has nobody in it, which is not a Moodle.
+  for (const usernames of [[], ["someone"]]) {
+    const problems = checkSnapshot({ ...base, usernames, adminUsername: "" }, RESERVED);
+    assert.equal(problems.length, 1, `usernames=${JSON.stringify(usernames)}`);
+    assert.match(problems[0], /names no administrator/);
+  }
 });
 
 test("no account is required to be present by name", async () => {

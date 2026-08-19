@@ -329,6 +329,13 @@ outputs:
   preview-user:
     description: "Username the reviewer arrives signed in as"
     value: ${{ steps.build.outputs.preview-user }}
+  preview-user-is-admin:
+    description: >-
+      "true" when the account above is a site administrator. A separate output
+      because the NAME does not answer it: a preview that restores a database
+      signs in as that snapshot's administrator, which Moodle does not require
+      to be called "admin".
+    value: ${{ steps.build.outputs.preview-user-is-admin }}
   risky-steps:
     description: "Comma-separated steps in the blueprint that can rewrite Moodle after installing (empty for an ordinary preview)"
     value: ${{ steps.build.outputs.risky-steps }}
@@ -414,6 +421,7 @@ runs:
         PLUGIN: ${{ steps.build.outputs.plugin-type }}_${{ steps.build.outputs.plugin-name }}
         HEAD_SHA: ${{ inputs.head-sha }}
         PREVIEW_USER: ${{ steps.build.outputs.preview-user }}
+        PREVIEW_USER_IS_ADMIN: ${{ steps.build.outputs.preview-user-is-admin }}
         RISKY_STEPS: ${{ steps.build.outputs.risky-steps }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"
