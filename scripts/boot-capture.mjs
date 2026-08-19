@@ -68,43 +68,89 @@ const POLL_MS = 1_000;
 async function main() {
   const host = (process.env.PLAYGROUND_HOST || "https://daviducl.github.io/moodle-playground").replace(/\/$/, "");
   const blueprintUrl = process.env.BLUEPRINT_URL;
+  // INLINE MODE. `BLUEPRINT_URL` boots `?blueprint-url=<addr>`, where the
+  // browser FETCHES the blueprint and loopback interception binds the bytes to
+  // the ones preflight gated. `PREVIEW_URL` boots a finished link whose
+  // blueprint rides INSIDE it as `?blueprint=<gzip+base64url>` — which is what
+  // `preview/action.yml` actually hands a reviewer, and what nothing here had
+  // ever booted.
+  //
+  // There is no loopback route in this mode because there is no fetch to
+  // intercept: the bytes are in the URL we navigate to, which is a stronger
+  // binding than interception, not a weaker one. What replaces the TOCTOU
+  // concern is the resolver line — the playground says which source it
+  // resolved the blueprint from, and a link that quietly fell back to a
+  // default boots a perfectly healthy Moodle that proves nothing. The caller
+  // checks that; see LIVE check 12.
+  const previewUrl = process.env.PREVIEW_URL;
   const timeoutMs = 1000 * Number(process.env.TIMEOUT_SECONDS || 420);
   const outDir = process.env.OUT_DIR || "boot-verify-out";
   mkdirSync(outDir, { recursive: true });
+  if (previewUrl && blueprintUrl) {
+    console.error("PREVIEW_URL and BLUEPRINT_URL are both set; they boot different ways");
+    return;
+  }
+  if (previewUrl && !new URL(previewUrl).searchParams.get("blueprint")) {
+    // A bare host boots the playground's STARTER site: every log line looks
+    // healthy, the panel appears, and nothing of ours is in it. That is the one
+    // way this mode could report success having proved nothing.
+    console.error(`PREVIEW_URL carries no ?blueprint= payload: ${previewUrl}`);
+    return;
+  }
   if (process.env.SETUP_FAILED_FILE && existsSync(process.env.SETUP_FAILED_FILE)) {
     console.error("setup failed earlier — skipping boot");
     return;
   }
   // Only preflight's own outcome file may short-circuit the boot — never a
   // verdict.json, which a PR could commit into the workspace.
-  let preflight;
-  try {
-    preflight = JSON.parse(readFileSync(join(outDir, "preflight.json"), "utf8"));
-  } catch {
-    console.error("preflight.json missing — preflight did not run");
-    return;
-  }
-  if (preflight.outcome !== "ok") {
-    console.log(`preflight rejected (${preflight.error_class}) — skipping boot`);
-    return;
+  //
+  // Skipped entirely in inline mode: preflight.json records the outcome of
+  // gating a blueprint we were about to FETCH, and expectations.json carries
+  // the hash that binds that fetch. Neither exists when the blueprint is
+  // already in the URL, and requiring them would mean writing two files that
+  // describe something that is not happening.
+  if (!previewUrl) {
+    let preflight;
+    try {
+      preflight = JSON.parse(readFileSync(join(outDir, "preflight.json"), "utf8"));
+    } catch {
+      console.error("preflight.json missing — preflight did not run");
+      return;
+    }
+    if (preflight.outcome !== "ok") {
+      console.log(`preflight rejected (${preflight.error_class}) — skipping boot`);
+      return;
+    }
   }
 
   // Expectations (and therefore the gated hash) are written by preflight;
   // without them there is nothing to bind the boot to.
   let expectedSha = "";
-  try {
-    expectedSha = JSON.parse(
-      readFileSync(join(outDir, "expectations.json"), "utf8"),
-    ).blueprintSha256 || "";
-  } catch {
-    console.error("expectations.json missing — preflight did not complete");
-    return;
+  if (!previewUrl) {
+    try {
+      expectedSha = JSON.parse(
+        readFileSync(join(outDir, "expectations.json"), "utf8"),
+      ).blueprintSha256 || "";
+    } catch {
+      console.error("expectations.json missing — preflight did not complete");
+      return;
+    }
   }
 
   const meta = {
     ...INITIAL_META(),
     playground_host: host,
-    target_url: `${host}/?blueprint-url=${encodeURIComponent(blueprintUrl)}`,
+    // In inline mode the link IS the target, verbatim — not rebuilt from a
+    // host and a param, because rebuilding it would boot something adjacent to
+    // what the action produced rather than the thing itself.
+    target_url: previewUrl || `${host}/?blueprint-url=${encodeURIComponent(blueprintUrl)}`,
+    // NOTHING BEYOND `INITIAL_META()` MAY BE ADDED HERE. test/contract.test.mjs
+    // pins the meta fixtures to that declaration, so a key added only in this
+    // literal is written to meta.json and covered by nothing. An
+    // `inline_blueprint` flag was drafted here and removed for exactly that
+    // reason — and it was redundant anyway: `target_url` carries `?blueprint=`
+    // in inline mode and `?blueprint-url=` otherwise, which says the same thing
+    // and cannot drift from the truth.
   };
   const bootLogPath = join(outDir, "boot-log.txt");
   const consolePath = join(outDir, "console.txt");
@@ -112,7 +158,7 @@ async function main() {
   writeFileSync(consolePath, "");
   const finish = (page) => writeMetaAndScreenshot(page, meta, outDir);
 
-  if (!blueprintUrl) {
+  if (!blueprintUrl && !previewUrl) {
     await finish(null);
     return;
   }
@@ -148,43 +194,52 @@ async function main() {
     // branch) is swapped between gate and boot, so the gate would certify
     // bytes that never booted. The file is written by preflight
     // and its hash is re-checked here, so no env var can point elsewhere.
-    const body = readFileSync(join(outDir, "blueprint.json"));
-    const actualSha = createHash("sha256").update(body).digest("hex");
-    if (expectedSha && actualSha !== expectedSha) {
-      throw new Error(
-        `gated blueprint hash mismatch: expected ${expectedSha}, got ${actualSha}`,
+    //
+    // SKIPPED IN INLINE MODE, and that is not a relaxation. There is no fetch
+    // to intercept — the blueprint is inside the URL being navigated to — so
+    // the bytes that boot are the bytes we built, by construction. What the
+    // caller must still check is that the playground RESOLVED the blueprint
+    // from that param rather than falling back to a default, which is a log
+    // assertion rather than a routing one.
+    if (!previewUrl) {
+      const body = readFileSync(join(outDir, "blueprint.json"));
+      const actualSha = createHash("sha256").update(body).digest("hex");
+      if (expectedSha && actualSha !== expectedSha) {
+        throw new Error(
+          `gated blueprint hash mismatch: expected ${expectedSha}, got ${actualSha}`,
+        );
+      }
+      meta.loopback_sha256 = actualSha;
+      // Comparing two hashes of the same local file proves nothing;
+      // what matters is whether the interception actually FIRED. Count it, and
+      // match on the URL ignoring query/fragment so a cache-buster can't slip
+      // the request past the route and out to the network.
+      const blueprintNoQuery = blueprintUrl.split(/[?#]/)[0];
+      // Routed on the CONTEXT rather than the page. Be precise about what this
+      // does and does not buy: Playwright documents that NEITHER
+      // page.route NOR context.route intercepts a fetch made BY a service
+      // worker, and this shell has one. `serviceWorkers: "block"` was tried and
+      // rejected — the playground needs its worker to serve PHP, so the boot
+      // never completes (measured: 420s, no boot anchor).
+      //
+      // The binding therefore fails CLOSED rather than being airtight: if the
+      // worker ever serves this fetch, loopback_served stays 0 and the verdict
+      // is infra_fail, never a pass on ungated bytes. That interception does
+      // fire today is proven by the gate's own live check, whose blueprint URL
+      // 404s on the public network — it can only boot from our served bytes.
+      await context.route(
+        (url) => url.href.split(/[?#]/)[0] === blueprintNoQuery,
+        (route) => {
+          meta.loopback_served += 1;
+          return route.fulfill({
+            status: 200,
+            contentType: "application/json",
+            headers: { "access-control-allow-origin": "*" },
+            body,
+          });
+        },
       );
     }
-    meta.loopback_sha256 = actualSha;
-    // Comparing two hashes of the same local file proves nothing;
-    // what matters is whether the interception actually FIRED. Count it, and
-    // match on the URL ignoring query/fragment so a cache-buster can't slip
-    // the request past the route and out to the network.
-    const blueprintNoQuery = blueprintUrl.split(/[?#]/)[0];
-    // Routed on the CONTEXT rather than the page. Be precise about what this
-    // does and does not buy: Playwright documents that NEITHER
-    // page.route NOR context.route intercepts a fetch made BY a service
-    // worker, and this shell has one. `serviceWorkers: "block"` was tried and
-    // rejected — the playground needs its worker to serve PHP, so the boot
-    // never completes (measured: 420s, no boot anchor).
-    //
-    // The binding therefore fails CLOSED rather than being airtight: if the
-    // worker ever serves this fetch, loopback_served stays 0 and the verdict
-    // is infra_fail, never a pass on ungated bytes. That interception does
-    // fire today is proven by the gate's own live check, whose blueprint URL
-    // 404s on the public network — it can only boot from our served bytes.
-    await context.route(
-      (url) => url.href.split(/[?#]/)[0] === blueprintNoQuery,
-      (route) => {
-        meta.loopback_served += 1;
-        return route.fulfill({
-          status: 200,
-          contentType: "application/json",
-          headers: { "access-control-allow-origin": "*" },
-          body,
-        });
-      },
-    );
     // A cumulative counter would let load 1's interception vouch for load 2's
     // network fetch, so it resets whenever the main frame navigates: the
     // binding must hold for the navigation that actually booted.

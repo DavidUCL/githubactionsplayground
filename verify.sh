@@ -19,6 +19,8 @@ set -uo pipefail
 #      three silent-Boost failures are caught
 #   11. LIVE: a real database snapshot restores and is proved to BE the file
 #      the link was built against — and a site that never restored is caught
+#   12. LIVE: a link THE ACTION ITSELF produced boots and really contains the
+#      commit under review — the only check that boots our own artifact
 #
 # Local env note (WSL, no sudo): chromium needs NSS libs; point
 # NSS_LIBS at a dir of symlinks (see README "Local testing").
@@ -1689,6 +1691,106 @@ import("./scripts/db-assert.mjs").then(async (m) => {
         FAILED+=("11: database assertion cannot fail, or cannot pass")
     else
         echo "CHECK 11 PASS: a real snapshot boots; no restore and a wrong identity exit 72, another Moodle 74, a missing admin 75"
+    fi
+
+    # LIVE 12 — boot a link THE ACTION ITSELF PRODUCED.
+    #
+    # THE HOLE THIS CLOSES, named plainly: until now nothing in this repo ever
+    # booted a link the action makes. Every other LIVE check assembles a
+    # blueprint HERE, in verify.sh, and boots that — so they prove the
+    # playground does what we expect of it, and prove nothing about the
+    # artifact a reviewer is actually sent. The action had only ever been
+    # demonstrated by hand.
+    #
+    # It is also a different code path in the playground. The other checks use
+    # `?blueprint-url=<addr>` and the browser FETCHES the blueprint; the action
+    # emits `?blueprint=<gzip+base64url>` with the whole thing inside the link.
+    # Nothing had exercised that round trip end to end, including its length.
+    #
+    # TWO ARMS, and the second is the point. A green boot proves very little on
+    # its own: a blueprint with the plugin step REMOVED still boots perfectly,
+    # runs every remaining step and reports no failure — it just quietly
+    # contains none of the plugin under review, which is precisely the silent
+    # failure this whole action exists to prevent. So the `noplugin` arm builds
+    # a real link, strips the install step, re-encodes it, and REQUIRES the
+    # assertion to fail. If it passes, this check is measuring nothing.
+    PV_REPO="danmarsden/moodle-mod_attendance"
+    PV_SHA="8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c"
+    pv_boot() { # $1=label $2=none|noplugin -> echoes OK, or FAIL: <reason>
+        local PV_OUT="$WORK/pv_$1"
+        mkdir -p "$PV_OUT/out"
+        : >"$PV_OUT/gho"
+        # THE REAL BUILDER, as a subprocess, with the env the action sets. Not
+        # a function call: the wiring between action.yml and the script is part
+        # of what this proves, and an in-process call would skip it.
+        HEAD_REPO="$PV_REPO" HEAD_SHA="$PV_SHA" PR_NUMBER=1 \
+            OUT_DIR="$PV_OUT/out" GITHUB_OUTPUT="$PV_OUT/gho" \
+            GITHUB_STEP_SUMMARY="$PV_OUT/sum" \
+            node scripts/build-preview.mjs >>/tmp/bv-verify-preview.log 2>&1
+        local PV_URL
+        PV_URL=$(grep '^preview-url=' "$PV_OUT/gho" | cut -d= -f2-)
+        if [ -z "$PV_URL" ]; then echo "FAIL: the builder produced no preview-url"; return; fi
+        if [ "$2" = "noplugin" ]; then
+            PV_URL=$(PV_IN="$PV_URL" node -e '
+import("./scripts/build-preview.mjs").then(async (m) => {
+  const { gunzipSync } = await import("node:zlib");
+  const u = new URL(process.env.PV_IN);
+  const b64 = u.searchParams.get("blueprint");
+  const bp = JSON.parse(gunzipSync(Buffer.from(b64.replace(/-/g,"+").replace(/_/g,"/"), "base64")).toString("utf8"));
+  bp.steps = bp.steps.filter((s) => s.step !== "installMoodlePlugin");
+  u.searchParams.set("blueprint", m.encodeBlueprint(bp));
+  console.log(u.toString());
+});')
+        fi
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" PREVIEW_URL="$PV_URL" OUT_DIR="$PV_OUT/boot" \
+            node scripts/boot-capture.mjs >>/tmp/bv-verify-preview.log 2>&1
+        PV_DIR="$PV_OUT/boot" PV_SHA="$PV_SHA" node -e '
+import("./scripts/assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const d = process.env.PV_DIR;
+  const read = (f) => { try { return fs.readFileSync(`${d}/${f}`, "utf8"); } catch { return ""; } };
+  const boot = read("boot-log.txt");
+  const con = read("console.txt");
+  const p = m.parseBootLog(boot);
+  const bad = [];
+  // The playground says where it got the blueprint. A link that quietly fell
+  // back to a default boots a perfectly healthy Moodle containing none of this.
+  if (!con.includes("Resolved from ?blueprint= param (inline).")) {
+    bad.push("the playground did not resolve the blueprint from the link");
+  }
+  if (/Failed to fetch \?blueprint-url=|Resolved from defaultBlueprintUrl/.test(con)) {
+    bad.push("the playground fell back to another blueprint source");
+  }
+  if (!p.steps.length) bad.push("no blueprint step ran at all");
+  else {
+    const n = p.steps[0].n;
+    if (p.steps.length !== n) bad.push(`only ${p.steps.length} of ${n} steps ran`);
+    if (!p.steps.every((s, i) => s.k === i + 1)) bad.push("the steps were not contiguous");
+  }
+  if (p.failLines) bad.push(`${p.failLines} step(s) reported failure`);
+  if (p.bootMs === null) bad.push("no boot-timing anchor, so the boot never finished");
+  // THE ONE THAT MATTERS: the commit under review actually installed. Without
+  // it a link that installs nothing passes every check above.
+  if (!p.extractions.includes("/www/moodle/mod/attendance")) {
+    bad.push("the plugin under review was never extracted");
+  }
+  if (!p.downloads.some((x) => x.url.includes(process.env.PV_SHA))) {
+    bad.push("nothing was downloaded from the head commit");
+  }
+  console.log(bad.length ? `FAIL: ${bad.join("; ")}` : "OK");
+});'
+    }
+    : >/tmp/bv-verify-preview.log
+    PV_REAL=$(pv_boot real none)
+    PV_STRIPPED=$(pv_boot noplugin noplugin)
+    PV_PROBLEMS=""
+    [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly: ${PV_REAL:-nothing}; "
+    [[ "$PV_STRIPPED" == FAIL:* ]] || PV_PROBLEMS+="a link with the plugin step REMOVED was accepted (got: ${PV_STRIPPED:-nothing}) — that blueprint boots perfectly and contains none of the plugin, so this check would be measuring nothing; "
+    if [[ -n "$PV_PROBLEMS" ]]; then
+        echo "CHECK 12 FAIL: the action's own link is not being proved — $PV_PROBLEMS"
+        FAILED+=("12: nothing proves a link the action produces actually boots")
+    else
+        echo "CHECK 12 PASS: a link the ACTION built boots, installs the commit under review, and one with the plugin step removed is caught"
     fi
 
     # LIVE 7 — the theme control, in a real browser.
