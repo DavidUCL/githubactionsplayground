@@ -54,7 +54,7 @@ export const DB_ASSERT_CODES = {
   72: "the database in the browser is not the snapshot that was checked at build time",
   73: "the database was replaced but never adapted to this site — the step reported success anyway",
   74: "the snapshot is from a different Moodle than the one running, which Moodle can no longer detect",
-  75: "the account the preview signs in as is not in the restored database",
+  75: "the snapshot's administrator is not in the restored database",
   76: "the assertion could not read the database at all",
 };
 
@@ -80,7 +80,7 @@ const MIN_IDENTITY = 20;
 /**
  * Build the post-restore assertion step.
  *
- * @param {{identity: string, branch: string, loginAs: string}} expected
+ * @param {{identity: string, branch: string, adminUsername: string}} expected
  *   Taken from the snapshot the builder actually downloaded and hashed — never
  *   hand-typed, or it becomes a second source of truth that stops matching.
  * @returns {{step: string, code: string, critical: boolean}}
@@ -88,7 +88,12 @@ const MIN_IDENTITY = 20;
 export function buildDatabaseAssertion(expected) {
   const identity = String(expected?.identity ?? "");
   const branch = String(expected?.branch ?? "");
-  const loginAs = String(expected?.loginAs ?? "admin");
+  // The snapshot's OWN administrator, as read out of the file at build time —
+  // not the account the preview signs in as. teacher/student1 are created by
+  // createUsers AFTER the restore, so asserting them here would fail on every
+  // healthy preview. What this proves is that the user table came through the
+  // swap intact and still matches the file that was inspected.
+  const adminUsername = String(expected?.adminUsername ?? "admin");
 
   if (identity.length < MIN_IDENTITY || !IDENTITY.test(identity)) {
     throw new Error(
@@ -99,8 +104,8 @@ export function buildDatabaseAssertion(expected) {
   if (!BRANCH.test(branch)) {
     throw new Error(`database assertion: unusable Moodle branch ${JSON.stringify(branch)}`);
   }
-  if (!USERNAME.test(loginAs)) {
-    throw new Error(`database assertion: unusable username ${JSON.stringify(loginAs)}`);
+  if (!USERNAME.test(adminUsername)) {
+    throw new Error(`database assertion: unusable username ${JSON.stringify(adminUsername)}`);
   }
 
   // ONE LINE, and no `//` comments: every generated program is collapsed onto a
@@ -135,7 +140,7 @@ export function buildDatabaseAssertion(expected) {
     `$dbbranch = $cfg('branch'); ` +
     `if($branch === null || $dbbranch === false || $dbbranch === null || $dbbranch === '') exit(76); ` +
     `if((string)$branch !== (string)$dbbranch) exit(74); ` +
-    `if(!$DB->record_exists('user',array('username'=>'${loginAs}','deleted'=>0))) exit(75); ` +
+    `if(!$DB->record_exists('user',array('username'=>'${adminUsername}','deleted'=>0))) exit(75); ` +
     `} catch (Throwable $e) { exit(76); } ` +
     `exit(0);`;
 

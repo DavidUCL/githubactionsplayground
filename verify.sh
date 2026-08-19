@@ -9,12 +9,16 @@ set -uo pipefail
 #   3. Fallback fixture assesses to verify_fail/resolver_fallback
 #   1b. No surviving mutants (every assertion term is pinned by a test)
 #   1c. action.yml supplies every env var the scripts read
+#   1v. the deployed playgrounds still differ on restoreDatabase, which is what
+#      the builder's host-capability refusal is built on
 #   4. LIVE (opt-in, LIVE=1): loopback boot of the known-good blueprint
 #      against the production playground ends status=pass
 #   5. LIVE: a swapped local blueprint is refused by the hash binding
 #   6. LIVE: the post-restore assertion passes when right and fails when wrong
 #   7. LIVE: a real theme installs, activates and builds its CSS — and all
 #      three silent-Boost failures are caught
+#   11. LIVE: a real database snapshot restores and is proved to BE the file
+#      the link was built against — and a site that never restored is caught
 #
 # Local env note (WSL, no sudo): chromium needs NSS libs; point
 # NSS_LIBS at a dir of symlinks (see README "Local testing").
@@ -217,6 +221,51 @@ if [[ -z "${SKIP_NET:-}" ]]; then
     fi
 else
     echo "CHECK 1f SKIP: SKIP_NET set"
+fi
+
+# The two deployed playgrounds are NOT the same build, and an unrecognised step
+# is not skipped — the executor rejects the whole blueprint and boots its
+# starter site, so the link opens a Moodle with none of the preview in it. The
+# builder refuses that combination by reading each host's published step list;
+# this check is the evidence that the discriminator is real and still holds,
+# against the actual hosts rather than against a frozen copy of their source.
+#
+# Reported, never failed, when the list cannot be read: it is a third party's
+# file at a path we do not control, and the builder treats the same condition
+# as inconclusive rather than as a refusal.
+if [[ -z "${SKIP_NET:-}" ]]; then
+    HS_OUT=$(node -e '
+import("./scripts/host-steps.mjs").then(async (m) => {
+  const rows = [
+    ["https://daviducl.github.io/moodle-playground", true],
+    ["https://ateeducacion.github.io/moodle-playground", false],
+  ];
+  const problems = [];
+  let unreadable = 0;
+  for (const [host, shouldHave] of rows) {
+    const got = await m.fetchHostSteps(host);
+    if (got.unknown) { unreadable += 1; console.log(`  note: ${got.unknown}`); continue; }
+    const has = got.known.has("restoreDatabase");
+    if (has !== shouldHave) {
+      problems.push(`${host} ${has ? "now implements" : "no longer implements"} restoreDatabase`);
+    }
+  }
+  if (problems.length) { console.log(`FAIL ${problems.join("; ")}`); process.exit(1); }
+  console.log(unreadable === rows.length ? "SKIP" : "OK");
+});
+' 2>&1)
+    if [[ "$HS_OUT" == *"SKIP"* ]]; then
+        echo "CHECK 1v SKIP: neither playground published a readable step list"
+    elif [[ "$HS_OUT" == *"FAIL"* ]]; then
+        echo "CHECK 1v FAIL: ${HS_OUT#*FAIL }"
+        echo "  If a host CHANGED, this is good news and the expectation moves."
+        echo "  If BOTH now implement it, the refusal has no case left and should go."
+        FAILED+=("1v: the playground step lists no longer match what was measured")
+    else
+        echo "CHECK 1v PASS: the default playground implements restoreDatabase and ateeducacion does not"
+    fi
+else
+    echo "CHECK 1v SKIP: SKIP_NET set"
 fi
 
 # The Moodle-version table in plugin-version.mjs decides whether a plugin's
@@ -1537,6 +1586,93 @@ import("./scripts/course-id-assert.mjs").then(async (m) => {
         FAILED+=("10: course-id assertion cannot fail, or cannot pass")
     else
         echo "CHECK 10 PASS: a course before REVIEW exits 62, a missing one 61, and REVIEW-then-extra still boots"
+    fi
+
+    # LIVE 11 — the post-restore-DATABASE assertion must be able to fail, AND
+    # to pass, in a real browser.
+    #
+    # Nothing offline can give this. Every state the assertion exists to catch
+    # is one `restoreDatabase` itself reports as a SUCCESSFUL step — it cannot
+    # throw after the swap, by design ("aborting cannot undo the swap") — so
+    # the unit tests can only prove what PHP we generate, never what Moodle
+    # does with it. An assertion that silently always passed would satisfy the
+    # whole offline gate.
+    #
+    # THE `noswap` ARM IS THE POINT. It runs the identical assertion with the
+    # restoreDatabase step REMOVED: a fresh install, whose siteidentifier is
+    # its own. If that arm completes, the assertion is vacuous and every other
+    # arm here is worthless. It is the live counterpart of the empty-identity
+    # refusal the reader makes at build time.
+    #
+    # No waiver: the snapshot is a public pinned file and every arm runs the
+    # same four core steps. It is 7.6 MB per boot, which is the cost of proving
+    # this at all.
+    DB_SNAP="https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/data/integration-test.sq3"
+    DB_IDENT="rk4Xj3c2Erah6qDHBMIHpTo1EvU0FeOelocalhost"
+    db_boot() { # $1=label $2=identity $3=branch $4=admin $5=restore(yes|no)
+        local DB_OUT="$WORK/db_$1"
+        mkdir -p "$DB_OUT"
+        DB_DIR="$DB_OUT" DB_ID="$2" DB_BR="$3" DB_ADM="$4" DB_DO="$5" DB_URL="$DB_SNAP" node -e '
+import("./scripts/db-assert.mjs").then(async (m) => {
+  const fs = await import("node:fs");
+  const c = await import("node:crypto");
+  const step = m.buildDatabaseAssertion({
+    identity: process.env.DB_ID,
+    branch: process.env.DB_BR,
+    adminUsername: process.env.DB_ADM,
+  });
+  const restore = process.env.DB_DO === "yes"
+    ? [{ step: "restoreDatabase", url: process.env.DB_URL, critical: true }]
+    : [];
+  const steps = [
+    ...restore,
+    { step: "installMoodle" },
+    step,
+    { step: "setLandingPage", path: "/" },
+  ];
+  const bp = { preferredVersions: { moodle: "MOODLE_500_STABLE" }, steps };
+  const body = JSON.stringify(bp, null, 2);
+  fs.writeFileSync(`${process.env.DB_DIR}/blueprint.json`, body);
+  const sha = c.createHash("sha256").update(body).digest("hex");
+  fs.writeFileSync(`${process.env.DB_DIR}/preflight.json`,
+    JSON.stringify({ outcome: "ok", error_class: "none", blueprintSha256: sha }));
+  fs.writeFileSync(`${process.env.DB_DIR}/expectations.json`, JSON.stringify({
+    blueprintUrl: "loopback", blueprintSha256: sha, stepCount: steps.length,
+    stepNames: steps.map((s) => s.step), pluginSteps: [] }));
+});
+' >/dev/null 2>&1
+        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$DB_OUT" \
+            BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/db-$1.json" \
+            node scripts/boot-capture.mjs >>/tmp/bv-verify-db.log 2>&1
+        # A FAILURE ALWAYS WINS. Matching both patterns and taking the last
+        # hit would read the step announcement as completion, so the exit code
+        # is looked for first and only its absence counts as a clean run.
+        local DB_RC
+        DB_RC=$(grep -oE 'failed with exit code [0-9]+' "$DB_OUT/boot-log.txt" 2>/dev/null | head -1)
+        if [[ -n "$DB_RC" ]]; then
+            echo "$DB_RC"
+        else
+            grep -oE 'Blueprint step [0-9]+/[0-9]+: setLandingPage' \
+                "$DB_OUT/boot-log.txt" 2>/dev/null | head -1
+        fi
+    }
+    : >/tmp/bv-verify-db.log
+    DB_GOOD=$(db_boot good "$DB_IDENT" 500 admin yes)
+    DB_NOSWAP=$(db_boot noswap "$DB_IDENT" 500 admin no)
+    DB_WRONGID=$(db_boot wrongid "0123456789abcdef0123456789abcdef" 500 admin yes)
+    DB_WRONGBR=$(db_boot wrongbranch "$DB_IDENT" 403 admin yes)
+    DB_WRONGADM=$(db_boot wrongadmin "$DB_IDENT" 500 nosuchadmin yes)
+    DB_PROBLEMS=""
+    [[ "$DB_GOOD" == *"setLandingPage"* ]] || DB_PROBLEMS+="a CORRECT snapshot did not complete (got: ${DB_GOOD:-nothing}) — an assertion that can never pass would satisfy every other arm here; "
+    [[ "$DB_NOSWAP" == *"exit code 72"* ]] || DB_PROBLEMS+="a site that NEVER RESTORED was not caught (got: ${DB_NOSWAP:-nothing}) — this is the vacuity arm: without it the assertion could be passing on anything; "
+    [[ "$DB_WRONGID" == *"exit code 72"* ]] || DB_PROBLEMS+="a database that is not the file we hashed was not caught (got: ${DB_WRONGID:-nothing}); "
+    [[ "$DB_WRONGBR" == *"exit code 74"* ]] || DB_PROBLEMS+="a snapshot from another Moodle was not caught (got: ${DB_WRONGBR:-nothing}) — Moodle cannot catch this itself once the restore has run; "
+    [[ "$DB_WRONGADM" == *"exit code 75"* ]] || DB_PROBLEMS+="a missing administrator was not caught (got: ${DB_WRONGADM:-nothing}); "
+    if [[ -n "$DB_PROBLEMS" ]]; then
+        echo "CHECK 11 FAIL: the post-restore-database assertion is not doing its job — $DB_PROBLEMS"
+        FAILED+=("11: database assertion cannot fail, or cannot pass")
+    else
+        echo "CHECK 11 PASS: a real snapshot boots; no restore and a wrong identity exit 72, another Moodle 74, a missing admin 75"
     fi
 
     # LIVE 7 — the theme control, in a real browser.

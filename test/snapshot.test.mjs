@@ -139,7 +139,6 @@ test("a host that does not allow cross-origin reads warns but does not refuse", 
 const RESERVED = {
   reservedUsernames: ["teacher", "teacher2", "student1"],
   reservedCourses: ["REVIEW"],
-  loginAs: "admin",
   moodleBranch: "MOODLE_500_STABLE",
 };
 
@@ -165,7 +164,6 @@ const REFUSALS = [
   ["html-injection.sq3", /additionalhtmlhead/],
   ["review-course.sq3", /already contains course\(s\) REVIEW/],
   ["student1-user.sq3", /already contains user\(s\) student1/],
-  ["renamed-admin.sq3", /sign in as "admin"/],
   ["old-version.sq3", /branch 403/],
 ];
 
@@ -195,23 +193,40 @@ test("a snapshot from another Moodle is refused, and says why Moodle cannot", as
   );
 });
 
-test("the login account is checked against the snapshot, not assumed", async () => {
-  const { facts } = await factsOf(REAL);
-  // `login` does a MUST_EXIST lookup with no password: an account that is not
-  // there kills the boot at the last step with nothing naming the cause.
-  const missing = checkSnapshot(facts, { ...RESERVED, loginAs: "teacher" });
-  assert.equal(missing.length, 1);
-  assert.match(missing[0], /sign in as "teacher"/);
-  assert.match(missing[0], /administrator is "admin"/);
+test("a snapshot whose administrator is not called `admin` is NOT refused", async () => {
+  // This was a refusal, and it was a false one. Moodle does not require the
+  // administrator to be called "admin", and `admin` in the login-as box names
+  // a ROLE — the builder resolves it to whatever this file actually has.
+  const { facts } = await factsOf(join(DB, "renamed-admin.sq3"));
+  assert.notEqual(facts.adminUsername, "admin", "the fixture must still be renamed");
+  assert.ok(!facts.usernames.includes("admin"));
+  assert.deepEqual(checkSnapshot(facts, RESERVED), []);
 });
 
-test("an empty snapshot does not silently pass the login check", () => {
-  // A database with no users at all must not be read as "the account is fine".
-  // Guarding on `usernames.length` is what makes this a real risk.
+test("a snapshot with no users at all is refused for having no administrator", () => {
   const empty = { identity: "x".repeat(32), rawHtml: [], courses: [], usernames: [], branch: "500" };
-  const problems = checkSnapshot(empty, RESERVED);
-  assert.ok(
-    problems.length === 0 || !problems.some((p) => /sign in as/.test(p)),
-    "an empty user table is a separate failure, not a login problem",
-  );
+  // Guarding on `usernames.length` is what makes the empty case a real risk:
+  // an unguarded check reads "no users" as "nothing to object to".
+  const problems = checkSnapshot({ ...empty, usernames: ["someone"] }, RESERVED);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /names no administrator/);
+});
+
+test("no account is required to be present by name", async () => {
+  const { facts } = await factsOf(REAL);
+  // createUsers makes teacher/student1 AFTER the restore, so requiring them in
+  // the snapshot would refuse every healthy file — and reserving them is the
+  // opposite check, made separately.
+  assert.ok(!facts.usernames.includes("teacher"));
+  assert.deepEqual(checkSnapshot(facts, RESERVED), []);
+});
+
+test("a snapshot with no administrator is refused", async () => {
+  const { facts } = await factsOf(REAL);
+  // After a restore installMoodle finds a populated database and does nothing,
+  // so there is no second chance to create one.
+  const headless = { ...facts, adminUsername: "" };
+  const problems = checkSnapshot(headless, RESERVED);
+  assert.equal(problems.length, 1);
+  assert.match(problems[0], /names no administrator/);
 });

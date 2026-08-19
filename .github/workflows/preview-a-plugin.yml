@@ -63,6 +63,29 @@ on:
           empty course.
         required: false
         default: ""
+      restore-database-url:
+        description: >-
+          Restore a WHOLE DATABASE — a real site's courses, users and content —
+          instead of the empty Moodle this preview otherwise builds. Paste the
+          address of a .sq3 snapshot made by mchef's `playground --snapshot`
+          export; a plain MySQL or PostgreSQL dump will not work. It does not
+          have to be in a git repository, but the host must be public, must
+          allow cross-origin reads, and must be listed in data-hosts. The file
+          is downloaded and opened when the link is built, because that is the
+          only place anything about it can be checked. Fill in the sha256 box
+          as well — it is required with this one.
+        required: false
+        type: string
+        default: ""
+      restore-database-sha256:
+        description: >-
+          The sha256 of the snapshot above, required whenever that box is
+          filled. Get it with `curl -sL <url> | sha256sum`. Every other address
+          here is pinned to a commit; a snapshot is not, so this is the only
+          record of which file the link was built against.
+        required: false
+        type: string
+        default: ""
       extra-plugins:
         description: >-
           Other plugins this one needs, comma separated, each written
@@ -238,6 +261,8 @@ jobs:
           # applies. The builder reads an empty list as "use DEFAULT_DATA_HOSTS",
           # which is the same pair — one definition, in the script, rather than
           # a second copy of the list frozen into this form.
+          restore-database-url: ${{ inputs.restore-database-url }}
+          restore-database-sha256: ${{ inputs.restore-database-sha256 }}
           data-hosts: ${{ inputs.data-hosts }}
           landing-path: ${{ inputs.landing-path }}
           plugin-component: ${{ inputs.plugin-component }}

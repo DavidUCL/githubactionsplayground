@@ -170,6 +170,58 @@ That in-band check deliberately does NOT use `translation_exists()`, which
 returns true for an empty directory: Moodle loads `lang/en` first and English's
 own `thislanguage` survives when the pack has nothing to overlay it with.
 
+### Previewing against a real site's data (`restore-database-url`)
+
+Instead of the empty Moodle the preview otherwise builds, restore a whole
+database: a real site's courses, users, categories and settings, with the
+plugin under review installed on top. Paste the address of a `.sq3` snapshot
+made by mchef's `playground --snapshot` export, and its sha256 in the box next
+to it. A dump from a MySQL or PostgreSQL Moodle will not work — the playground
+runs SQLite with its own driver patches, and the export is what converts it.
+
+The digest is **required**, and it is the one address here that is not pinned
+to a commit: a snapshot is data and may be published anywhere, so the digest is
+the only record of which file the link was built against.
+
+Everything about the file is checked when the LINK is built, by downloading it
+and opening it, because there is nowhere else it can be checked:
+
+- **The restore verifies nothing.** It renames the downloaded file over the
+  live database after checking sixteen bytes of file magic, and that is all.
+- **It cannot report a failure that happened after that rename.** The
+  playground's own comment says why: "aborting cannot undo the swap". So a
+  database that was installed and then failed to be adapted to this site — the
+  case that leaves another site's `wwwroot` in the config table and sends every
+  page into a redirect loop — reports a **successful** step.
+- **It switches off Moodle's own version check.** The restore seeds
+  `allversionshash` to the RUNNING code's hash, deliberately, so that a
+  mismatched snapshot is not stranded on the upgrade screen. The consequence is
+  that `moodle_needs_upgrading()` can never fire again: a snapshot from a
+  different Moodle gives no upgrade screen, no warning and no boot failure, just
+  "Error reading from database" on whichever page first needs a column the other
+  version has. That is indistinguishable from a broken plugin, which is the
+  exact confusion this action exists to prevent.
+
+So building the link refuses a file that is not a SQLite database, has no site
+identity, sets one of Moodle's raw-HTML settings (a `<script>` there runs on the
+playground's own origin), already contains a course or an account this preview
+also creates, has no administrator, or comes from a different Moodle branch than
+the one you are booting.
+
+Two things it deliberately does **not** claim. The digest is a build-time
+record: the reviewer's browser downloads the file again and checks nothing, and
+the digest could not be re-checked there even in principle, because the restore
+rewrites the file before any code of ours could run. What covers the reviewer's
+copy instead is the **site identity**, which the restore leaves alone and the
+preview compares in the browser after the swap — so a file that changed between
+the link being built and the link being opened fails the boot by name. And the
+administrator account comes from the snapshot, carrying that site's password,
+not the `password` the review brief names for the accounts this preview creates.
+
+The reviewer's browser downloads the snapshot itself, so the host must be
+public, must allow cross-origin reads, and must be listed in `data-hosts`. It
+does not have to be a git repository.
+
 Why the public playground is the default host: a preview runs unreviewed PHP
 in the visitor's browser, and the playground renders the site in an
 unsandboxed iframe with a service worker that outlives the tab. Browser

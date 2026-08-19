@@ -14,7 +14,7 @@ import { gateBlueprint } from "../scripts/preflight.mjs";
 const ok = {
   identity: "a1b2c3d4e5f60718293a4b5c6d7e8f90",
   branch: "500",
-  loginAs: "admin",
+  adminUsername: "admin",
 };
 
 test("the assertion is a single-line runPhpCode step the gate accepts", () => {
@@ -82,8 +82,8 @@ test("refuses values that would not survive being embedded", () => {
   );
   assert.throws(() => buildDatabaseAssertion({ ...ok, branch: "5.0" }), /unusable Moodle branch/);
   assert.throws(() => buildDatabaseAssertion({ ...ok, branch: "" }), /unusable Moodle branch/);
-  assert.throws(() => buildDatabaseAssertion({ ...ok, loginAs: "ad'min" }), /unusable username/);
-  assert.throws(() => buildDatabaseAssertion({ ...ok, loginAs: "Admin" }), /unusable username/);
+  assert.throws(() => buildDatabaseAssertion({ ...ok, adminUsername: "ad'min" }), /unusable username/);
+  assert.throws(() => buildDatabaseAssertion({ ...ok, adminUsername: "Admin" }), /unusable username/);
 });
 
 test("the expected identity is the one that ends up in the program", () => {
@@ -96,11 +96,14 @@ test("the expected identity is the one that ends up in the program", () => {
   assert.notEqual(code, other);
 });
 
-test("the login account is checked, and excludes deleted users", () => {
-  const { code } = buildDatabaseAssertion({ ...ok, loginAs: "teacher" });
-  assert.match(code, /record_exists\('user',array\('username'=>'teacher','deleted'=>0\)\)/);
-  // A deleted user still has a row. `login` does a MUST_EXIST lookup that
-  // would not find it, so counting one would be a false pass.
+test("the snapshot's own administrator is checked, and deleted rows do not count", () => {
+  // NOT the account the preview signs in as: teacher/student1 are created by
+  // createUsers AFTER the restore, so asserting one here would fail on every
+  // healthy preview. This proves the user table survived the swap.
+  const { code } = buildDatabaseAssertion({ ...ok, adminUsername: "siteadmin" });
+  assert.match(code, /record_exists\('user',array\('username'=>'siteadmin','deleted'=>0\)\)/);
+  // A deleted user still has a row, and `login` does a MUST_EXIST lookup that
+  // would not find it — so counting one would be a false pass.
   assert.ok(code.includes("'deleted'=>0"), "a deleted row must not count as the account existing");
 });
 

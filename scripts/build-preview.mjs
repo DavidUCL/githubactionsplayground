@@ -25,11 +25,14 @@ import { pathToFileURL } from "node:url";
 import { PLUGIN_TYPE_DIRS } from "./assert.mjs";
 import { gateBlueprint, assertNoPlaceholders, checkUrl, readCapped } from "./preflight.mjs";
 import { buildRestoreAssertion } from "./restore-assert.mjs";
+import { buildDatabaseAssertion } from "./db-assert.mjs";
 import { buildThemeAssertion, buildThemeCssWarmup } from "./theme-assert.mjs";
 import { buildCourseAssertion } from "./course-assert.mjs";
 import { buildLangAssertion, parseLanguagePacks } from "./lang-assert.mjs";
 import { buildCourseIdAssertion, landingCourseId } from "./course-id-assert.mjs";
 import { checkCourseBackup } from "./mbz.mjs";
+import { inspectSnapshot, checkSnapshot } from "./snapshot.mjs";
+import { fetchHostSteps, stepsHostCannotRun, explainMissingSteps } from "./host-steps.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
 // import site for preview concerns.
@@ -952,6 +955,11 @@ export function buildBlueprint({
   sections = COUNT_INPUTS.sections.fallback,
   // {url, info} from mbz.mjs when a course backup is being restored.
   restore = null,
+  // {url, facts} from snapshot.mjs when a whole DATABASE is being restored.
+  // A different control from `restore` and they compose: the database is
+  // swapped in FIRST, and every step after it — including a course backup —
+  // lands in the restored site.
+  dbSnapshot = null,
   // Every plugin this preview installs, ALREADY IN INSTALL ORDER, one entry per
   // installMoodlePlugin step. Exactly one must be the commit under review.
   //
@@ -1020,7 +1028,38 @@ export function buildBlueprint({
   const activeFormat = courseFormat || (type === "format" ? name : DEFAULT_COURSE_FORMAT);
   const extraCourses = extraCourseNames(courses);
   const steps = [
+    // FIRST, before installMoodle, which is where the published canary blueprint
+    // puts it and the only place it works: the step renames the downloaded file
+    // over the live database, so anything created before it is discarded.
+    // installMoodle then finds a populated database and does nothing, and every
+    // step below lands in the restored site.
+    ...(dbSnapshot
+      ? [{ step: "restoreDatabase", url: dbSnapshot.url, critical: true }]
+      : []),
     { step: "installMoodle" },
+    // Immediately after, and before anything writes to the database. The step
+    // above CANNOT report a failure that happened after the swap — "aborting
+    // cannot undo the swap", so it publishes a message and returns success —
+    // and the swap disables Moodle's own version check on the way past. This
+    // is the only thing that looks at what was actually installed.
+    ...(dbSnapshot
+      ? [buildDatabaseAssertion({
+          identity: dbSnapshot.facts.identity,
+          branch: dbSnapshot.facts.branch,
+          adminUsername: dbSnapshot.facts.adminUsername,
+        }),
+        // The administrator arrived WITH the snapshot, carrying the source
+        // site's password — which nobody previewing a plugin has. `login` needs
+        // no password (it forces the session), but everything the reviewer does
+        // afterwards might: switching accounts, or logging back in after the
+        // session drops. This resets it to the one the review brief names.
+        //
+        // It updates `get_admin()` and IGNORES any username given, so it acts
+        // on whichever administrator the snapshot brought, whatever it is
+        // called — which is why the brief names that account rather than
+        // assuming "admin".
+        { step: "setAdminAccount", password: "password", critical: true }]
+      : []),
     {
       // Without DEVELOPER debugging, deprecations and notices are invisible and
       // a reviewer passes a plugin that is warning loudly on a real site.
@@ -1288,7 +1327,15 @@ export function buildBlueprint({
   const courseId = reviewCourseId(steps);
   const landing =
     landingOverride ||
-    landingPath(type, name, { restored: Boolean(restore), courseFormat: activeFormat, courseId });
+    landingPath(type, name, {
+      // A restored DATABASE has the same unknowable-id problem as a restored
+      // course, for a different reason: it brings its own courses, so Moodle
+      // allocates the review course from the snapshot's sequence rather than
+      // from 2. Land by name in both cases.
+      restored: Boolean(restore) || Boolean(dbSnapshot),
+      courseFormat: activeFormat,
+      courseId,
+    });
 
   // The id the reviewer's landing page will actually open, parsed back out of
   // the finished string. DELIBERATELY NOT `courseId` — that is what produced
@@ -1307,18 +1354,51 @@ export function buildBlueprint({
   // Emitted ONLY when the landing names a course by number. Everywhere else it
   // would compare `reviewCourseId()` with itself — inert, and 245 characters of
   // URL to say nothing.
+  if (dbSnapshot && landingId !== null) {
+    // `reviewCourseId()` answers 2 because the site course is 1 and ours is the
+    // next one made. A restored database makes that false: its own courses hold
+    // the low ids and Moodle continues from the snapshot's sequence — one of
+    // the negative fixtures reaches 41. A numbered landing would open somebody
+    // else's course, and the id assertion below would abort a boot that was
+    // otherwise fine. landingPath already lands by name under a restore; this
+    // catches the one input that can override it.
+    throw new Error(
+      `landing-path opens course ${landingId} by number, but a restored database ` +
+        `decides its own course numbering — the review course is not id ` +
+        `${landingId} and may be any number. Use a path that names the course ` +
+        `instead, such as /course/view.php?name=${COURSE_SHORTNAME}.`,
+    );
+  }
   if (landingId !== null) {
     steps.push(buildCourseIdAssertion({ courseId: landingId, shortname: COURSE_SHORTNAME }));
   }
   // `login-as` overrides the derived default. Derivation is a good default —
   // admin for admin pages, teacher elsewhere — but it cannot know you want to
   // see the plugin as a learner, and nothing else lets you.
-  const loginUser = loginAs || previewUser(landing, teachers);
+  const derivedUser = loginAs || previewUser(landing, teachers);
+  // `admin` names a ROLE here, not a row: every other value in the box is an
+  // account this preview creates, and `admin` is the one that already exists.
+  // Under a restore the administrator is the snapshot's, and Moodle does not
+  // require it to be called "admin" — `login` does a MUST_EXIST lookup, so
+  // using the literal name would kill the boot at the last step on a snapshot
+  // that is perfectly good. Resolved to the name actually read out of the file.
+  const loginUser =
+    dbSnapshot && derivedUser === "admin" ? dbSnapshot.facts.adminUsername : derivedUser;
 
   // Read back off the steps rather than recomputed, so the brief cannot name a
   // set of accounts the blueprint did not actually create.
   const roster = [
-    "admin",
+    // `admin` is NOT made by createUsers — installMoodle makes it, with the
+    // password the brief names below. A restored database is the exception:
+    // installMoodle finds a populated database and does nothing, so the
+    // administrator is the SNAPSHOT'S, carrying the source site's password.
+    // Listing it here would tell the reviewer to type `password` into the one
+    // account that does not have it, and a failed login reads as a broken
+    // preview. The caveat below says where it went.
+    // Under a restore this is the SNAPSHOT'S administrator, by whatever name it
+    // has — and `setAdminAccount` above has just given it the password named
+    // below, so it belongs in the list like any other.
+    dbSnapshot ? dbSnapshot.facts.adminUsername : "admin",
     ...steps.find((s) => s.step === "createUsers").users.map((u) => u.username),
   ];
   // A brief on the course page. Everything a reviewer needs in order not to
@@ -1340,6 +1420,15 @@ export function buildBlueprint({
       // changed nothing a reviewer could see, before or after.
       `<ul><li>Logins: ${roster.map((u) => `<code>${escapeHtml(u)}</code>`).join(", ")}` +
       ` — password <code>password</code></li>` +
+      // Only under a restore. The administrator is the snapshot's, so its name
+      // is the source site's rather than `admin` — worth saying, because a
+      // reviewer who tries `admin` gets nowhere and reads that as a broken
+      // preview. Its password IS the one above: setAdminAccount reset it.
+      (dbSnapshot
+        ? `<li>The administrator came with the restored database and is called ` +
+          `<code>${escapeHtml(dbSnapshot.facts.adminUsername)}</code>, not ` +
+          `<code>admin</code></li>`
+        : "") +
       `<li>Debugging is DEVELOPER: yellow boxes are deprecation notices, not crashes</li>` +
       `<li>Student view: user menu → Switch role to… → Student. That is a VIEW only —` +
       ` log in as <code>student1</code> for anything that owns data</li>` +
@@ -1584,9 +1673,90 @@ export function setOutput(name, value) {
  * This is the reviewer's only summary of what the link will do. Nothing else
  * states the counts, the theme, or which Moodle was checked.
  */
+/**
+ * The risky-step notes, split by WHAT the step is risky about.
+ *
+ * There used to be one note for the whole list, and it read: "this blueprint
+ * can rewrite Moodle after installing ... code that installs for real can be
+ * overwritten afterwards". True of `writeFile` and `runPhpCode`. Backwards for
+ * the two restore steps, which replace DATA rather than code, and do it BEFORE
+ * anything is installed — so the note described the opposite of what the step
+ * did while naming it, which is worse than not naming it.
+ */
+function riskyNotes(risky) {
+  const list = risky || [];
+  const fmt = (names) => names.map((r) => `\`${r}\``).join(", ");
+  const code = list.filter((r) => r !== "restoreDatabase" && r !== "restoreCourse");
+  const notes = [];
+  if (code.length) {
+    notes.push(
+      `> **This blueprint can rewrite Moodle after installing:** ${fmt(code)}.`,
+      "> Code that installs for real can be overwritten afterwards without",
+      "> touching the database, the boot log, or any assertion.",
+      "",
+    );
+  }
+  if (list.includes("restoreDatabase")) {
+    notes.push(
+      "> **This blueprint replaces the whole database before anything is installed:**",
+      "> `restoreDatabase`. The courses, users and settings you see came from another",
+      "> site, not from this preview. The restore also switches off Moodle's own",
+      "> version check, so a snapshot from a different Moodle shows up as a database",
+      "> error on some later page rather than as an upgrade screen.",
+      "",
+    );
+  }
+  if (list.includes("restoreCourse")) {
+    notes.push(
+      "> **The review course was restored from a backup:** `restoreCourse`. Its",
+      "> content was made elsewhere, so what is in the course is not evidence about",
+      "> the plugin under review.",
+      "",
+    );
+  }
+  return notes;
+}
+
+/**
+ * What a snapshot is allowed to already contain, and what it must already have.
+ *
+ * Exported because it is the half of the restore-database control that decides
+ * whether a healthy file is accepted, and it lived inside `main()` where no
+ * test and no mutant could reach it. Both mistakes it can make are silent: too
+ * wide and a boot dies five steps in, too narrow and every real snapshot is
+ * refused.
+ */
+export function snapshotReservations() {
+  return {
+    // The MAXIMUM of every count, not the counts actually chosen — the same
+    // reasoning as the course backup. A list computed from the chosen counts is
+    // a second expression for "who gets created", and every way it can drift
+    // lands on the ACCEPT side, which is the half-built site this exists to
+    // prevent.
+    //
+    // `admin` is REMOVED. It is made by installMoodle, not by createUsers, and
+    // after a restore installMoodle finds a populated database and does
+    // nothing — so every healthy snapshot contains one and reserving it refuses
+    // them all. Not hypothetical: it refused the published snapshot the first
+    // time this ran.
+    reservedUsernames: accountNames(
+      COUNT_INPUTS.students.max,
+      COUNT_INPUTS.teachers.max,
+    ).filter((u) => u !== "admin"),
+    reservedCourses: [COURSE_SHORTNAME, ...extraCourseNames(COUNT_INPUTS.courses.max)],
+    // There is deliberately no "this account must already be there" entry.
+    // teacher/teacher2/student1..N are created by createUsers AFTER the
+    // restore, so requiring them would refuse every healthy file; and `admin`
+    // names a role rather than a row — the builder resolves it to whatever
+    // administrator the snapshot actually has. That the file HAS one is
+    // checked by the reader itself.
+  };
+}
+
 export function previewSummary({
   type, name, headSha, url, component, headRepo, extras, moodleBranch,
-  signedInAs, php, restore, teachers, students, sections, courseFormat, languagePacks = [],
+  signedInAs, php, restore, dbSnapshot, teachers, students, sections, courseFormat,
+  languagePacks = [],
   courseRoster = [],
   landingPage,
   versionPhp, core, risky, loginAs,
@@ -1619,6 +1789,20 @@ export function previewSummary({
         ? `${languagePacks.join(", ")} — site language is ${languagePacks[0]}`
         : "",
       Moodle: moodleBranch,
+      // Its own row, and worded to the letter. The digest is a BUILD-TIME
+      // provenance record: it names the file that was downloaded and opened
+      // when this link was made. It is NOT re-checked in the reviewer's
+      // browser and cannot be — the restore rewrites the file's wwwroot,
+      // dataroot and version hash before any code of ours could run — so a row
+      // implying the reviewer's copy was verified would be false. What does
+      // cover their copy is the site identity, which the restore leaves alone
+      // and the preview asserts in the browser after the swap.
+      database: dbSnapshot
+        ? `restored from ${dbSnapshot.url} — Moodle ${dbSnapshot.facts.release || "unknown"}, ` +
+          `sha256 \`${dbSnapshot.sha256}\` as downloaded when this link was built ` +
+          `(the reviewer's browser re-downloads it; the site identity is what is ` +
+          `checked there)`
+        : "",
       // The landing page MUST be computed the same way the link was, restore
       // included — otherwise the summary names the add-form path while the link
       // opens the course.
@@ -1690,16 +1874,7 @@ export function previewSummary({
           "",
         ]
       : []),
-    ...(risky.length
-      ? [
-          `> **This blueprint can rewrite Moodle after installing:** ${risky
-            .map((r) => `\`${r}\``)
-            .join(", ")}.`,
-          "> Code that installs for real can be overwritten afterwards without",
-          "> touching the database, the boot log, or any assertion.",
-          "",
-        ]
-      : []),
+    ...riskyNotes(risky),
     "Smoke test only: this shows whether the plugin installs and renders, not",
     "whether it is correct. Nothing here booted it — the link boots in your",
     "browser when you open it.",
@@ -2319,6 +2494,86 @@ async function main() {
     );
   }
 
+  // A whole DATABASE to restore before anything else runs. Read HERE, at
+  // link-build time, because there is nowhere else it can be read: the
+  // reviewer's browser verifies nothing, `restoreDatabase` reports SUCCESS on a
+  // failure that happened after the swap, and the swap disables Moodle's own
+  // version check. See scripts/snapshot.mjs.
+  //
+  // Governed by `data-hosts` like every other address, and NOT pinned to a
+  // commit: a database snapshot does not have to come from a git repository,
+  // so the digest below is what pins it, and it is required rather than
+  // optional.
+  const snapshotUrl = opt(process.env.RESTORE_DATABASE_URL);
+  const snapshotSha = opt(process.env.RESTORE_DATABASE_SHA256);
+  let dbSnapshot = null;
+  if (snapshotSha && !snapshotUrl) {
+    problems.add(
+      "restore-database-sha256",
+      `a digest was given but no restore-database-url, so there is nothing to check ` +
+        `it against`,
+    );
+  }
+  if (snapshotUrl) {
+    const urlProblem = checkUrl(snapshotUrl, hosts);
+    if (urlProblem) {
+      problems.add("restore-database-url", urlProblem);
+    } else if (!snapshotSha) {
+      // REQUIRED, not optional. The URL need not be a commit-pinned one — a
+      // snapshot is data and may be published anywhere — so the digest is the
+      // only thing that says WHICH file this link was built against. Without
+      // it the link means "whatever is at that address when the reviewer opens
+      // it", which is exactly what the artifact must never imply.
+      problems.add(
+        "restore-database-sha256",
+        `required whenever restore-database-url is set. The address is not pinned to ` +
+          `a commit, so the digest is the only record of which file this link was ` +
+          `built against. Get it with: curl -sL <url> | sha256sum`,
+      );
+    } else if (!/^[0-9a-fA-F]{64}$/.test(snapshotSha)) {
+      problems.add(
+        "restore-database-sha256",
+        `must be 64 hex characters (a sha256), got: ${JSON.stringify(snapshotSha)}`,
+      );
+    } else {
+      const read = await inspectSnapshot(snapshotUrl, { expectedSha256: snapshotSha });
+      if (!read.ok) {
+        problems.add("restore-database-url", read.reason);
+      } else {
+        // The MAXIMUM of every count, not the counts actually chosen — the same
+        // reasoning as the course backup above. A list computed from the chosen
+        // counts is a second expression for "who gets created", and every way it
+        // can drift lands on the ACCEPT side, which is the half-built site this
+        // refusal exists to prevent.
+        //
+        // `admin` is REMOVED from that list. It is made by installMoodle, not by
+        // createUsers, and after a restore installMoodle does nothing — so every
+        // healthy snapshot contains one, and reserving it refuses them all. That
+        // is not hypothetical: it refused the published snapshot the first time
+        // this ran.
+        const problemsFound = checkSnapshot(read.facts, {
+          ...snapshotReservations(),
+          moodleBranch,
+        });
+        for (const problem of problemsFound) problems.add("restore-database-url", problem);
+        // A warning, not a refusal: the build-time fetch ignores CORS, so this
+        // is the only place the header can be seen, but plenty of hosts serve a
+        // working file behind a stricter header than we can predict. Sanitised
+        // and flattened for the same reason every other annotation is — the
+        // string came off a remote response header.
+        for (const warning of read.warnings) {
+          console.log(
+            `::warning title=restore-database-url::` +
+              `${sanitiseForLog(warning).replace(/\r?\n/g, " ")}`,
+          );
+        }
+        if (!problemsFound.length) {
+          dbSnapshot = { url: snapshotUrl, sha256: read.facts.sha256, facts: read.facts };
+        }
+      }
+    }
+  }
+
   // One throw for everything above. Annotations first, so GitHub shows a marker
   // against each offending field even though the run ends here.
   if (problems.any) {
@@ -2344,6 +2599,7 @@ async function main() {
     students,
     sections,
     restore,
+    dbSnapshot,
     installs: extras.installs,
     themeName: extras.themeName,
   });
@@ -2372,6 +2628,38 @@ async function main() {
     requireSelfUrl: pluginZipUrl(headRepo, headSha),
     coreComponents: core,
   });
+
+  // Can the playground we are about to link to actually RUN this blueprint?
+  //
+  // The deployed playgrounds are not the same build, and an unrecognised step
+  // is not skipped — the executor rejects the whole blueprint and boots its
+  // starter site, so the link opens a Moodle with none of this preview in it
+  // and nothing in the log saying why. Measured: `restoreDatabase` is in the
+  // default host's step list and is absent from ateeducacion's.
+  //
+  // Checked here, against the FINISHED blueprint, so it covers every control
+  // rather than the one that prompted it — a step added later is covered the
+  // day it is added, with nobody having to remember this exists.
+  const hostVerdict = stepsHostCannotRun(
+    blueprint.steps,
+    await fetchHostSteps(playgroundHost),
+  );
+  if (!hostVerdict.ok) {
+    // Thrown rather than annotated against an input: more than one input can
+    // be responsible, and the message names the steps rather than guessing.
+    throw new Error(explainMissingSteps(playgroundHost, hostVerdict.missing));
+  }
+  if (hostVerdict.unknown) {
+    // NOT a refusal. The list lives at a path we do not control, so it can go
+    // unreadable for reasons that say nothing about the host, and refusing on
+    // those would break every run the day the playground is restructured. Said
+    // out loud, because a check that goes quiet when it stops working is worse
+    // than no check.
+    console.log(
+      `::warning title=playground-host::could not confirm this playground implements ` +
+        `every step in the blueprint — ${sanitiseForLog(hostVerdict.unknown).replace(/\r?\n/g, " ")}`,
+    );
+  }
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
@@ -2404,6 +2692,7 @@ async function main() {
     signedInAs,
     php: phpOverride || phpForBranch(moodleBranch),
     restore,
+    dbSnapshot,
     teachers,
     students,
     sections,

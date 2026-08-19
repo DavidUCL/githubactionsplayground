@@ -19,6 +19,8 @@ import {
   PHP_BY_BRANCH,
   checkPhpForBranch,
   studentNames,
+  snapshotReservations,
+  previewSummary,
 } from "../scripts/build-preview.mjs";
 
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
@@ -2687,4 +2689,221 @@ test("a course backup that DECLARES an oversized body is refused unread", async 
   }
   assert.match(out, /restore-course-url/);
   assert.match(out, /declares 99999999 bytes, over the \d+ cap/);
+});
+
+// ---- restoring a whole database ------------------------------------------
+//
+// A different control from the course backup above, and they compose. See
+// scripts/snapshot.mjs for why every check happens at link-build time, and
+// scripts/db-assert.mjs for what the in-band assertion can still see.
+
+/** What snapshot.mjs hands the builder for a healthy file. */
+const SNAPSHOT = {
+  url: "https://raw.githubusercontent.com/DavidUCL/mchef-urls/deadbeef/db.sq3",
+  sha256: "a".repeat(64),
+  facts: { identity: "b".repeat(32), branch: "500", adminUsername: "admin" },
+};
+
+test("the database is restored FIRST, before installMoodle", () => {
+  const steps = buildBlueprint({ ...base, dbSnapshot: SNAPSHOT }).steps;
+  const names = steps.map((s) => s.step);
+  assert.equal(names[0], "restoreDatabase", "anything created before the swap is discarded");
+  assert.equal(names[1], "installMoodle");
+  assert.equal(steps[0].url, SNAPSHOT.url);
+  // The action's default host aborts on any failed step, but the other honours
+  // `critical` and would carry on into a site with no database of ours at all.
+  assert.equal(steps[0].critical, true);
+});
+
+test("the assertion runs immediately after the install, before anything writes", () => {
+  const steps = buildBlueprint({ ...base, dbSnapshot: SNAPSHOT }).steps;
+  const names = steps.map((s) => s.step);
+  assert.equal(names[2], "runPhpCode", "nothing may touch the database before it is checked");
+  assert.ok(names.indexOf("runPhpCode") < names.indexOf("setConfigs"));
+  // The identity read out of the file is what it compares against — the one
+  // check that can see a snapshot whose bytes changed after the link was built.
+  assert.ok(steps[2].code.includes(`'${SNAPSHOT.facts.identity}'`));
+  assert.equal(steps[2].critical, true);
+});
+
+test("no database snapshot means no restoreDatabase step and no extra assertion", () => {
+  const plain = buildBlueprint({ ...base }).steps.map((s) => s.step);
+  assert.ok(!plain.includes("restoreDatabase"));
+  assert.equal(plain[0], "installMoodle");
+});
+
+test("a restored database lands by name, because it decides its own course ids", () => {
+  // reviewCourseId() answers 2 — the site course is 1 and ours is next. A
+  // restored database makes that false: its own courses hold the low ids and
+  // Moodle continues from the snapshot's sequence.
+  for (const type of ["mod", "theme", "format"]) {
+    const bp = buildBlueprint({ ...base, type, name: type === "mod" ? "attendance" : "boost_union", dbSnapshot: SNAPSHOT });
+    assert.match(bp.landingPage, /\/course\/view\.php\?name=REVIEW/, `${type} landed on a number`);
+    assert.ok(!/course=\d/.test(bp.landingPage), `${type} landing carries a course number`);
+  }
+});
+
+test("a restored database emits no course-id assertion", () => {
+  const steps = buildBlueprint({ ...base, dbSnapshot: SNAPSHOT }).steps;
+  // It would compare the review course against id 2, which a restored database
+  // makes wrong — aborting a boot that was otherwise fine.
+  const phpSteps = steps.filter((s) => s.step === "runPhpCode");
+  assert.ok(!phpSteps.some((s) => /get_field\('course','shortname'/.test(s.code)),
+    "the course-id assertion must not be emitted under a database restore");
+});
+
+test("a landing-path that opens a course by number is refused under a restore", () => {
+  // The one input that can override landing-by-name. Without this the link
+  // opens somebody else's course, or aborts on the id assertion.
+  assert.throws(
+    () => buildBlueprint({
+      ...base,
+      dbSnapshot: SNAPSHOT,
+      landingOverride: "/course/modedit.php?add=attendance&course=2&section=1",
+    }),
+    /decides its own course numbering/,
+  );
+  // A named path is fine.
+  assert.ok(buildBlueprint({
+    ...base,
+    dbSnapshot: SNAPSHOT,
+    landingOverride: "/course/view.php?name=REVIEW",
+  }).landingPage);
+  // ...and the same numeric override is still accepted with no snapshot, so
+  // the refusal is about the restore rather than about the path.
+  assert.ok(buildBlueprint({
+    ...base,
+    landingOverride: "/course/modedit.php?add=attendance&course=2&section=1",
+  }).landingPage);
+});
+
+test("a database restore and a course backup compose, in that order", () => {
+  const steps = buildBlueprint({
+    ...base,
+    dbSnapshot: SNAPSHOT,
+    restore: {
+      url: "https://raw.githubusercontent.com/o/r/c/review.mbz",
+      info: { modulenames: ["assign"], activityCount: 1 },
+    },
+  }).steps;
+  const names = steps.map((s) => s.step);
+  // The database is swapped in first, so the course backup is restored INTO
+  // the restored site rather than into a database that is about to be thrown
+  // away.
+  assert.ok(names.indexOf("restoreDatabase") < names.indexOf("restoreCourse"));
+  assert.ok(!names.includes("createCourse"), "a course backup still replaces createCourse");
+});
+
+test("`admin` is never reserved against a snapshot, but every created account is", () => {
+  const { reservedUsernames, reservedCourses } = snapshotReservations();
+  // The mistake this exists to prevent, and it is not hypothetical: reserving
+  // `admin` refused the real published snapshot the first time this ran.
+  // installMoodle makes admin, createUsers does not — and after a restore
+  // installMoodle finds a populated database and does nothing.
+  assert.ok(!reservedUsernames.includes("admin"), "reserving admin refuses every real snapshot");
+  assert.ok(reservedUsernames.includes("teacher"));
+  assert.ok(reservedUsernames.includes("teacher2"));
+  // The MAXIMUM of every count, not the counts chosen: a snapshot carrying
+  // student20 must be refused even for a preview that makes one student, or
+  // raising the count later boots into a createUsers failure.
+  assert.deepEqual(reservedUsernames.filter((u) => u.startsWith("student")), studentNames(20));
+  assert.deepEqual(reservedCourses, ["REVIEW", "REVIEW2", "REVIEW3"]);
+});
+
+test("the snapshot's own administrator is the account the reviewer arrives as", () => {
+  // `admin` in the login-as box names a ROLE. Moodle does not require the
+  // administrator to be called "admin", and `login` does a MUST_EXIST lookup —
+  // so using the literal name would kill the boot at the last step on a
+  // snapshot that is perfectly good.
+  const renamed = { ...SNAPSHOT, facts: { ...SNAPSHOT.facts, adminUsername: "siteadmin" } };
+  const steps = buildBlueprint({ ...base, type: "other", name: "x", dbSnapshot: renamed }).steps;
+  assert.equal(steps.find((s) => s.step === "login").username, "siteadmin");
+
+  // ...and the password is reset to the one the brief names, because the
+  // account arrived with the source site's password and nobody has that.
+  const setAdmin = steps.find((s) => s.step === "setAdminAccount");
+  assert.ok(setAdmin, "the restored administrator's password is never reset");
+  assert.equal(setAdmin.password, "password");
+  assert.equal(setAdmin.critical, true);
+  // Before anything the reviewer might need it for, and after the assertion —
+  // there is no point resetting a password in a database we are about to refuse.
+  const names = steps.map((s) => s.step);
+  assert.ok(names.indexOf("runPhpCode") < names.indexOf("setAdminAccount"));
+  assert.ok(names.indexOf("setAdminAccount") < names.indexOf("login"));
+
+  // An explicitly chosen preview account is still honoured.
+  const asStudent = buildBlueprint({ ...base, dbSnapshot: renamed, loginAs: "student1" }).steps;
+  assert.equal(asStudent.find((s) => s.step === "login").username, "student1");
+});
+
+test("the review brief does not promise a password the restored admin does not have", () => {
+  const brief = (opts) =>
+    buildBlueprint({ ...base, ...opts }).steps.find((s) => s.name === "Review brief").intro;
+  const plain = brief({});
+  assert.match(plain, /<code>admin<\/code>/, "admin is a login when the preview creates it");
+  assert.ok(!/administrator came with/.test(plain));
+
+  // Under a restore the administrator is the SNAPSHOT'S, carrying the source
+  // site's password. Listing it next to "password `password`" sent the reviewer
+  // to a failed login that reads as a broken preview.
+  const renamed = { ...SNAPSHOT, facts: { ...SNAPSHOT.facts, adminUsername: "siteadmin" } };
+  const restored = brief({ dbSnapshot: renamed });
+  assert.match(restored, /<code>siteadmin<\/code>/, "the snapshot's own admin is the login");
+  assert.ok(!/Logins: <code>admin<\/code>/.test(restored), "`admin` may not be there at all");
+  assert.match(restored, /is called <code>siteadmin<\/code>, not <code>admin<\/code>/);
+  assert.match(restored, /<code>teacher<\/code>/, "the accounts it DOES create still appear");
+});
+
+test("the summary records the digest as a build-time fact, not a browser check", () => {
+  const rows = (opts) =>
+    previewSummary({
+      type: "mod", name: "attendance", headSha: SHA, url: "https://x", component: "mod_attendance",
+      headRepo: base.headRepo, extras: { list: "", themeSummary: "" },
+      moodleBranch: "MOODLE_500_STABLE", signedInAs: "admin", php: "8.3",
+      teachers: 1, students: 1, sections: 3, courseFormat: "topics", courseRoster: ["REVIEW"],
+      landingPage: "/x", versionPhp: "", core: { ok: true, standard: new Set() },
+      risky: [], loginAs: "", ...opts,
+    }).join("\n");
+
+  const none = rows({});
+  assert.ok(!/database/.test(none), "no row when nothing was restored");
+
+  const withDb = rows({ dbSnapshot: { ...SNAPSHOT, facts: { ...SNAPSHOT.facts, release: "5.0.2+" } } });
+  // The full digest, so it can be compared against a file by hand.
+  assert.ok(withDb.includes(SNAPSHOT.sha256), "the digest must be recorded in full");
+  assert.match(withDb, /as downloaded when this link was built/);
+  // It must NOT imply the reviewer's copy was checked: the restore rewrites the
+  // file before any code of ours could hash it, so that claim would be false.
+  assert.match(withDb, /the reviewer's browser re-downloads it/);
+});
+
+test("the risky note describes what each risky step actually does", () => {
+  const note = (risky) =>
+    previewSummary({
+      type: "mod", name: "attendance", headSha: SHA, url: "https://x", component: "mod_attendance",
+      headRepo: base.headRepo, extras: { list: "", themeSummary: "" },
+      moodleBranch: "MOODLE_500_STABLE", signedInAs: "admin", php: "8.3",
+      teachers: 1, students: 1, sections: 3, courseFormat: "topics", courseRoster: ["REVIEW"],
+      landingPage: "/x", versionPhp: "", core: { ok: true, standard: new Set() },
+      risky, loginAs: "",
+    }).filter((l) => l.startsWith(">")).join("\n");
+
+  // The old single note said "can rewrite Moodle AFTER installing ... code that
+  // installs for real can be overwritten afterwards". Backwards for the restore
+  // steps, which replace DATA, and do it BEFORE anything is installed.
+  const db = note(["restoreDatabase"]);
+  assert.match(db, /replaces the whole database before anything is installed/);
+  assert.ok(!/overwritten afterwards/.test(db), "the code-rewriting wording must not be used here");
+  assert.match(db, /version check/, "the reviewer must be told the mismatch check is off");
+
+  const code = note(["runPhpCode"]);
+  assert.match(code, /can rewrite Moodle after installing/);
+  assert.ok(!/replaces the whole database/.test(code));
+
+  // Both kinds at once: each gets its own note, neither is dropped.
+  const both = note(["restoreDatabase", "writeFile"]);
+  assert.match(both, /replaces the whole database/);
+  assert.match(both, /can rewrite Moodle after installing/);
+  assert.match(both, /`writeFile`/);
+  assert.ok(!/`restoreDatabase`.*can rewrite Moodle after installing/s.test(both.split("\n")[0]));
 });

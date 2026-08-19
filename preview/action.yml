@@ -229,6 +229,59 @@ inputs:
       preview then proves the theme is really active before you arrive.
     required: false
     default: ""
+  restore-database-url:
+    description: >-
+      Restore a WHOLE DATABASE before anything else runs — a real site's
+      courses, users and content, instead of the empty Moodle this preview
+      otherwise builds. The address of a .sq3 file produced by mchef's
+      `playground --snapshot` export. A dump from a standard MySQL or
+      PostgreSQL Moodle will not work: the playground runs SQLite with its own
+      driver patches, and the export is what converts it.
+
+      It does NOT have to live in a git repository — any address your
+      `data-hosts` allows will do — which is why the digest below is required
+      rather than optional.
+
+      The file is downloaded and OPENED when the link is built, because that is
+      the only place anything can be checked. `restoreDatabase` renames the
+      downloaded file over the live database and verifies nothing, and a
+      failure that happens after that rename cannot abort the step — the
+      playground's own comment says "aborting cannot undo the swap" — so a
+      half-restored site reports a SUCCESSFUL step. Building the link therefore
+      refuses a snapshot that is not a SQLite database, has no site identity,
+      carries a script in one of Moodle's raw-HTML settings, holds a course or
+      an account this preview also creates, or comes from a different Moodle
+      than the one you are booting.
+
+      That last one matters more than it sounds: the restore seeds Moodle's
+      version hash to the RUNNING code, so Moodle can never again notice the
+      mismatch. There is no upgrade screen and no warning — the site comes up
+      looking fine and then fails with a database error on whichever page needs
+      a column the other version has.
+
+      The reviewer's browser downloads this file itself, so the host must be
+      public and must allow cross-origin reads.
+    required: false
+    default: ""
+  restore-database-sha256:
+    description: >-
+      The sha256 of the file at restore-database-url. REQUIRED whenever that
+      box is filled. Get it with `curl -sL <url> | sha256sum`.
+
+      Every other address this action takes is pinned to a commit, so it can
+      only ever mean one file. A database snapshot is data and may be published
+      anywhere, so this digest is the only record of WHICH file the link was
+      built against.
+
+      It is checked at BUILD time, against the bytes that were downloaded and
+      inspected. It is NOT re-checked in the reviewer's browser and cannot be:
+      the restore rewrites the file's wwwroot, dataroot and version hash before
+      any code of ours could run, so the installed database no longer hashes to
+      the snapshot. What covers the reviewer's copy instead is the site
+      identity, which the restore leaves alone and the preview asserts in the
+      browser after the swap.
+    required: false
+    default: ""
   data-hosts:
     description: >-
       Comma-separated hosts that URLs inside the blueprint may point at —
@@ -331,6 +384,8 @@ runs:
         RESTORE_COURSE_URL: ${{ inputs.restore-course-url }}
         EXTRA_PLUGINS: ${{ inputs.extra-plugins }}
         THEME: ${{ inputs.theme }}
+        RESTORE_DATABASE_URL: ${{ inputs.restore-database-url }}
+        RESTORE_DATABASE_SHA256: ${{ inputs.restore-database-sha256 }}
         DATA_HOSTS: ${{ inputs.data-hosts }}
         MOODLE_BRANCH: ${{ inputs.moodle-branch }}
         OUT_DIR: ${{ runner.temp }}/preview-out

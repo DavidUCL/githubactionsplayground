@@ -1,7 +1,7 @@
 {
   "_comment": [
     "One row per input of preview/action.yml. An input with NO row here is a",
-    "FAILURE in check 1o, not a skip \u2014 that is what stops this table",
+    "FAILURE in check 1o, not a skip — that is what stops this table",
     "fossilising as controls are added, the way REMOVED_PLUGIN_TYPES and",
     "RISKY_STEPS both did.",
     "",
@@ -41,7 +41,9 @@
     "TEACHERS": "1",
     "COURSE_FORMAT": "(default)",
     "LANGUAGE_PACKS": "",
-    "COURSES": "1"
+    "COURSES": "1",
+    "RESTORE_DATABASE_URL": "",
+    "RESTORE_DATABASE_SHA256": ""
   },
   "probes": [
     {
@@ -277,7 +279,7 @@
         "installMoodlePlugin"
       ],
       "expect_steps_removed": [],
-      "note": "Changes the step LIST: one installMoodlePlugin per plugin, so a second one appears. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because the coordinate is checked against reality \u2014 the commit, the archive and the version.php all have to be there. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
+      "note": "Changes the step LIST: one installMoodlePlugin per plugin, so a second one appears. Pinned to a full commit rather than a branch so the probe needs no ref lookup, and to a real public repository because the coordinate is checked against reality — the commit, the archive and the version.php all have to be there. The summary prints the resolved component@commit, not the coordinate that was typed, so there is nothing to match in it."
     },
     {
       "input": "theme",
@@ -314,7 +316,7 @@
       "env": "RESTORE_COURSE_URL",
       "probe": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
       "target": "shape",
-      "note": "Changes the step LIST, not just field values: createCourse becomes restoreCourse and the post-restore assertion is inserted. Index-normalised field paths cannot express that \u2014 inserting a step makes every later step compare against a different one. Uses the users=0 fixture: a backup carrying student1 is refused, because createUsers would fail mid-boot. NOTE the runPhpCode cancellation: the baseline carries the course-id assertion and this probe carries the restore assertion, so the multiset diff nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added rather than present in expect_steps_removed. THIS ROW THEREFORE DOES NOT PROVE THE RESTORE ASSERTION SHIPS - deleting BOTH assertions also nets to zero and this row stays green. A mutant covers that; do not re-add the claim here.",
+      "note": "Changes the step LIST, not just field values: createCourse becomes restoreCourse and the post-restore assertion is inserted. Index-normalised field paths cannot express that — inserting a step makes every later step compare against a different one. Uses the users=0 fixture: a backup carrying student1 is refused, because createUsers would fail mid-boot. NOTE the runPhpCode cancellation: the baseline carries the course-id assertion and this probe carries the restore assertion, so the multiset diff nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added rather than present in expect_steps_removed. THIS ROW THEREFORE DOES NOT PROVE THE RESTORE ASSERTION SHIPS - deleting BOTH assertions also nets to zero and this row stays green. A mutant covers that; do not re-add the claim here.",
       "expect_steps_added": [
         "restoreCourse"
       ],
@@ -333,7 +335,31 @@
       "expect_steps_removed": [
         "createCourse"
       ],
-      "note": "A menu, resolved to the pinned sample-course address inside the builder, so the form never carries a long URL. Same shape change as restore-course-url because it feeds the same setting \u2014 that is deliberate: two names for one thing is how a menu and a box end up disagreeing. NOTE the runPhpCode cancellation: the baseline carries the course-id assertion and this probe carries the restore assertion, so the multiset diff nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added rather than present in expect_steps_removed. THIS ROW THEREFORE DOES NOT PROVE THE RESTORE ASSERTION SHIPS - deleting BOTH assertions also nets to zero and this row stays green. A mutant covers that; do not re-add the claim here."
+      "note": "A menu, resolved to the pinned sample-course address inside the builder, so the form never carries a long URL. Same shape change as restore-course-url because it feeds the same setting — that is deliberate: two names for one thing is how a menu and a box end up disagreeing. NOTE the runPhpCode cancellation: the baseline carries the course-id assertion and this probe carries the restore assertion, so the multiset diff nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added rather than present in expect_steps_removed. THIS ROW THEREFORE DOES NOT PROVE THE RESTORE ASSERTION SHIPS - deleting BOTH assertions also nets to zero and this row stays green. A mutant covers that; do not re-add the claim here."
+    },
+    {
+      "input": "restore-database-url",
+      "env": "RESTORE_DATABASE_URL",
+      "probe": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/data/integration-test.sq3",
+      "env_extra": {
+        "RESTORE_DATABASE_SHA256": "5d7a367f7e29a6efcfefec4de1fa17619522dbc5fc48a695bfd4c32e3c59d5ea"
+      },
+      "target": "shape",
+      "expect_steps_added": [
+        "restoreDatabase",
+        "setAdminAccount"
+      ],
+      "expect_steps_removed": [],
+      "expect_summary_contains": "5d7a367f7e29a6efcfefec4de1fa17619522dbc5fc48a695bfd4c32e3c59d5ea",
+      "note": "The REAL published snapshot, pinned to a commit, downloaded and OPENED by the builder at link-build time (served from test/fixtures/net here, so the probe makes no request). `env_extra` supplies the digest because the two inputs are only valid as a pair - the sha256 is required whenever the URL is set, since a snapshot need not live in a git repository and the digest is the only record of which file the link was built against. NOTE THE runPhpCode CANCELLATION, the same trap the two course-backup rows carry: the baseline lands on a numbered add-form path and so carries the course-id assertion, while this probe lands by NAME - a restored database brings its own courses and decides its own numbering - and carries the database assertion instead. The multiset diff therefore nets to zero and 'runPhpCode' must be ABSENT from expect_steps_added. THIS ROW DOES NOT PROVE THE DATABASE ASSERTION SHIPS: deleting both assertions also nets to zero and this row stays green. Mutants cover that; do not re-add the claim here. `setAdminAccount` is in the added list because the administrator arrives WITH the snapshot, carrying the source site's password, and that step resets it to the one the review brief names. What the row also proves is expect_summary_contains: the digest reaches the artifact, which is the only place the file this link was built against is written down."
+    },
+    {
+      "input": "restore-database-sha256",
+      "env": "RESTORE_DATABASE_SHA256",
+      "probe": "5d7a367f7e29a6efcfefec4de1fa17619522dbc5fc48a695bfd4c32e3c59d5ea",
+      "target": "refusal",
+      "expect_error": "nothing to check it against",
+      "note": "A digest on its own has nothing to verify, and silently ignoring it is how a reviewer comes to believe a link was pinned when it was not. Refusing is also the only deterministic observable this input has on its own: paired with a URL it changes no artifact except by being CORRECT, and a wrong one is already covered by the reader's digest refusal."
     }
   ]
 }
