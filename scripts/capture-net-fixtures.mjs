@@ -163,6 +163,21 @@ export const URLS = [
     expect: "404 — the head-repo probe row",
     allowMissing: true,
   },
+  {
+    file: "integration-test.sq3",
+    url: `${RAW}/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/data/integration-test.sq3`,
+    expect:
+      "the published database snapshot the restore-database control reads at " +
+      "link-build time. THE REAL FILE, 7,958,528 bytes — it packs to ~425 KB in " +
+      "git and costs ~1.8s across a full mutation run, and a synthesised stand-in " +
+      "would prove only that we can read a file we wrote. Small hand-built " +
+      "databases earn their place as NEGATIVES, not as this.\n" +
+      "PINNED TO A COMMIT, not the `integrationtest` branch: mchef republishes " +
+      "`data/<slug>.sq3` in place, so a branch URL is a moving fixture, and the " +
+      "capture script refuses to write a partial manifest — which would leave it " +
+      "permanently unwritable. Verified identical to the branch copy today " +
+      "(sha256 5d7a367f…).",
+  },
   // --- SYNTHETIC, not captured from anywhere -------------------------------
   // A tiny body that CLAIMS to be enormous. There is no such URL on the
   // internet and there does not need to be: the property under test is that the

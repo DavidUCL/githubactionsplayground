@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-08-18T15:52:43.980Z",
+  "capturedAt": "2026-08-19T09:31:36.687Z",
   "entries": [
     {
       "url": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_500_STABLE/lib/plugins.json",
@@ -155,6 +155,15 @@
       "bytes": 14,
       "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
       "expect": "404 — the head-repo probe row",
+      "source": "network"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/DavidUCL/mchef-urls/a354757fde7c28aedafc9a8e6fd99d5f828a7359/data/integration-test.sq3",
+      "file": "integration-test.sq3",
+      "status": 200,
+      "bytes": 7958528,
+      "sha256": "5d7a367f7e29a6efcfefec4de1fa17619522dbc5fc48a695bfd4c32e3c59d5ea",
+      "expect": "the published database snapshot the restore-database control reads at link-build time. THE REAL FILE, 7,958,528 bytes — it packs to ~425 KB in git and costs ~1.8s across a full mutation run, and a synthesised stand-in would prove only that we can read a file we wrote. Small hand-built databases earn their place as NEGATIVES, not as this.\nPINNED TO A COMMIT, not the `integrationtest` branch: mchef republishes `data/<slug>.sq3` in place, so a branch URL is a moving fixture, and the capture script refuses to write a partial manifest — which would leave it permanently unwritable. Verified identical to the branch copy today (sha256 5d7a367f…).",
       "source": "network"
     },
     {
