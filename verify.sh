@@ -1730,6 +1730,7 @@ import("./scripts/db-assert.mjs").then(async (m) => {
         local PV_URL
         PV_URL=$(grep '^preview-url=' "$PV_OUT/gho" | cut -d= -f2-)
         if [ -z "$PV_URL" ]; then echo "FAIL: the builder produced no preview-url"; return; fi
+        printf '%s' "$PV_URL" >"$PV_OUT/url.txt"
         if [ "$2" = "noplugin" ]; then
             PV_URL=$(PV_IN="$PV_URL" node -e '
 import("./scripts/build-preview.mjs").then(async (m) => {
@@ -1767,6 +1768,25 @@ import("./scripts/assert.mjs").then(async (m) => {
     if (p.steps.length !== n) bad.push(`only ${p.steps.length} of ${n} steps ran`);
     if (!p.steps.every((s, i) => s.k === i + 1)) bad.push("the steps were not contiguous");
   }
+  // THE PROXY, not us. The playground routes github.com ZIP fetches through
+  // github-proxy.exelearning.dev, a courtesy service with no SLA, and it
+  // answers 502 from GitHub runners while working on a workstation minutes
+  // earlier — measured twice on this project, once here. Reported separately
+  // so the caller can waive it LOUDLY rather than going red on an outage in
+  // somebody elses infrastructure.
+  //
+  // Matched on the STEP, never on the error text. That mistake has already
+  // been paid for once: a workstation said "Failed to download plugin ZIP …:
+  // 502" while the runner said "Failed to fetch", so wording-matching turned
+  // an outage into a red gate a second time. The step covers every wording
+  // there will ever be.
+  //
+  // NOTE FOR ANYONE EDITING THIS BLOCK: it lives inside a single-quoted bash
+  // string, so an apostrophe here ends that string and breaks verify.sh.
+  const died = p.messages.find(
+    (msg) => msg.includes("Blueprint failed at step") && msg.includes("installMoodlePlugin"),
+  );
+  if (died) { console.log(`WAIVE: ${died}`); return; }
   if (p.failLines) bad.push(`${p.failLines} step(s) reported failure`);
   if (p.bootMs === null) bad.push("no boot-timing anchor, so the boot never finished");
   // THE ONE THAT MATTERS: the commit under review actually installed. Without
@@ -1784,11 +1804,41 @@ import("./scripts/assert.mjs").then(async (m) => {
     PV_REAL=$(pv_boot real none)
     PV_STRIPPED=$(pv_boot noplugin noplugin)
     PV_PROBLEMS=""
-    [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly: ${PV_REAL:-nothing}; "
-    [[ "$PV_STRIPPED" == FAIL:* ]] || PV_PROBLEMS+="a link with the plugin step REMOVED was accepted (got: ${PV_STRIPPED:-nothing}) — that blueprint boots perfectly and contains none of the plugin, so this check would be measuring nothing; "
+    PV_WAIVED=""
+    if [[ "$PV_REAL" == WAIVE:* ]]; then
+        # The plugin ZIP never arrived. Say what was NOT checked, then check
+        # what still can be WITHOUT the network: that the link the builder
+        # produced really does install the commit under review. That is a claim
+        # about our own output, and it is the part a proxy outage must not be
+        # allowed to stop covering.
+        PV_WAIVED="the boot of the real link (${PV_REAL#WAIVE: })"
+        PV_STATIC=$(PV_IN="$(cat "$WORK/pv_real/url.txt" 2>/dev/null)" PV_SHA="$PV_SHA" node -e '
+import("node:zlib").then(({ gunzipSync }) => {
+  const u = new URL(process.env.PV_IN);
+  const bp = JSON.parse(gunzipSync(Buffer.from(
+    u.searchParams.get("blueprint").replace(/-/g,"+").replace(/_/g,"/"), "base64")).toString("utf8"));
+  const self = bp.steps.filter((s) => s.step === "installMoodlePlugin");
+  if (self.length !== 1) return console.log(`FAIL: ${self.length} install steps, expected 1`);
+  if (!self[0].url.includes(process.env.PV_SHA)) return console.log("FAIL: not pinned to the head commit");
+  if (`${self[0].pluginType}_${self[0].pluginName}` !== "mod_attendance") return console.log("FAIL: wrong component");
+  console.log("OK");
+});' 2>/dev/null)
+        [[ "$PV_STATIC" == "OK" ]] || PV_PROBLEMS+="with the boot waived, the link itself does not install the commit under review: ${PV_STATIC:-nothing}; "
+    else
+        [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly: ${PV_REAL:-nothing}; "
+    fi
+    # NOT WAIVABLE, and graded on the REASON rather than on failing at all.
+    # This arm downloads no plugin, so a proxy outage cannot excuse it — and
+    # `FAIL:` alone would be satisfied by a boot that broke for any reason
+    # whatever, which is the loose grading that made an earlier check green
+    # against the wrong evidence.
+    [[ "$PV_STRIPPED" == *"the plugin under review was never extracted"* ]]         || PV_PROBLEMS+="a link with the plugin step REMOVED was not caught FOR THAT REASON (got: ${PV_STRIPPED:-nothing}) — that blueprint boots perfectly and contains none of the plugin, so this check would be measuring nothing; "
     if [[ -n "$PV_PROBLEMS" ]]; then
         echo "CHECK 12 FAIL: the action's own link is not being proved — $PV_PROBLEMS"
         FAILED+=("12: nothing proves a link the action produces actually boots")
+    elif [[ -n "$PV_WAIVED" ]]; then
+        echo "CHECK 12 WAIVED: $PV_WAIVED — the plugin ZIP proxy did not answer."
+        echo "  The link was still checked to install ${PV_SHA:0:7}; what is NOT covered is that it boots."
     else
         echo "CHECK 12 PASS: a link the ACTION built boots, installs the commit under review, and one with the plugin step removed is caught"
     fi
