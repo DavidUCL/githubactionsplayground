@@ -176,8 +176,8 @@ def main():
     for name, row in sorted(rows.items()):
         # `env_extra` lets ONE row set more than one variable.
         #
-        # Some controls are only valid as a pair — `restore-database-sha256` is
-        # required whenever `restore-database-url` is set — and probing one
+        # Some controls only mean anything alongside another — a
+        # `restore-database-sha256` needs a URL to check — and probing one
         # alone is REFUSED, which forces both rows to `target: refusal`. Quinn
         # measured what that costs: with both rows refusing, this check passes
         # even with the step emission deleted, so it observes nothing about the

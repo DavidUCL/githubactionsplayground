@@ -261,25 +261,30 @@ inputs:
 
       The reviewer's browser downloads this file itself, so the host must be
       public and must allow cross-origin reads.
+
+      Supplying restore-database-sha256 alongside this is optional; see there.
     required: false
     default: ""
   restore-database-sha256:
     description: >-
-      The sha256 of the file at restore-database-url. REQUIRED whenever that
-      box is filled. Get it with `curl -sL <url> | sha256sum`.
+      OPTIONAL. The sha256 of the file at restore-database-url, if you want it
+      checked. Get it with `curl -sL <url> | sha256sum`.
 
-      Every other address this action takes is pinned to a commit, so it can
-      only ever mean one file. A database snapshot is data and may be published
-      anywhere, so this digest is the only record of WHICH file the link was
-      built against.
+      You do not need it for the link to record which file it used: the file is
+      downloaded and hashed here in order to be opened at all, so the digest
+      appears in the summary either way.
 
-      It is checked at BUILD time, against the bytes that were downloaded and
-      inspected. It is NOT re-checked in the reviewer's browser and cannot be:
-      the restore rewrites the file's wwwroot, dataroot and version hash before
-      any code of ours could run, so the installed database no longer hashes to
-      the snapshot. What covers the reviewer's copy instead is the site
-      identity, which the restore leaves alone and the preview asserts in the
-      browser after the swap.
+      What supplying it buys is one specific thing — catching a file that
+      changed between you checking it and this build reading it. If it does not
+      match, the preview is refused rather than built against a file you have
+      not seen.
+
+      It is checked at BUILD time only. It is NOT re-checked in the reviewer's
+      browser and cannot be: the restore rewrites the file's wwwroot, dataroot
+      and version hash before any code of ours could run, so the installed
+      database no longer hashes to the snapshot. What binds the link to the file
+      in the browser is the site identity, which the restore leaves alone and
+      the preview asserts after the swap.
     required: false
     default: ""
   data-hosts:

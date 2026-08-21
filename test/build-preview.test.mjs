@@ -2848,6 +2848,14 @@ test("the review brief does not promise a password the restored admin does not h
   // Under a restore the administrator is the SNAPSHOT'S, carrying the source
   // site's password. Listing it next to "password `password`" sent the reviewer
   // to a failed login that reads as a broken preview.
+  // ...and it is SILENT when the snapshot's administrator is called `admin`,
+  // which is most of them. Keyed on the restore alone it printed "is called
+  // `admin`, not `admin`" — seen on a real preview, and it reads as a bug.
+  const ordinary = brief({ dbSnapshot: SNAPSHOT });
+  assert.ok(!/came with the restored database/.test(ordinary),
+    "no caveat when the name does not differ");
+  assert.match(ordinary, /<code>admin<\/code>/, "and admin is simply listed as a login");
+
   const renamed = { ...SNAPSHOT, facts: { ...SNAPSHOT.facts, adminUsername: "siteadmin" } };
   const restored = brief({ dbSnapshot: renamed });
   assert.match(restored, /<code>siteadmin<\/code>/, "the snapshot's own admin is the login");
@@ -2978,4 +2986,27 @@ test("who counts as an administrator is decided in one place", () => {
   assert.equal(isAdministrator(undefined, { facts: { adminUsername: "" } }), false);
   // A name that only matches because the snapshot was not consulted.
   assert.equal(isAdministrator("siteadmin"), false, "without the snapshot it is just a name");
+});
+
+test("the snapshot digest is optional, and recorded whether or not it is given", async () => {
+  const { checkSnapshot } = await import("../scripts/snapshot.mjs");
+  // The digest was required for a while, on the reasoning that the address is
+  // not commit-pinned so the hash is the only record of which file was used.
+  // Both halves were wrong: the builder downloads and hashes the file in order
+  // to open it at all, and what binds the link to the file in the BROWSER is
+  // the site identity (exit 72), which the digest could never do — it is not
+  // re-checked there and cannot be.
+  //
+  // What must survive is that a digest, WHEN GIVEN, is still honoured. That is
+  // inspectSnapshot's contract and is covered in test/snapshot.test.mjs; this
+  // pins the half that is easy to lose — that omitting it is not a refusal.
+  const facts = {
+    identity: "b".repeat(32), rawHtml: [], courses: [], usernames: ["admin"],
+    adminUsername: "admin", branch: "500",
+  };
+  assert.deepEqual(
+    checkSnapshot(facts, { reservedUsernames: [], reservedCourses: [], moodleBranch: "MOODLE_500_STABLE" }),
+    [],
+    "nothing about a snapshot's acceptability depends on a digest being supplied",
+  );
 });

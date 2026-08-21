@@ -179,9 +179,10 @@ made by mchef's `playground --snapshot` export, and its sha256 in the box next
 to it. A dump from a MySQL or PostgreSQL Moodle will not work — the playground
 runs SQLite with its own driver patches, and the export is what converts it.
 
-The digest is **required**, and it is the one address here that is not pinned
-to a commit: a snapshot is data and may be published anywhere, so the digest is
-the only record of which file the link was built against.
+The digest is **optional**. The file is downloaded and hashed here in order to
+be opened at all, so the summary records which file the link used whether or not
+you supply one; giving it catches a file that changed between you checking it
+and the link being built.
 
 Everything about the file is checked when the LINK is built, by downloading it
 and opening it, because there is nowhere else it can be checked:
@@ -209,10 +210,11 @@ also creates, has no administrator, or comes from a different Moodle branch than
 the one you are booting.
 
 Two things it deliberately does **not** claim. The digest is a build-time
-record: the reviewer's browser downloads the file again and checks nothing, and
-the digest could not be re-checked there even in principle, because the restore
-rewrites the file before any code of ours could run. What covers the reviewer's
-copy instead is the **site identity**, which the restore leaves alone and the
+record only: the reviewer's browser downloads the file again and checks nothing,
+and the digest could not be re-checked there even in principle, because the
+restore rewrites the file before any code of ours could run. That is also why it
+is not required — it is not what binds the link to the file. What does bind them
+is the **site identity**, which the restore leaves alone and the
 preview compares in the browser after the swap — so a file that changed between
 the link being built and the link being opened fails the boot by name. And the
 administrator account comes from the snapshot, carrying that site's password,

@@ -1430,11 +1430,16 @@ export function buildBlueprint({
       // changed nothing a reviewer could see, before or after.
       `<ul><li>Logins: ${roster.map((u) => `<code>${escapeHtml(u)}</code>`).join(", ")}` +
       ` — password <code>password</code></li>` +
-      // Only under a restore. The administrator is the snapshot's, so its name
-      // is the source site's rather than `admin` — worth saying, because a
-      // reviewer who tries `admin` gets nowhere and reads that as a broken
-      // preview. Its password IS the one above: setAdminAccount reset it.
-      (dbSnapshot
+      // Only under a restore, and only when the name ACTUALLY DIFFERS. Keyed on
+      // `dbSnapshot` alone it printed "is called `admin`, not `admin`" on every
+      // restored preview whose snapshot has an ordinary administrator — which is
+      // most of them, and it reads as a bug in front of whoever is watching.
+      // Seen on a real preview before this guard existed.
+      //
+      // When it does differ, it is worth saying: a reviewer who tries `admin`
+      // gets nowhere and reads that as a broken preview. The password is the one
+      // above either way — setAdminAccount reset it.
+      (dbSnapshot && dbSnapshot.facts.adminUsername !== "admin"
         ? `<li>The administrator came with the restored database and is called ` +
           `<code>${escapeHtml(dbSnapshot.facts.adminUsername)}</code>, not ` +
           `<code>admin</code></li>`
@@ -2559,24 +2564,29 @@ async function main() {
     const urlProblem = checkUrl(snapshotUrl, hosts);
     if (urlProblem) {
       problems.add("restore-database-url", urlProblem);
-    } else if (!snapshotSha) {
-      // REQUIRED, not optional. The URL need not be a commit-pinned one — a
-      // snapshot is data and may be published anywhere — so the digest is the
-      // only thing that says WHICH file this link was built against. Without
-      // it the link means "whatever is at that address when the reviewer opens
-      // it", which is exactly what the artifact must never imply.
-      problems.add(
-        "restore-database-sha256",
-        `required whenever restore-database-url is set. The address is not pinned to ` +
-          `a commit, so the digest is the only record of which file this link was ` +
-          `built against. Get it with: curl -sL <url> | sha256sum`,
-      );
-    } else if (!/^[0-9a-fA-F]{64}$/.test(snapshotSha)) {
+    } else if (snapshotSha && !/^[0-9a-fA-F]{64}$/.test(snapshotSha)) {
       problems.add(
         "restore-database-sha256",
         `must be 64 hex characters (a sha256), got: ${JSON.stringify(snapshotSha)}`,
       );
     } else {
+      // OPTIONAL, and deliberately so. It was required for a while on the
+      // reasoning that the address is not commit-pinned, so the digest is the
+      // only record of which file the link was built against. Both halves of
+      // that were wrong.
+      //
+      // The record does not need the caller: the file is downloaded and hashed
+      // HERE in order to be opened at all, so the artifact carries the digest
+      // whether or not anyone typed it. And the digest is not what binds the
+      // link to the file — it cannot be, because it is never re-checked in the
+      // reviewer's browser. What binds them is the site identity, read out of
+      // this same download and compared IN the browser after the restore (exit
+      // 72), which covers the window that actually matters: between building
+      // the link and opening it.
+      //
+      // So supplying it buys one thing — catching a file that changed between
+      // you checking it and this build reading it. Worth honouring when given.
+      // Not worth refusing a preview over.
       const read = await inspectSnapshot(snapshotUrl, { expectedSha256: snapshotSha });
       if (!read.ok) {
         problems.add("restore-database-url", read.reason);

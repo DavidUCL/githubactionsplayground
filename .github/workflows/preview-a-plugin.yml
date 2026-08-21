@@ -30,12 +30,12 @@ on:
         required: true
         type: string
       plugin-ref:
-        description: "Branch, tag or full SHA. Resolved to a SHA before the link is built. Blank = default branch."
+        description: "Branch, tag or commit to preview, e.g. playground-test. Blank = default branch."
         required: false
         type: string
         default: ""
       moodle-branch:
-        description: "Which Moodle to boot. Only branches whose compatibility data we hold."
+        description: "Which Moodle version to boot."
         required: false
         type: choice
         default: MOODLE_500_STABLE
@@ -44,10 +44,7 @@ on:
           - MOODLE_405_STABLE
           - MOODLE_404_STABLE
       sample-content:
-        description: >-
-          Put a ready-made course into the preview so it looks like a real site.
-          "review-course" restores a sample course with ten ordinary activities.
-          Leave as (default) for the small course the preview builds itself.
+        description: "Select review-course for a ready-made course with ten activities."
         required: false
         type: choice
         default: "(default)"
@@ -55,82 +52,46 @@ on:
           - "(default)"
           - review-course
       restore-course-url:
-        description: >-
-          Fill the preview with a real course instead of an empty one. Paste the
-          address of a Moodle course backup (.mbz). It is downloaded and checked
-          when the link is built, so a wrong file is refused with a reason
-          rather than booting a Moodle with nothing in it. Leave blank for an
-          empty course.
+        description: "URL of a Moodle course backup (.mbz) to restore, e.g. https://example.ac.uk/course.mbz. Blank = an empty course."
         required: false
         default: ""
       restore-database-url:
-        description: >-
-          Restore a WHOLE DATABASE — a real site's courses, users and content —
-          instead of the empty Moodle this preview otherwise builds. Paste the
-          address of a .sq3 snapshot made by mchef's `playground --snapshot`
-          export; a plain MySQL or PostgreSQL dump will not work. It does not
-          have to be in a git repository, but the host must be public, must
-          allow cross-origin reads, and must be listed in data-hosts. The file
-          is downloaded and opened when the link is built, because that is the
-          only place anything about it can be checked. Fill in the sha256 box
-          as well — it is required with this one.
+        description: "URL of a .sq3 snapshot - restores a full site. Blank = empty Moodle"
         required: false
         type: string
         default: ""
       restore-database-sha256:
-        description: >-
-          The sha256 of the snapshot above, required whenever that box is
-          filled. Get it with `curl -sL <url> | sha256sum`. Every other address
-          here is pinned to a commit; a snapshot is not, so this is the only
-          record of which file the link was built against.
+        description: "Optional sha256 checksum of restore database."
         required: false
         type: string
         default: ""
       extra-plugins:
-        description: >-
-          Other plugins this one needs, comma separated, each written
-          owner/repo@ref#type_name (e.g.
-          ucl-isd/moodle-local_sitsgradepush@main#local_sitsgradepush). Up to
-          five. They are installed BEFORE the plugin under review, in dependency
-          order. A plugin whose dependency is missing installs silently and
-          fails later, so the reviewer sees a broken plugin instead of a missing
-          one.
+        description: "Extra plugins. Up to 5, comma separated. owner/repo@ref#component e.g. ucl-isd/moodle-local_sitsgradepush@main#local_sitsgradepush"
         required: false
         type: string
         default: ""
       theme:
-        description: >-
-          Look at the plugin under a real theme instead of stock Boost. ONE
-          theme, written owner/repo@ref#theme_name (e.g.
-          moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_500_STABLE#theme_boost_union).
-          Blank = Boost. Leave it blank when the plugin under review IS a theme;
-          the preview already switches to it. The repository must be PUBLIC —
-          the reviewer's browser downloads it with no credentials.
+        description: "Theme. Blank = boost. owner/repo@ref#component e.g. moodle-an-hochschulen/moodle-theme_boost_union@MOODLE_405_STABLE#theme_boost_union"
         required: false
         type: string
         default: ""
       data-hosts:
-        description: >-
-          Hosts the preview may download plugins from, comma separated. Blank
-          means github.com,raw.githubusercontent.com. Extra plugins and themes
-          are GitHub-only whatever this says — their address is a GitHub
-          coordinate — so widen it only for a URL you paste in full, such as a
-          course backup on a university host.
+        description: "Additional permitted hosts, comma separated. Blank = github.com,raw.githubusercontent.com"
         required: false
         type: string
         default: ""
       landing-path:
-        description: "Optional: site-relative page to land on, e.g. /course/view.php?id=2. Blank = the default for the plugin type."
+        description: "Landing page. e.g. /course/view.php?name=cwdemo. Blank = default for the plugin type."
         required: false
         type: string
         default: ""
       plugin-component:
-        description: "Optional: force the component, e.g. mod_coursework. Blank = read from the plugin's own version.php."
+        description: "Component name. e.g. mod_coursework. Blank = read from version.php."
         required: false
         type: string
         default: ""
       php-version:
-        description: "PHP to boot. Leave as (default) to let the branch decide. Must be one the chosen Moodle accepts — 4.x takes 8.1-8.3, 5.x takes 8.2-8.4. An invalid pair is refused, not substituted."
+        description: "PHP version. (default) = decided by the Moodle branch."
         required: false
         type: choice
         default: "(default)"
@@ -141,7 +102,7 @@ on:
           - "8.3"
           - "8.4"
       login-as:
-        description: "Who you arrive as. Leave as (default) to derive it from the landing page; pick a student to see the plugin as a learner."
+        description: "Sign-in user. (default) = derived from the landing page."
         required: false
         type: choice
         default: "(default)"
@@ -158,7 +119,7 @@ on:
           - student2
           - student3
       teachers:
-        description: "Editing teachers in the review course. 0 signs you in as an administrator instead, which can open anything — so it is not what a teacher-less site looks like to a teacher."
+        description: "Num editing teachers in REVIEW course. 0 = admin sign-in."
         required: false
         type: choice
         # QUOTED. An unquoted 0 parses as the integer 0 for a `choice`, and the
@@ -166,30 +127,30 @@ on:
         default: "1"
         options: ["0", "1", "2"]
       students:
-        description: "Student accounts in the review course. Raise it for anything that lists, groups or grades people."
+        description: "Num students in REVIEW course"
         required: false
         type: choice
         default: "1"
         options: ["1", "2", "3", "5", "10", "20"]
       sections:
-        description: "Sections in the review course. No visible effect under the social format, which has no sections."
+        description: "Num sections in REVIEW course"
         required: false
         type: choice
         default: "3"
         options: ["1", "3", "5", "10"]
       courses:
-        description: "How many courses the preview builds. More than one shows whether a plugin honours enrolment: you are put in the second but NOT the third."
+        description: "Num courses to build. You are enrolled in the 2, not 3"
         required: false
         type: choice
         default: "1"
         options: ["1", "2", "3"]
       language-packs:
-        description: "Extra languages, comma separated (e.g. es or es,ar). The first becomes the site language. Up to 3. Use ar to see the plugin right-to-left."
+        description: "Language packs. Max 3, comma separated. e.g. en,fr,es"
         required: false
         type: string
         default: ""
       course-format:
-        description: "Course format for the review course. Leave as (default) for topics. Not for use when the plugin under review IS a course format — the preview already uses it."
+        description: "Course format for REVIEW course. (default) = topics."
         required: false
         type: choice
         default: "(default)"
