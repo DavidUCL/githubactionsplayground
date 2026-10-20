@@ -28,6 +28,37 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 # ---------------------------------------------------------------------------
+# THE CLOSING TALLY.
+#
+# This script used to end on a bare `=== GATE PASS ===`, saying nothing about
+# what did not run. Six runs in a row of a check waived for a structural
+# reason read as green to anyone who did not scroll two thousand lines, and a
+# check that crashed before printing a verdict was simply absent.
+#
+# So the gate runs itself once more as a child, keeps its log, and hands the
+# log to scripts/gate-tally.mjs, which names every check that was waived,
+# skipped or FAILED, and counts a check that never reported as a failure.
+# The child's exit code is kept: the tally can turn a pass into a fail, never
+# the other way round.
+if [[ -z "${GATE_TALLY_INNER:-}" ]]; then
+    GATE_LOG="$(mktemp)"
+    GATE_TALLY_INNER=1 bash "$SCRIPT_DIR/verify.sh" "$@" 2>&1 | tee "$GATE_LOG"
+    GATE_RC=${PIPESTATUS[0]}
+    echo ""
+    node scripts/gate-tally.mjs verify.sh "$GATE_LOG"
+    TALLY_RC=$?
+    rm -f "$GATE_LOG"
+    if [[ $TALLY_RC -ne 0 && $GATE_RC -eq 0 ]]; then
+        if [[ $TALLY_RC -eq 1 ]]; then
+            echo "=== GATE FAIL: a check never reported, or reported under an id the tally does not know (see above) ==="
+        else
+            echo "=== GATE FAIL: the tally itself broke, so what ran is unknown ==="
+        fi
+        exit 1
+    fi
+    exit "$GATE_RC"
+fi
+# ---------------------------------------------------------------------------
 # ISOLATE THE RUNNER'S OUTPUT FILES.
 #
 # This is a TEST HARNESS, and much of what it runs exists to append to
@@ -60,6 +91,31 @@ check() {
 }
 
 echo "=== verify.sh — boot-verify action gate ==="
+
+# 1x: the closing tally (scripts/gate-tally.mjs, run by the wrapper at the top)
+# must FAIL a check that never reports, and one reported under an id it does
+# not know. Its unit tests cover the logic; this covers the command's exit code,
+# which is the part the wrapper actually acts on.
+TALLY_SELF=$(mktemp -d)
+# The verdict word is passed in as %s on purpose: written out literally, these
+# sample lines would be read by the tally's own scan of this file as real
+# checks named 1a, 1b and 9z, which then never report.
+V=PASS
+printf 'echo "CHECK 1a %s: a"\necho "CHECK 1b %s: b"\n' "$V" "$V" >"$TALLY_SELF/src.sh"
+printf 'CHECK 1a %s: a\nCHECK 1b %s: b\n' "$V" "$V" >"$TALLY_SELF/ok.log"
+printf 'CHECK 1a %s: a\n' "$V" >"$TALLY_SELF/silent.log"
+printf 'CHECK 1a %s: a\nCHECK 1b %s: b\nCHECK 9z %s: new\n' "$V" "$V" "$V" >"$TALLY_SELF/unknown.log"
+X_SELF=""
+node scripts/gate-tally.mjs "$TALLY_SELF/src.sh" "$TALLY_SELF/ok.log" >/dev/null 2>&1 || X_SELF+="a clean log; "
+node scripts/gate-tally.mjs "$TALLY_SELF/src.sh" "$TALLY_SELF/silent.log" >/dev/null 2>&1 && X_SELF+="a silent check; "
+node scripts/gate-tally.mjs "$TALLY_SELF/src.sh" "$TALLY_SELF/unknown.log" >/dev/null 2>&1 && X_SELF+="an unknown id; "
+rm -rf "$TALLY_SELF"
+if [[ -z "$X_SELF" ]]; then
+    echo "CHECK 1x PASS: the closing tally fails a silent check and an unknown id, and passes a clean log"
+else
+    echo "CHECK 1x FAIL: the closing tally misreads: $X_SELF"
+    FAILED+=("1x: closing tally misreads $X_SELF")
+fi
 
 # THE OFFLINE SUITE IS OFFLINE, and this asserts it rather than hoping.
 #
@@ -2009,7 +2065,10 @@ json.dump(bp, open('$TAMPER_OUT/blueprint.json', 'w'))
         && python3 -c "import json,sys; v=json.load(open('$TAMPER_OUT/verdict.json')); sys.exit(0 if v['status'] != 'pass' else 1)"
     check $? 5 "swapped local blueprint is refused by the hash binding (log: /tmp/bv-verify-tamper.log)"
 else
-    echo "CHECK 4-7 SKIP: live boot (set LIVE=1 to include — required for the gate)"
+    # One line per check, so the tally can name each one that did not run.
+    for LIVE_ID in 4 5 6 7 8 9 10 11 12; do
+        echo "CHECK $LIVE_ID SKIP: live browser boot (set LIVE=1 to include — required for the gate)"
+    done
 fi
 
 # Prove the isolation held. Without this the fix is invisible: a future edit
