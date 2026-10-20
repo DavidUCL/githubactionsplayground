@@ -61,6 +61,9 @@ export function renderComment({
   // `playground-version` output). Empty when it could not be read; undefined
   // for older callers, which then print nothing about it.
   playgroundVersion,
+  // Checks the builder could not run (its `caveats` output, split). Shown so a
+  // comment for a preview with gaps does not look like every other one.
+  caveats = [],
 }) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
@@ -136,6 +139,9 @@ export function renderComment({
           "",
         ]
       : []),
+    ...(caveats.length
+      ? ["**Not checked in this run:**", ...caveats.slice(0, 8).map((c) => `- ${plainText(c)}`), ""]
+      : []),
     // Recorded, not checked: nothing in this action opens the link.
     ...(playgroundVersion === undefined
       ? []
@@ -145,6 +151,13 @@ export function renderComment({
     "Smoke test only: it shows whether the plugin installs and renders, not",
     "whether it is correct. Rewritten in place on every push.",
   ].join("\n");
+}
+
+// A caveat's reason can carry text fetched from elsewhere (a URL, an HTTP
+// error). Render it as plain words: no characters that make links, images,
+// HTML or code in markdown, and a bounded length.
+function plainText(s) {
+  return String(s).replace(/[\[\]()<>`|*_!\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
 }
 
 // This step runs even when the build failed, so it must still write a body.
@@ -176,6 +189,7 @@ function main() {
     // here instead, a link to a UCL host would be built and then not posted.
     allowedOrigins: originsOrNone(process.env.PLAYGROUND_ORIGINS),
     playgroundVersion: process.env.PLAYGROUND_VERSION ?? "",
+    caveats: (process.env.CAVEATS || "").split(" ¦ ").map((c) => c.trim()).filter(Boolean),
   });
   if (process.env.GITHUB_OUTPUT) {
     // Multi-line outputs need a delimiter that cannot appear in the body.

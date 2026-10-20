@@ -101,6 +101,11 @@ Everything in it exists to stop the link lying about which code it opens:
   daviducl.github.io). Moving to a new host means setting both
   `playground-host` and `playground-origins`: a value replaces the list, so it
   can also narrow it to the one host you use.
+- **Says what it could not check.** When a check cannot run (Moodle's
+  component list does not load, no `version.php` can be read, the playground's
+  step list is unreadable), the comment and the job summary list it under
+  "Not checked in this run", and the comment names the playground build the
+  link was made against. Neither claims the link works: nothing here opens it.
 
 ### Looking at the plugin under a real theme (`theme`)
 

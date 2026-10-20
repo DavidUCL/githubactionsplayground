@@ -1845,6 +1845,8 @@ export function previewSummary({
   // One line naming the playground build the link was made against, from
   // describeHostVersion. Absent for callers that did not read it.
   hostVersionLine,
+  // Checks that could not run in this build, each one sentence.
+  caveats = [],
 }) {
   return [
     "## ▶ Playground preview",
@@ -1960,6 +1962,9 @@ export function previewSummary({
         ]
       : []),
     ...riskyNotes(risky),
+    ...(caveats.length
+      ? ["**Not checked in this run:**", ...caveats.map((c) => `- ${sanitiseForLog(c)}`), ""]
+      : []),
     ...(hostVersionLine ? [hostVersionLine, ""] : []),
     "Smoke test only: this shows whether the plugin installs and renders, not",
     "whether it is correct. Nothing here booted it — the link boots in your",
@@ -2309,6 +2314,10 @@ async function main() {
   // README) — this states the assumption the compatibility check is made
   // against, so a wrong assumption is visible rather than silent.
   const moodleBranch = process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH;
+  // Checks that could not run, said to the REVIEWER, not only in the log.
+  // Each of these used to be a single `note:` line in the workflow log, which
+  // no reviewer reads, while the comment looked like every other green one.
+  const caveats = [];
 
   // version.php is the plugin's own declaration of what it is and what it
   // needs. When the plugin repo is the one checked out — the normal case for
@@ -2342,6 +2351,10 @@ async function main() {
   if (!core.ok) {
     // Loud, not silent: a skipped check must never look like a passed one.
     console.log(`note: core-component collision NOT checked — ${core.reason}`);
+    caveats.push(
+      "Whether the plugin claims the name of a plugin Moodle already ships, and whether its dependencies are met: " +
+        `Moodle's component list did not load (${core.reason}).`,
+    );
   }
 
   // The resolved identity, whatever it came from. `plugin-component` is a
@@ -2374,7 +2387,10 @@ async function main() {
 
     const compat = checkMoodleCompatibility(declared, moodleBranch);
     problems.check("moodle-branch", compat);
-    if (compat.ok && compat.reason) console.log(`note: ${compat.reason}`);
+    if (compat.ok && compat.reason) {
+      console.log(`note: ${compat.reason}`);
+      caveats.push(`Moodle-version compatibility: ${compat.reason}.`);
+    }
   }
   if (!declared) {
     // Not fatal. This repo's own dogfood previews a third-party plugin that
@@ -2384,6 +2400,7 @@ async function main() {
       `note: no version.php on disk under ${JSON.stringify(sanitiseForLog(pluginRoot))} and none fetched for ` +
         `${headSha.slice(0, 7)} — Moodle-version compatibility NOT checked`,
     );
+    caveats.push("Moodle-version compatibility: no version.php could be read for this commit.");
   }
 
   // A landing override must stay on the playground's own origin. Validated
@@ -2408,7 +2425,10 @@ async function main() {
   const phpOverride = opt(process.env.PHP_VERSION);
   const phpOk = checkPhpForBranch(phpOverride, moodleBranch);
   problems.check("php-version", phpOk);
-  if (phpOk.ok && phpOk.reason) console.log(`note: ${phpOk.reason}`);
+  if (phpOk.ok && phpOk.reason) {
+    console.log(`note: ${phpOk.reason}`);
+    caveats.push(`PHP version: ${phpOk.reason}.`);
+  }
 
   const loginAs = opt(process.env.LOGIN_AS);
   // The NAME check runs against the maximum of every count, so an account this
@@ -2751,6 +2771,7 @@ async function main() {
       `::warning title=playground-host::could not confirm this playground implements ` +
         `every step in the blueprint — ${sanitiseForLog(hostVerdict.unknown).replace(/\r?\n/g, " ")}`,
     );
+    caveats.push(`Whether the playground can run every step in this preview: ${hostVerdict.unknown}.`);
   }
   // Which build the link was made against, recorded rather than verified:
   // nothing here opens the link. Said out loud when it cannot be read.
@@ -2762,6 +2783,9 @@ async function main() {
     );
   }
   setOutput("playground-version", hostVersion.buildVersion || "");
+  // One line, for the comment step. Its own text is ours; the reasons inside
+  // can carry fetched text, so render-comment cleans each one again.
+  setOutput("caveats", caveats.map((c) => sanitiseForLog(c).replace(/\s+/g, " ")).join(" ¦ "));
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
@@ -2796,6 +2820,7 @@ async function main() {
     headSha,
     url,
     hostVersionLine: describeHostVersion(hostVersion),
+    caveats,
     component: declared?.component || `${type}_${name}`,
     headRepo,
     extras,

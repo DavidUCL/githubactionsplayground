@@ -361,6 +361,12 @@ outputs:
       Empty when it could not be read. Recorded, not verified: this action does
       not open the link.
     value: ${{ steps.build.outputs.playground-version }}
+  caveats:
+    description: >-
+      Checks the builder could not run for this preview, separated by " ¦ "
+      (for example when Moodle's component list could not be fetched). Empty
+      when everything ran. Shown in the comment and the job summary.
+    value: ${{ steps.build.outputs.caveats }}
   plugin-type:
     description: "Resolved plugin type"
     value: ${{ steps.build.outputs.plugin-type }}
@@ -448,5 +454,6 @@ runs:
         RISKY_STEPS: ${{ steps.build.outputs.risky-steps }}
         PLAYGROUND_ORIGINS: ${{ inputs.playground-origins }}
         PLAYGROUND_VERSION: ${{ steps.build.outputs.playground-version }}
+        CAVEATS: ${{ steps.build.outputs.caveats }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"
