@@ -95,6 +95,12 @@ Everything in it exists to stop the link lying about which code it opens:
   after posting, and it survives a playground redeploy.
 - **The review course is named `PR #42 · <sha> · <plugin>`**, so the
   reviewer's own screen confirms the commit rather than the comment doing it.
+- **Only allowed playground origins.** The link must point at an origin on
+  the allowed list. The list is the `playground-origins` input; empty means
+  the built-in one (moodle-playground.com, ateeducacion.github.io,
+  daviducl.github.io). Moving to a new host means setting both
+  `playground-host` and `playground-origins`: a value replaces the list, so it
+  can also narrow it to the one host you use.
 
 ### Looking at the plugin under a real theme (`theme`)
 

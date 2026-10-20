@@ -20,7 +20,7 @@ import { fetchCoreComponents, DEFAULT_MOODLE_BRANCH } from "./plugin-version.mjs
 import {
   buildPreviewUrl,
   DEFAULT_DATA_HOSTS,
-  DEFAULT_ORIGINS,
+  parseOrigins,
   setOutput,
 } from "./build-preview.mjs";
 import { sanitiseForLog } from "./sanitise.mjs";
@@ -88,7 +88,7 @@ async function main() {
   const url = buildPreviewUrl({
     playgroundHost,
     blueprint,
-    allowedOrigins: DEFAULT_ORIGINS,
+    allowedOrigins: parseOrigins(process.env.PLAYGROUND_ORIGINS),
     dataHosts,
   });
   setOutput("preview-url", url);

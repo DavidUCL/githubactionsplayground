@@ -11,7 +11,7 @@
 
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { DEFAULT_ORIGINS } from "./build-preview.mjs";
+import { DEFAULT_ORIGINS, parseOrigins } from "./build-preview.mjs";
 
 const MARKER = "<!-- moodle-playground-preview -->";
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -135,6 +135,18 @@ export function renderComment({
   ].join("\n");
 }
 
+// This step runs even when the build failed, so it must still write a body.
+// A malformed list already failed the build with the reason; here it means
+// no origin is postable, which renders the "no preview" body instead of
+// crashing and leaving an older commit's link looking current.
+function originsOrNone(raw) {
+  try {
+    return parseOrigins(raw);
+  } catch {
+    return [];
+  }
+}
+
 function main() {
   const body = renderComment({
     url: process.env.PREVIEW_URL || "",
@@ -148,6 +160,9 @@ function main() {
       ? process.env.PREVIEW_USER_IS_ADMIN === "true"
       : (process.env.PREVIEW_USER || "admin") === "admin",
     riskySteps: (process.env.RISKY_STEPS || "").split(",").map((r) => r.trim()).filter(Boolean),
+    // The same list the builder checked the link against; with the defaults
+    // here instead, a link to a UCL host would be built and then not posted.
+    allowedOrigins: originsOrNone(process.env.PLAYGROUND_ORIGINS),
   });
   if (process.env.GITHUB_OUTPUT) {
     // Multi-line outputs need a delimiter that cannot appear in the body.

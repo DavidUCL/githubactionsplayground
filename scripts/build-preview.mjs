@@ -266,6 +266,41 @@ export const DEFAULT_ORIGINS = [
   "https://daviducl.github.io",
 ];
 
+/**
+ * The playground origins a link may point at, from the `playground-origins`
+ * input. Empty means DEFAULT_ORIGINS. A value REPLACES the defaults rather
+ * than adding to them, so a deployment can narrow the list to its own host as
+ * well as add one; `playground-host` must then be on it.
+ *
+ * This list used to be fixed in the code, so pointing `playground-host` at a
+ * UCL address was refused however the workflow was set up.
+ *
+ * Each entry must be a bare https origin: no path, query, fragment or
+ * credentials, because the guard compares `URL.origin` and anything else could
+ * never match, or would read as one host while being another.
+ */
+export function parseOrigins(raw) {
+  const entries = String(raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (entries.length === 0) return DEFAULT_ORIGINS;
+  return entries.map((entry) => {
+    let url;
+    try {
+      url = new URL(entry);
+    } catch {
+      throw new Error(`playground-origins: not a URL: ${entry}`);
+    }
+    if (url.protocol !== "https:") throw new Error(`playground-origins: must be https: ${entry}`);
+    if (url.username || url.password) throw new Error(`playground-origins: must not carry userinfo: ${entry}`);
+    if (entry.replace(/\/$/, "") !== url.origin) {
+      throw new Error(`playground-origins: must be a bare origin like https://example.org, not ${entry}`);
+    }
+    return url.origin;
+  });
+}
+
 /** Course the reviewer lands in. */
 const COURSE_SHORTNAME = "REVIEW";
 /** Where the extra courses live, so the review course keeps its own category. */
@@ -2659,6 +2694,7 @@ async function main() {
   const url = buildPreviewUrl({
     playgroundHost,
     blueprint,
+    allowedOrigins: parseOrigins(process.env.PLAYGROUND_ORIGINS),
     dataHosts: hosts,
     requireSelfUrl: pluginZipUrl(headRepo, headSha),
   });

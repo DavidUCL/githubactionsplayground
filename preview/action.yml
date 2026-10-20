@@ -324,6 +324,16 @@ inputs:
       for immediately before go-live.
     required: false
     default: "https://daviducl.github.io/moodle-playground"
+  playground-origins:
+    description: >-
+      Comma-separated playground origins a link may point at, for example
+      "https://playground.example.ac.uk". Empty uses the built-in list
+      (moodle-playground.com, ateeducacion.github.io, daviducl.github.io). A
+      value REPLACES that list, so it can narrow it as well as add a host, and
+      playground-host must be on it or the link is refused. Each entry is a
+      bare https origin: no path, query or credentials.
+    required: false
+    default: ""
 outputs:
   preview-url:
     description: "The URL to put on the pull request"
@@ -380,6 +390,7 @@ runs:
         PLUGIN_TYPE: ${{ inputs.plugin-type }}
         PLUGIN_NAME: ${{ inputs.plugin-name }}
         PLAYGROUND_HOST: ${{ inputs.playground-host }}
+        PLAYGROUND_ORIGINS: ${{ inputs.playground-origins }}
         PLUGIN_ROOT: ${{ inputs.plugin-root }}
         PLUGIN_COMPONENT: ${{ inputs.plugin-component }}
         LANDING_PATH: ${{ inputs.landing-path }}
@@ -428,5 +439,6 @@ runs:
         PREVIEW_USER: ${{ steps.build.outputs.preview-user }}
         PREVIEW_USER_IS_ADMIN: ${{ steps.build.outputs.preview-user-is-admin }}
         RISKY_STEPS: ${{ steps.build.outputs.risky-steps }}
+        PLAYGROUND_ORIGINS: ${{ inputs.playground-origins }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"

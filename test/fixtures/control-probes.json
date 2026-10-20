@@ -312,6 +312,14 @@
       "note": "Changes where the link points, not what the blueprint says. A blueprint diff would be the wrong assertion."
     },
     {
+      "input": "playground-origins",
+      "env": "PLAYGROUND_ORIGINS",
+      "probe": "https://moodle-playground.com",
+      "target": "refusal",
+      "expect_error": "playground origin not allowed",
+      "note": "playground-origins REPLACES the allowed list and only affects the origin guard, so a widening value changes no artifact. Narrowing it to exclude the baseline host is the one observable proof that the env var reaches the guard."
+    },
+    {
       "input": "restore-course-url",
       "env": "RESTORE_COURSE_URL",
       "probe": "https://raw.githubusercontent.com/moodle/moodle/MOODLE_404_STABLE/admin/tool/uploadcourse/tests/fixtures/backup.mbz",
