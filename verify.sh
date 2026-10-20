@@ -240,8 +240,10 @@ check $? 1a2 "every mutation anchor still matches (log: /tmp/bv-verify-anchors.l
 # Anti-vacuity: every assertion term must be pinned by some test. Without
 # this, a green suite proves nothing:
 # the first version of these tests let 13 of 14 terms be deleted silently.
+# MUTATIONS_SHARD=i/n (set by CI's matrix) runs one share of the mutants; the
+# label says which, so a green shard is never read as the whole list.
 node test/mutations.mjs >/tmp/bv-verify-mutations.log 2>&1
-check $? 1b "no surviving mutants (log: /tmp/bv-verify-mutations.log)"
+check $? 1b "no surviving mutants${MUTATIONS_SHARD:+ in shard $MUTATIONS_SHARD} (log: /tmp/bv-verify-mutations.log)"
 
 # Contract: every env var the scripts read must be supplied by action.yml.
 # Checks 2-3 use hand-made fixtures, so a renamed env var would otherwise

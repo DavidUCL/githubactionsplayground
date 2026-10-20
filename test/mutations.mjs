@@ -15,6 +15,7 @@
 import { execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { parseShard, takeShard } from "../scripts/shard.mjs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -1326,6 +1327,17 @@ const KNOWN_SURVIVORS = new Map([
   ["preview: answer the output's role question without the snapshot", "main() is not unit-tested; isAdministrator itself is pinned, its call site is not"],
 ]);
 
+// SHARDING. `MUTATIONS_SHARD=2/3` runs every third mutant from the second, so
+// CI can split the slowest check across parallel jobs (offline CI had reached
+// 27 of its 40 minutes). The anchor check and the baseline still cover the
+// whole list in every shard; only the mutant runs are split. A known survivor
+// counts as "now killed" only in the shard that ran it, or every shard would
+// report the other shards' survivors as fixed.
+const SHARD = parseShard(process.env.MUTATIONS_SHARD);
+const MINE = takeShard(MUTATIONS, SHARD);
+const MINE_LABELS = new Set(MINE.map(([label]) => label));
+const SHARD_NOTE = SHARD.count > 1 ? ` (shard ${SHARD.index + 1} of ${SHARD.count})` : "";
+
 const survivors = [];
 let killed = 0;
 
@@ -1357,7 +1369,7 @@ if (process.env.MUTATIONS_ANCHORS_ONLY) {
   process.exit(stale ? 1 : 0);
 }
 
-for (const [label, file, find, replace] of MUTATIONS) {
+for (const [label, file, find, replace] of MINE) {
   const dir = stageTree();
   try {
     const target = join(dir, file);
@@ -1375,7 +1387,7 @@ for (const [label, file, find, replace] of MUTATIONS) {
   }
 }
 
-console.log(`mutations: ${killed}/${MUTATIONS.length} killed`);
+console.log(`mutations: ${killed}/${MINE.length} killed${SHARD_NOTE}`);
 
 const label = (s) => s.replace(/ \(scripts\/.*\)$/, "").replace(/ — MUTATION STALE.*$/, "");
 // A STALE anchor is NEVER known debt, whatever the label says. `label()` strips
@@ -1387,7 +1399,9 @@ const label = (s) => s.replace(/ \(scripts\/.*\)$/, "").replace(/ — MUTATION S
 // worse thing and the list must not launder it.
 const isStale = (s) => s.includes("MUTATION STALE");
 const unexpected = survivors.filter((s) => isStale(s) || !KNOWN_SURVIVORS.has(label(s)));
-const fixed = [...KNOWN_SURVIVORS.keys()].filter((k) => !survivors.some((s) => label(s) === k));
+const fixed = [...KNOWN_SURVIVORS.keys()]
+  .filter((k) => MINE_LABELS.has(k))
+  .filter((k) => !survivors.some((s) => label(s) === k));
 
 if (unexpected.length) {
   console.error("NEW SURVIVING MUTANTS (vacuous or unpinned assertions):");

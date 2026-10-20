@@ -44,8 +44,17 @@ concurrency:
 
 jobs:
   gate:
-    name: verify.sh (offline + drift)
+    name: verify.sh (offline + drift, mutants ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    # Three jobs in parallel, each running the whole gate but only a third of
+    # the mutants (MUTATIONS_SHARD). The mutation test is most of this job's
+    # time and grows with every control; splitting it buys headroom for every
+    # future control, where raising the cap buys one. Together the three
+    # shards cover every mutant exactly once (test/shard.test.mjs).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/3", "2/3", "3/3"]
     # 40. The mutation harness runs the WHOLE unit suite once per mutant, so this
     # job grows with BOTH numbers at once and it grows fast. Measured, same job,
     # three consecutive controls:
@@ -80,6 +89,8 @@ jobs:
       # copy, and a CI runner has none — but it means the plugin-directory
       # drift check is NOT covered by CI. Left explicit rather than hidden.
       - name: Run the gate
+        env:
+          MUTATIONS_SHARD: ${{ matrix.shard }}
         run: ./verify.sh
 
   gate-live:
