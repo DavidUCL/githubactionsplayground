@@ -1558,9 +1558,9 @@ import("./scripts/restore-assert.mjs").then(async (m) => {
     # for the RIGHT reason.
     #
     # This one needs NO download: the whole blueprint is createCourse plus the
-    # assertion, all core. Unlike LIVE 7's theme arms — which waive on GitHub
-    # runners because the plugin ZIP proxy is unreachable from Actions — both
-    # arms here run everywhere, so neither is waivable and a red is always ours.
+    # assertion, all core, so both arms run everywhere and a red is always
+    # ours. (LIVE 7's theme arms need a ZIP, which is served locally from
+    # fixtures-live/ so that they run everywhere too.)
     #
     # 8b asserts exit 41 SPECIFICALLY, and that is the standing measurement, not
     # a detail: 41 means "the resolved format is not what we asked for AND the
@@ -1627,9 +1627,8 @@ import("./scripts/course-assert.mjs").then(async (m) => {
     #
     # NOTHING HERE DOWNLOADS A LANGUAGE PACK. The packs are FABRICATED on disk by
     # a runPhpCode step, the same move LIVE 6 makes with a .mbz. That keeps all
-    # four arms unwaivable on a GitHub runner — unlike LIVE 7's theme arms, which
-    # waive because the ZIP proxy is unreachable from Actions — and it lets 9c
-    # build a state a real download could never be relied on to produce.
+    # four arms independent of any download, and it lets 9c build a state a
+    # real download could never be relied on to produce.
     #
     # 9d is the GREEN arm and it is not optional: an assertion that can never
     # exit 0 would pass 9a, 9b and 9c while killing every real preview. A set of
@@ -1893,9 +1892,10 @@ import("./scripts/db-assert.mjs").then(async (m) => {
     # assertion to fail. If it passes, this check is measuring nothing.
     PV_REPO="danmarsden/moodle-mod_attendance"
     PV_SHA="8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c"
-    pv_boot() { # $1=label $2=none|noplugin -> echoes OK, or FAIL: <reason>
+    pv_boot() { # $1=label $2=none|noplugin $3=served|unserved -> echoes OK, WAIVE: <step>, or FAIL: <reason>
         local PV_OUT="$WORK/pv_$1"
         mkdir -p "$PV_OUT/out"
+        : >"$PV_OUT/served.txt"
         : >"$PV_OUT/gho"
         # THE REAL BUILDER, as a subprocess, with the env the action sets. Not
         # a function call: the wiring between action.yml and the script is part
@@ -1920,7 +1920,14 @@ import("./scripts/build-preview.mjs").then(async (m) => {
   console.log(u.toString());
 });')
         fi
-        LD_LIBRARY_PATH="${NSS_LIBS:-}" PREVIEW_URL="$PV_URL" OUT_DIR="$PV_OUT/boot" \
+        # The plugin ZIP comes from fixtures-live/, served by the route in
+        # test/helpers/serve-zips.mjs, and the real proxy is made unreachable,
+        # so nothing here depends on a third party answering a GitHub runner.
+        local PV_MAP="$SERVE_ZIPS_MAP"
+        [ "$3" = "unserved" ] && PV_MAP="$SERVE_ZIPS_NONE"
+        NODE_OPTIONS="--import=file://$PWD/test/helpers/serve-zips.mjs" \
+            BV_SERVE_ZIPS="$PV_MAP" BV_BLOCK_PROXY=1 BV_SERVED_COUNT_FILE="$PV_OUT/served.txt" \
+            LD_LIBRARY_PATH="${NSS_LIBS:-}" PREVIEW_URL="$PV_URL" OUT_DIR="$PV_OUT/boot" \
             node scripts/boot-capture.mjs >>/tmp/bv-verify-preview.log 2>&1
         PV_DIR="$PV_OUT/boot" PV_SHA="$PV_SHA" node -e '
 import("./scripts/assert.mjs").then(async (m) => {
@@ -1945,12 +1952,11 @@ import("./scripts/assert.mjs").then(async (m) => {
     if (p.steps.length !== n) bad.push(`only ${p.steps.length} of ${n} steps ran`);
     if (!p.steps.every((s, i) => s.k === i + 1)) bad.push("the steps were not contiguous");
   }
-  // THE PROXY, not us. The playground routes github.com ZIP fetches through
-  // github-proxy.exelearning.dev, a courtesy service with no SLA, and it
-  // answers 502 from GitHub runners while working on a workstation minutes
-  // earlier — measured twice on this project, once here. Reported separately
-  // so the caller can waive it LOUDLY rather than going red on an outage in
-  // somebody elses infrastructure.
+  // THE PLUGIN DOWNLOAD DIED. Reported as its own outcome, not a plain FAIL:
+  // the self-test arm, which serves nothing with the proxy blocked, REQUIRES
+  // exactly this, and the real arm treats it as a failure. (It used to be
+  // waived as an outage of github-proxy.exelearning.dev, which a GitHub runner
+  // cannot reach; the ZIP is now served locally instead.)
   //
   // Matched on the STEP, never on the error text. That mistake has already
   // been paid for once: a workstation said "Failed to download plugin ZIP …:
@@ -1978,32 +1984,27 @@ import("./scripts/assert.mjs").then(async (m) => {
 });'
     }
     : >/tmp/bv-verify-preview.log
-    PV_REAL=$(pv_boot real none)
-    PV_STRIPPED=$(pv_boot noplugin noplugin)
+    # The ZIPs the browser is served, from the vendored copies. An empty map
+    # serves nothing, for the self-test arm below.
+    SERVE_ZIPS_MAP="$WORK/serve-zips.json"
+    SERVE_ZIPS_NONE="$WORK/serve-zips-none.json"
+    python3 -c "import json; d=json.load(open('fixtures-live/zips.json')); json.dump({k: v for k, v in d.items() if not k.startswith('_')}, open('$SERVE_ZIPS_MAP', 'w'))"
+    echo '{}' >"$SERVE_ZIPS_NONE"
+    PV_REAL=$(pv_boot real none served)
+    PV_UNSERVED=$(pv_boot unserved none unserved)
+    PV_STRIPPED=$(pv_boot noplugin noplugin served)
     PV_PROBLEMS=""
-    PV_WAIVED=""
-    if [[ "$PV_REAL" == WAIVE:* ]]; then
-        # The plugin ZIP never arrived. Say what was NOT checked, then check
-        # what still can be WITHOUT the network: that the link the builder
-        # produced really does install the commit under review. That is a claim
-        # about our own output, and it is the part a proxy outage must not be
-        # allowed to stop covering.
-        PV_WAIVED="the boot of the real link (${PV_REAL#WAIVE: })"
-        PV_STATIC=$(PV_IN="$(cat "$WORK/pv_real/url.txt" 2>/dev/null)" PV_SHA="$PV_SHA" node -e '
-import("node:zlib").then(({ gunzipSync }) => {
-  const u = new URL(process.env.PV_IN);
-  const bp = JSON.parse(gunzipSync(Buffer.from(
-    u.searchParams.get("blueprint").replace(/-/g,"+").replace(/_/g,"/"), "base64")).toString("utf8"));
-  const self = bp.steps.filter((s) => s.step === "installMoodlePlugin");
-  if (self.length !== 1) return console.log(`FAIL: ${self.length} install steps, expected 1`);
-  if (!self[0].url.includes(process.env.PV_SHA)) return console.log("FAIL: not pinned to the head commit");
-  if (`${self[0].pluginType}_${self[0].pluginName}` !== "mod_attendance") return console.log("FAIL: wrong component");
-  console.log("OK");
-});' 2>/dev/null)
-        [[ "$PV_STATIC" == "OK" ]] || PV_PROBLEMS+="with the boot waived, the link itself does not install the commit under review: ${PV_STATIC:-nothing}; "
-    else
-        [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly: ${PV_REAL:-nothing}; "
-    fi
+    # No waiver any more. This arm used to waive as a "proxy outage" whenever the
+    # plugin step died, which on CI was every run: the real arm had never once
+    # passed there. With the ZIP served locally there is no outage to excuse, so
+    # a plugin that does not install is a failure.
+    [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly with its plugin ZIP served locally: ${PV_REAL:-nothing}; "
+    [[ -s "$WORK/pv_real/served.txt" ]] || PV_PROBLEMS+="the local plugin ZIP was never served, so whatever installed did not come from it; "
+    # THE SELF-TEST. The same link, the real proxy still unreachable, and
+    # nothing served: the plugin step must die. If it does not, the ZIP is
+    # arriving by some other path and the arm above proves nothing about the
+    # route. Graded on the step, like the rest of this check.
+    [[ "$PV_UNSERVED" == WAIVE:*installMoodlePlugin* ]] || PV_PROBLEMS+="with the proxy blocked and nothing served, the plugin step did not fail (got: ${PV_UNSERVED:-nothing}), so the served ZIP is not what the passing arm installed; "
     # NOT WAIVABLE, and graded on the REASON rather than on failing at all.
     # This arm downloads no plugin, so a proxy outage cannot excuse it — and
     # `FAIL:` alone would be satisfied by a boot that broke for any reason
@@ -2013,11 +2014,8 @@ import("node:zlib").then(({ gunzipSync }) => {
     if [[ -n "$PV_PROBLEMS" ]]; then
         echo "CHECK 12 FAIL: the action's own link is not being proved — $PV_PROBLEMS"
         FAILED+=("12: nothing proves a link the action produces actually boots")
-    elif [[ -n "$PV_WAIVED" ]]; then
-        echo "CHECK 12 WAIVED: $PV_WAIVED — the plugin ZIP proxy did not answer."
-        echo "  The link was still checked to install ${PV_SHA:0:7}; what is NOT covered is that it boots."
     else
-        echo "CHECK 12 PASS: a link the ACTION built boots, installs the commit under review, and one with the plugin step removed is caught"
+        echo "CHECK 12 PASS: a link the ACTION built boots and installs the commit under review from a locally served ZIP; with nothing served the install fails, and a link with the plugin step removed is caught"
     fi
 
     # LIVE 7 — the theme control, in a real browser.
@@ -2081,7 +2079,13 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
       : [{ url: zip, pluginType: "theme", pluginName: "boost_union" }] }));
 });
 ' >/dev/null 2>&1
-        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$TB_OUT" \
+        # The theme ZIP is served from fixtures-live/ with the real proxy
+        # unreachable, as in check 12 (whose self-test proves the route is
+        # what delivers it).
+        : >"$TB_OUT/served.txt"
+        NODE_OPTIONS="--import=file://$PWD/test/helpers/serve-zips.mjs" \
+            BV_SERVE_ZIPS="$SERVE_ZIPS_MAP" BV_BLOCK_PROXY=1 BV_SERVED_COUNT_FILE="$TB_OUT/served.txt" \
+            LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$TB_OUT" \
             BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/tb-$1.json" \
             node scripts/boot-capture.mjs >>/tmp/bv-verify-theme.log 2>&1
         # TWO files, deliberately. Step outcomes are in boot-log.txt; the
@@ -2140,29 +2144,26 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
         [[ "$1" == *"Blueprint failed at step"* && "$1" == *"installMoodlePlugin"* ]]
     }
     TB_PROBLEMS=""
-    TB_WAIVED=""
+    # No waivers any more: the theme ZIP is served locally, so a download that
+    # dies is a failure, not an outage of the proxy a runner cannot reach.
     if tb_download_died "$TB_GOOD"; then
-        TB_WAIVED+="the installed-and-activated arm; "
+        TB_PROBLEMS+="the theme ZIP did not install even though it was served locally (got: ${TB_GOOD}); "
     else
         [[ "$TB_GOOD" == *"setLandingPage"* ]] || TB_PROBLEMS+="an installed, activated theme did not complete (got: ${TB_GOOD:-nothing}); "
         [[ "$TB_GOOD" != *"theme-css-build-failed"* ]] || TB_PROBLEMS+="the theme's stylesheet did not build (got: ${TB_GOOD}); "
         [[ "$TB_GOOD" != *"no-console-capture"* ]] || TB_PROBLEMS+="nothing captured the browser console, so the stylesheet check proved nothing; "
     fi
+    [[ -s "$WORK/tb_correct/served.txt" ]] || TB_PROBLEMS+="the local theme ZIP was never served to the installed-and-activated arm; "
     if tb_download_died "$TB_WRONG"; then
-        TB_WAIVED+="the wrong-theme arm; "
+        TB_PROBLEMS+="the theme ZIP did not install for the wrong-theme arm even though it was served locally (got: ${TB_WRONG}); "
     else
         [[ "$TB_WRONG" == *"exit code 32"* ]] || TB_PROBLEMS+="a site left on another theme was not caught (got: ${TB_WRONG:-nothing}); "
     fi
-    # Not waivable: neither downloads anything.
     [[ "$TB_MISSING" == *"exit code 31"* ]] || TB_PROBLEMS+="a theme that was never installed was not caught (got: ${TB_MISSING:-nothing}); "
     [[ "$TB_PARENTS" == *"exit code 33"* ]] || TB_PROBLEMS+="a theme Moodle silently refused to initialise was not caught (got: ${TB_PARENTS:-nothing}); "
     if [[ -n "$TB_PROBLEMS" ]]; then
         echo "CHECK 7 FAIL: the theme check is not doing its job — $TB_PROBLEMS"
         FAILED+=("7: theme activation check cannot fail")
-    elif [[ -n "$TB_WAIVED" ]]; then
-        echo "CHECK 7 WAIVED IN PART: the theme ZIP would not install, so $TB_WAIVED"
-        echo "                       were UNCHECKED in this run. The two arms needing no"
-        echo "                       download still passed, so the assertion can still fail."
     else
         echo "CHECK 7 PASS: a real theme installs, activates and builds its CSS — and all three silent failures are caught"
     fi

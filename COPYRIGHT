@@ -64,3 +64,16 @@ test/fixtures/themes/*.php
                             MOODLE_405_STABLE. Copyright (C) Willian Mano and
                             contributors. GPLv3+. One plain literal assignment —
                             the case the parse must read exactly.
+
+fixtures-live/*.zip
+  GitHub archive ZIPs of two public Moodle plugins, unmodified, served to the
+  browser by the LIVE gate in place of the playground's download proxy (see
+  test/helpers/serve-zips.mjs).
+    mod_attendance-8b217b1....zip     danmarsden/moodle-mod_attendance at
+                                      8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c.
+                                      Copyright (C) Dan Marsden and
+                                      contributors. GPLv3+.
+    theme_boost_union-649c2d7....zip  moodle-an-hochschulen/moodle-theme_boost_union
+                                      at 649c2d7b22fee1de767d145b7ec5a95543e9a305.
+                                      Copyright (C) Alexander Bias, Ulm
+                                      University and contributors. GPLv3+.
