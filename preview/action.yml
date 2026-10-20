@@ -239,8 +239,9 @@ inputs:
       driver patches, and the export is what converts it.
 
       It does NOT have to live in a git repository — any address your
-      `data-hosts` allows will do — which is why the digest below is required
-      rather than optional.
+      `data-hosts` allows will do. A file at an address like that can change
+      after the link is built; restore-database-sha256 pins it if you want
+      that checked.
 
       The file is downloaded and OPENED when the link is built, because that is
       the only place anything can be checked. `restoreDatabase` renames the
