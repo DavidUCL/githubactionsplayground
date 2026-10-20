@@ -13,6 +13,8 @@ import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { DEFAULT_ORIGINS, parseOrigins } from "./build-preview.mjs";
 
+const BUILD_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]{0,79}$/;
+
 const MARKER = "<!-- moodle-playground-preview -->";
 const SHA_RE = /^[0-9a-f]{40}$/;
 const COMPONENT_RE = /^[a-z][a-z0-9_]*$/;
@@ -55,6 +57,10 @@ export function renderComment({
   // preview that restores nothing — behaves exactly as before.
   isAdmin = user === "admin",
   allowedOrigins = DEFAULT_ORIGINS, riskySteps = [],
+  // The playground build the link was made against (the builder's
+  // `playground-version` output). Empty when it could not be read; undefined
+  // for older callers, which then print nothing about it.
+  playgroundVersion,
 }) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
@@ -130,6 +136,12 @@ export function renderComment({
           "",
         ]
       : []),
+    // Recorded, not checked: nothing in this action opens the link.
+    ...(playgroundVersion === undefined
+      ? []
+      : BUILD_VERSION_RE.test(String(playgroundVersion))
+        ? [`Built against playground build \`${playgroundVersion}\`; this run did not open the link.`, ""]
+        : ["The playground's build record could not be read, so which build this link opens is not recorded.", ""]),
     "Smoke test only: it shows whether the plugin installs and renders, not",
     "whether it is correct. Rewritten in place on every push.",
   ].join("\n");
@@ -163,6 +175,7 @@ function main() {
     // The same list the builder checked the link against; with the defaults
     // here instead, a link to a UCL host would be built and then not posted.
     allowedOrigins: originsOrNone(process.env.PLAYGROUND_ORIGINS),
+    playgroundVersion: process.env.PLAYGROUND_VERSION ?? "",
   });
   if (process.env.GITHUB_OUTPUT) {
     // Multi-line outputs need a delimiter that cannot appear in the body.

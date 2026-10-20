@@ -354,6 +354,13 @@ outputs:
   risky-steps:
     description: "Comma-separated steps in the blueprint that can rewrite Moodle after installing (empty for an ordinary preview)"
     value: ${{ steps.build.outputs.risky-steps }}
+  playground-version:
+    description: >-
+      The playground build the link was made against, read from the host's
+      assets/build-version.json (for example 20260820T070625Z-ab13283da6dd-dirty).
+      Empty when it could not be read. Recorded, not verified: this action does
+      not open the link.
+    value: ${{ steps.build.outputs.playground-version }}
   plugin-type:
     description: "Resolved plugin type"
     value: ${{ steps.build.outputs.plugin-type }}
@@ -440,5 +447,6 @@ runs:
         PREVIEW_USER_IS_ADMIN: ${{ steps.build.outputs.preview-user-is-admin }}
         RISKY_STEPS: ${{ steps.build.outputs.risky-steps }}
         PLAYGROUND_ORIGINS: ${{ inputs.playground-origins }}
+        PLAYGROUND_VERSION: ${{ steps.build.outputs.playground-version }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"

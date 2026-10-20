@@ -33,6 +33,7 @@ import { buildCourseIdAssertion, landingCourseId } from "./course-id-assert.mjs"
 import { checkCourseBackup } from "./mbz.mjs";
 import { inspectSnapshot, checkSnapshot } from "./snapshot.mjs";
 import { fetchHostSteps, stepsHostCannotRun, explainMissingSteps } from "./host-steps.mjs";
+import { fetchHostVersion, describeHostVersion } from "./host-version.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
 // import site for preview concerns.
@@ -1841,6 +1842,9 @@ export function previewSummary({
   courseRoster = [],
   landingPage,
   versionPhp, core, risky, loginAs,
+  // One line naming the playground build the link was made against, from
+  // describeHostVersion. Absent for callers that did not read it.
+  hostVersionLine,
 }) {
   return [
     "## ▶ Playground preview",
@@ -1956,6 +1960,7 @@ export function previewSummary({
         ]
       : []),
     ...riskyNotes(risky),
+    ...(hostVersionLine ? [hostVersionLine, ""] : []),
     "Smoke test only: this shows whether the plugin installs and renders, not",
     "whether it is correct. Nothing here booted it — the link boots in your",
     "browser when you open it.",
@@ -2747,6 +2752,16 @@ async function main() {
         `every step in the blueprint — ${sanitiseForLog(hostVerdict.unknown).replace(/\r?\n/g, " ")}`,
     );
   }
+  // Which build the link was made against, recorded rather than verified:
+  // nothing here opens the link. Said out loud when it cannot be read.
+  const hostVersion = await fetchHostVersion(playgroundHost);
+  if (hostVersion.unknown) {
+    console.log(
+      `::warning title=playground-host::could not read the playground's build record — ` +
+        `${sanitiseForLog(hostVersion.unknown).replace(/\r?\n/g, " ")}`,
+    );
+  }
+  setOutput("playground-version", hostVersion.buildVersion || "");
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
@@ -2780,6 +2795,7 @@ async function main() {
     name,
     headSha,
     url,
+    hostVersionLine: describeHostVersion(hostVersion),
     component: declared?.component || `${type}_${name}`,
     headRepo,
     extras,
