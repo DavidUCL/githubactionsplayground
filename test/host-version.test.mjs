@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { fetchHostVersion, checkVersionRecord, describeHostVersion } from "../scripts/host-version.mjs";
 import { renderComment } from "../scripts/render-comment.mjs";
+import { compareHostVersion } from "../scripts/check-host-version.mjs";
 
 const LIVE_SHAPE = {
   buildVersion: "20260820T070625Z-ab13283da6dd-dirty",
@@ -65,4 +66,17 @@ test("the comment names the playground build, or says it was not recorded", () =
   assert.match(renderComment({ ...COMMENT, playgroundVersion: "x](https://evil.tld)" }), /could not be read/);
   // An older caller that passes nothing gets the old comment.
   assert.doesNotMatch(renderComment(COMMENT), /playground build/);
+});
+
+const HEAD = "ab13283da6dd" + "0".repeat(28);
+
+test("compareHostVersion: clean build of the branch head passes", () => {
+  assert.deepEqual(compareHostVersion({ buildVersion: "b", gitSha: "ab13283da6dd", dirty: false }, HEAD), []);
+});
+
+test("compareHostVersion: a dirty deploy, a different commit and an unreadable record all fail", () => {
+  assert.match(compareHostVersion({ buildVersion: "b-dirty", gitSha: "ab13283da6dd", dirty: true }, HEAD)[0], /uncommitted/);
+  assert.match(compareHostVersion({ buildVersion: "b", gitSha: "0123456789ab", dirty: false }, HEAD)[0], /serves 0123456789ab/);
+  assert.match(compareHostVersion({ unknown: "HTTP 404" }, HEAD)[0], /could not be read: HTTP 404/);
+  assert.match(compareHostVersion({ buildVersion: "b", gitSha: "ab13283da6dd", dirty: false }, "")[0], /no usable expected/);
 });
