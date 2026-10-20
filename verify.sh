@@ -90,7 +90,39 @@ check() {
     else echo "CHECK $num FAIL: $label"; FAILED+=("$num: $label"); fi
 }
 
+# Grade a probe on its exit code AND an affirmative token, never on the absence
+# of a bad one. Prints BAD (the probe found a problem), OK (it ran and said so),
+# or BROKE (neither: it crashed, printed nothing, or printed something else).
+# Checks 1l and 1r used to grep for the bad token and fall through to PASS, so a
+# stack trace read as a pass. 1l-self and 1r-self prove this fires.
+grade_probe() {
+    local rc=$1 out=$2 ok_re=$3 bad_re=$4
+    if [[ "$out" =~ $bad_re ]]; then echo BAD
+    elif [[ $rc -eq 0 && "$out" =~ $ok_re ]]; then echo OK
+    else echo BROKE; fi
+}
+
 echo "=== verify.sh — boot-verify action gate ==="
+
+# Five checks (1g, 1i, 1j, 1m, 1u) parse YAML with pyyaml and exit 2 if it is
+# missing. Say so once, up front, rather than leaving five bare failures. The
+# self-test plants a yaml module that refuses to import, and proves this
+# notices.
+YAML_PROBE='import yaml'
+if python3 -c "$YAML_PROBE" 2>/dev/null; then
+    YAML_FAKE=$(mktemp -d)
+    printf 'raise ImportError("planted by verify.sh 1w self-test")\n' >"$YAML_FAKE/yaml.py"
+    if PYTHONPATH="$YAML_FAKE" python3 -c "$YAML_PROBE" 2>/dev/null; then
+        echo "CHECK 1w FAIL: the self-test could not hide pyyaml, so this check would not notice it missing"
+        FAILED+=("1w: self-test does not fire")
+    else
+        echo "CHECK 1w PASS: pyyaml imports, and a planted broken yaml module is noticed"
+    fi
+    rm -rf "$YAML_FAKE"
+else
+    echo "CHECK 1w FAIL: pyyaml is not installed — checks 1g, 1i, 1j, 1m and 1u cannot run"
+    FAILED+=("1w: pyyaml missing")
+fi
 
 # 1x: the closing tally (scripts/gate-tally.mjs, run by the wrapper at the top)
 # must FAIL a check that never reports, and one reported under an id it does
@@ -703,15 +735,37 @@ import("node:fs").then(async (fs) => {
       }
     }
   }
-  console.log(bad.length ? "BAD " + bad.join(" | ") : "OK");
+  console.log(bad.length ? "BAD " + bad.join(" | ") : "OK " + files.length + " files scanned");
 });
-' 2>&1) || true
-if [[ "$RUN_INTERP" == BAD* ]]; then
+' 2>&1)
+RUN_INTERP_RC=$?
+R_OK='^OK [0-9]+ files scanned$'
+R_BAD='^BAD '
+RUN_VERDICT=$(grade_probe "$RUN_INTERP_RC" "$RUN_INTERP" "$R_OK" "$R_BAD")
+if [[ "$RUN_VERDICT" == BAD ]]; then
     echo "CHECK 1r FAIL: \${{ }} interpolated into a run: block — ${RUN_INTERP#BAD }"
     echo "               Pass the value through env: and read it as a shell variable."
     FAILED+=("1r: \${{ }} inside a run: block")
+elif [[ "$RUN_VERDICT" == BROKE ]]; then
+    # Neither a verdict nor a waiver: the scan itself broke. This used to fall
+    # through to PASS, so a stack trace certified the injection scan.
+    echo "CHECK 1r FAIL: the check did not run — ${RUN_INTERP:0:300}"
+    FAILED+=("1r: the check did not run")
 else
-    echo "CHECK 1r PASS: no \${{ }} is interpolated into any run: block"
+    echo "CHECK 1r PASS: no \${{ }} is interpolated into any run: block (${RUN_INTERP#OK })"
+fi
+# 1r-self: the grader must call a crash a crash. These are the shapes 1r used
+# to print as PASS: a stack trace with a non-zero exit, and empty output.
+R_SELF=""
+[[ $(grade_probe 1 "TypeError: fs.readdirSync is not a function" "$R_OK" "$R_BAD") == BROKE ]] || R_SELF+="stack trace; "
+[[ $(grade_probe 0 "" "$R_OK" "$R_BAD") == BROKE ]] || R_SELF+="empty output; "
+[[ $(grade_probe 0 "BAD action.yml:9: x" "$R_OK" "$R_BAD") == BAD ]] || R_SELF+="a finding; "
+[[ $(grade_probe 0 "OK 9 files scanned" "$R_OK" "$R_BAD") == OK ]] || R_SELF+="a clean scan; "
+if [[ -z "$R_SELF" ]]; then
+    echo "CHECK 1r-self PASS: 1r's grader fails a crash and empty output, and still passes a clean scan"
+else
+    echo "CHECK 1r-self FAIL: 1r's grader misreads: $R_SELF"
+    FAILED+=("1r-self: grader misreads $R_SELF")
 fi
 
 # The gate does not run the program. Every other check here reads a hand-made
@@ -993,7 +1047,7 @@ import sys, re, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping YAML contract check'); sys.exit(0)
+    print('1g: pyyaml unavailable — the check did not run'); sys.exit(2)
 root = pathlib.Path('.')
 for f in list(root.glob('.github/workflows/*.yml')) + [root/'action.yml', root/'preview'/'action.yml']:
     yaml.safe_load(f.read_text())
@@ -1148,7 +1202,7 @@ import sys, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping trigger check'); sys.exit(0)
+    print('1i: pyyaml unavailable — the check did not run'); sys.exit(2)
 bad = []
 for f in list(pathlib.Path('.').glob('.github/workflows/*.yml')) + list(pathlib.Path('.').glob('examples/*.yml')):
     doc = yaml.safe_load(f.read_text()) or {}
@@ -1178,7 +1232,7 @@ import sys, re, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping host default check'); sys.exit(0)
+    print('1j: pyyaml unavailable — the check did not run'); sys.exit(2)
 action = yaml.safe_load(pathlib.Path('preview/action.yml').read_text())
 declared = action['inputs']['playground-host']['default']
 m = re.search(r'PLAYGROUND_HOST \|\| "([^"]+)"', pathlib.Path('scripts/build-preview.mjs').read_text())
@@ -1224,7 +1278,7 @@ import sys, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping origin-default check'); sys.exit(0)
+    print('1m: pyyaml unavailable — the check did not run'); sys.exit(2)
 inputs = yaml.safe_load(pathlib.Path('action.yml').read_text())['inputs']
 host = (inputs['playground-host'].get('default') or '').strip()
 extra = [o.strip() for o in (inputs['accepted-origins'].get('default') or '').split(',') if o.strip()]
@@ -1288,6 +1342,10 @@ fi
 # emitted link or be a deliberate exception. If the playground gains a new one,
 # notice it here rather than when a link starts behaving differently.
 RESOLVER_SRC="${RESOLVER_SRC:-$SCRIPT_DIR/../moodle-playground/src/shared/version-resolver.js}"
+# The tokens 1l grades on. 1l-self below uses these same two, so it tests the
+# grading this check really does.
+L_OK='^OK [0-9]+ params read'
+L_BAD='UNGUARDED'
 if [[ -f "$RESOLVER_SRC" ]]; then
     RESOLVER_SRC="$RESOLVER_SRC" node -e '
 import("./scripts/build-preview.mjs").then(async (m) => {
@@ -1305,12 +1363,19 @@ import("./scripts/build-preview.mjs").then(async (m) => {
   console.log("OK " + read.length + " params read, all guarded or deliberately benign");
 });
 ' >/tmp/bv-verify-params.log 2>&1
-    if grep -q UNGUARDED /tmp/bv-verify-params.log; then
+    PARAMS_RC=$?
+    PARAMS_VERDICT=$(grade_probe "$PARAMS_RC" "$(cat /tmp/bv-verify-params.log)" "$L_OK" "$L_BAD")
+    if [[ "$PARAMS_VERDICT" == BAD ]]; then
         echo "CHECK 1l FAIL: the playground reads URL params our links do not forbid —"
         sed 's/^/               /' /tmp/bv-verify-params.log
         echo "               Add them to FORBIDDEN_PARAMS, or to BENIGN in verify.sh if"
         echo "               they cannot change what code runs or where it comes from."
         FAILED+=("1l: unguarded playground URL params")
+    elif [[ "$PARAMS_VERDICT" == BROKE ]]; then
+        # Neither a verdict nor a waiver: the probe itself broke. This used to
+        # fall through to PASS, printing the stack trace as the pass reason.
+        echo "CHECK 1l FAIL: the check did not run — $(head -c 300 /tmp/bv-verify-params.log)"
+        FAILED+=("1l: the check did not run")
     else
         echo "CHECK 1l PASS: $(cat /tmp/bv-verify-params.log)"
     fi
@@ -1319,13 +1384,67 @@ else
     echo "                 URL-param drift is UNCHECKED in this run."
 fi
 
+# 1l-self: the case Gus found. Turn FORBIDDEN_PARAMS into a Set and
+# `.includes` throws; the log is a stack trace with no "UNGUARDED" in it,
+# and this check printed it as the PASS reason.
+L_SELF=""
+[[ $(grade_probe 1 "TypeError: m.FORBIDDEN_PARAMS.includes is not a function" "$L_OK" "$L_BAD") == BROKE ]] || L_SELF+="stack trace; "
+[[ $(grade_probe 0 "" "$L_OK" "$L_BAD") == BROKE ]] || L_SELF+="empty output; "
+[[ $(grade_probe 1 "UNGUARDED newparam" "$L_OK" "$L_BAD") == BAD ]] || L_SELF+="a finding; "
+[[ $(grade_probe 0 "OK 12 params read, all guarded or deliberately benign" "$L_OK" "$L_BAD") == OK ]] || L_SELF+="a clean read; "
+if [[ -z "$L_SELF" ]]; then
+    echo "CHECK 1l-self PASS: 1l's grader fails a crash and empty output, and still passes a clean read"
+else
+    echo "CHECK 1l-self FAIL: 1l's grader misreads: $L_SELF"
+    FAILED+=("1l-self: grader misreads $L_SELF")
+fi
+
+# The drift comparison itself is a unit test (contract.test.mjs), so it ran in
+# check 1 against this same default path. This check used to print PASS because
+# the file EXISTED, and then export a variable nothing read afterwards. It now
+# reads check 1's log: the test must have run, not waived, and passed.
 PLAYGROUND_SRC="${PLAYGROUND_SRC:-$SCRIPT_DIR/../moodle-playground/src/blueprint/steps/moodle-plugins.js}"
+DRIFT_TEST='PLUGIN_TYPE_DIRS matches the playground source it was copied from'
+grade_drift_log() { # grade_drift_log <unit log> -> DRIFT | OK | BROKE
+    if grep -E "^not ok [0-9]+ - $DRIFT_TEST" "$1" >/dev/null; then echo DRIFT
+    elif ! grep -qF "(WAIVED: no playground source" "$1" \
+        && grep -E "^ok [0-9]+ - $DRIFT_TEST" "$1" >/dev/null; then echo OK
+    else echo BROKE; fi
+}
 if [[ -f "$PLAYGROUND_SRC" ]]; then
-    export PLAYGROUND_SRC
-    echo "CHECK 1e PASS: plugin-directory drift check ran against $PLAYGROUND_SRC"
+    case $(grade_drift_log /tmp/bv-verify-unit.log) in
+    DRIFT)
+        echo "CHECK 1e FAIL: PLUGIN_TYPE_DIRS has drifted from $PLAYGROUND_SRC (see /tmp/bv-verify-unit.log)"
+        FAILED+=("1e: plugin-directory map has drifted") ;;
+    OK)
+        echo "CHECK 1e PASS: PLUGIN_TYPE_DIRS matches $PLAYGROUND_SRC (unit suite, check 1)" ;;
+    *)
+        echo "CHECK 1e FAIL: the check did not run — the source is at $PLAYGROUND_SRC but the unit suite"
+        echo "               has no passing '$DRIFT_TEST' (see /tmp/bv-verify-unit.log)"
+        FAILED+=("1e: the check did not run") ;;
+    esac
 else
     echo "CHECK 1e WAIVED: no playground source at $PLAYGROUND_SRC —"
     echo "                 PLUGIN_TYPE_DIRS drift is UNCHECKED in this run."
+fi
+
+# 1e-self: the grader must not read a waived or missing test as a pass.
+E_SELF=""
+E_TMP=$(mktemp)
+printf '# Subtest: %s\nok 238 - %s\n' "$DRIFT_TEST" "$DRIFT_TEST" >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == OK ]] || E_SELF+="a passing test; "
+printf '  (WAIVED: no playground source at /x — set PLAYGROUND_SRC)\nok 238 - %s\n' "$DRIFT_TEST" >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == BROKE ]] || E_SELF+="a waived test; "
+printf 'ok 1 - something else\n' >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == BROKE ]] || E_SELF+="a missing test; "
+printf 'not ok 238 - %s\n' "$DRIFT_TEST" >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == DRIFT ]] || E_SELF+="a failing test; "
+rm -f "$E_TMP"
+if [[ -z "$E_SELF" ]]; then
+    echo "CHECK 1e-self PASS: 1e's grader fails a waived or missing drift test, and passes a real one"
+else
+    echo "CHECK 1e-self FAIL: 1e's grader misreads: $E_SELF"
+    FAILED+=("1e-self: grader misreads $E_SELF")
 fi
 
 WORK=$(mktemp -d)
