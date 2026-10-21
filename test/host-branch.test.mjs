@@ -46,6 +46,17 @@ test("an unreadable host is unknown, never a refusal", async () => {
   );
 });
 
+test("a redirect to somewhere else is unknown, not an answer", async () => {
+  const redirected = async () => ({
+    ok: true,
+    status: 200,
+    url: "https://ateeducacion.github.io/",
+    text: async () => "<html>home page</html>",
+  });
+  const v = await checkBranchOnHost("https://moodle-playground.com", "MOODLE_50_STABLE", { fetchImpl: redirected });
+  assert.match(v.unknown, /redirected to https:\/\/ateeducacion\.github\.io\//);
+});
+
 test("the banner escapes every message and decodes to exactly that HTML", () => {
   const msg = `Moodle "x" <script>alert(1)</script> & 'y'`;
   assert.equal(escapeHtml(msg), "Moodle &quot;x&quot; &lt;script&gt;alert(1)&lt;/script&gt; &amp; &#39;y&#39;");

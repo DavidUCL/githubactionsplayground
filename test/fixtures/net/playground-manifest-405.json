@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-20T07:08:38.303Z",
+  "channel": "MOODLE_405_STABLE",
+  "release": "4.5.13+ (Build: 20260818)",
+  "runtimeVersion": "0.0.9-alpha-32",
+  "source": {
+    "url": "https://github.com/moodle/moodle/tree/MOODLE_405_STABLE"
+  },
+  "bundle": {
+    "format": "zip-parts",
+    "fileName": "moodle-core-4.5.13___Build__20260818_.zip",
+    "size": 75083456,
+    "totalSize": 75083456,
+    "sha256": "d2c9a05db474b6af6df23f92abc4bde0ea4b8810ee768d729841b8237f43c562",
+    "partSize": 25165824,
+    "parts": [
+      {
+        "path": "../moodle/MOODLE_405_STABLE/moodle-core-4.5.13___Build__20260818_.zip.part-000",
+        "size": 25165824,
+        "sha256": "54595c67158451fa1e746febdd31cc928e161b11bea9392efc18faf759667ffa"
+      },
+      {
+        "path": "../moodle/MOODLE_405_STABLE/moodle-core-4.5.13___Build__20260818_.zip.part-001",
+        "size": 25165824,
+        "sha256": "47338a22743668c42e030d4d085adec9cf38f07ef5cb564144811a2e5af5583d"
+      },
+      {
+        "path": "../moodle/MOODLE_405_STABLE/moodle-core-4.5.13___Build__20260818_.zip.part-002",
+        "size": 24751808,
+        "sha256": "8001c59288c2ff139d1374ca62b9ba169aea427b121d11cb35fc8cefd0693c76"
+      }
+    ],
+    "fileCount": 23504
+  },
+  "snapshot": {
+    "path": "../moodle/MOODLE_405_STABLE/snapshot/install.sq3",
+    "fileName": "install.sq3",
+    "size": 8110080,
+    "sha256": "54e91bf2b9e52829922d03f2a88fdefc4b5edc5bd9a702cf177370f645ae9c62",
+    "drained": true,
+    "requirejs": true,
+    "localcache": {
+      "path": "../moodle/MOODLE_405_STABLE/snapshot/localcache.zip",
+      "fileName": "localcache.zip",
+      "size": 1309301,
+      "sha256": "7fc01cbce207d13891e5fec984d70bcfed27abe73ca40316581c39827992929d"
+    }
+  }
+}

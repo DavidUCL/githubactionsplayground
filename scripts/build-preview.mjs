@@ -2317,7 +2317,7 @@ async function main() {
   // Which Moodle the playground will boot. Not pinned in the link today (see
   // README) — this states the assumption the compatibility check is made
   // against, so a wrong assumption is visible rather than silent.
-  const moodleBranch = process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH;
+  const moodleBranch = (process.env.MOODLE_BRANCH || "").trim() || DEFAULT_MOODLE_BRANCH;
   // Checks that could not run, said to the REVIEWER, not only in the log.
   // Each of these used to be a single `note:` line in the workflow log, which
   // no reviewer reads, while the comment looked like every other green one.
@@ -2382,7 +2382,21 @@ async function main() {
   // the playground's default Moodle in silence while everything printed named
   // the typo. A definite "no" stops the build (David, 2026-10-21); a host we
   // cannot read is a caveat, not a refusal.
-  const branchOnHost = await checkBranchOnHost(playgroundHost, moodleBranch);
+  // Only asked of a host a link may point at. Any other host is refused below
+  // by buildPreviewUrl, with the right reason; asking it first would send it a
+  // request and then blame the spelling of the version.
+  const hostAllowed = (() => {
+    try {
+      const u = new URL(playgroundHost);
+      return u.protocol === "https:" && !u.username && !u.password &&
+        parseOrigins(process.env.PLAYGROUND_ORIGINS).includes(u.origin);
+    } catch {
+      return false;
+    }
+  })();
+  const branchOnHost = hostAllowed
+    ? await checkBranchOnHost(playgroundHost, moodleBranch)
+    : { skipped: true };
   if (branchOnHost.exists === false) {
     problems.add(
       "moodle-branch",

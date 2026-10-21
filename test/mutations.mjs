@@ -23,6 +23,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 // [label, file, find, replace] — `find` must appear exactly once.
 const MUTATIONS = [
+  // The Moodle version check (host-branch.mjs) and the warning banner: both
+  // reached end to end by caveats.test.mjs through the recorded manifests.
+  ["branch: build a link for a version the playground does not have", "scripts/build-preview.mjs",
+    "  if (branchOnHost.exists === false) {", "  if (false) {"],
+  ["banner: never put the warning banner in the blueprint", "scripts/build-preview.mjs",
+    "  if (banner) {", "  if (false) {"],
+  ["branch: read a redirect as an answer", "scripts/host-branch.mjs",
+    "if (res.url && new URL(res.url).pathname !== new URL(url).pathname) {", "if (false) {"],
   // assert.mjs — every term of every assertion
   ["a0: drop served-counter requirement", "scripts/assert.mjs",
     "meta.loopback_served >= 1", "true"],

@@ -195,6 +195,42 @@
       "sha256": "d5558cd419c8d46bdc958064cb97f963d1ea793866414c025906ec15033512ed",
       "expect": "404 — same, for the course-format golden case",
       "source": "network"
+    },
+    {
+      "url": "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_500_STABLE.json",
+      "file": "playground-manifest-500.json",
+      "status": 200,
+      "bytes": 1748,
+      "sha256": "7ef999fbccd4e88dcedaf900000c3ede7736e56cee0375fac1bb87f3c3cafdcc",
+      "expect": "the default host's MOODLE_500_STABLE manifest: the version exists, no banner",
+      "source": "network"
+    },
+    {
+      "url": "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_405_STABLE.json",
+      "file": "playground-manifest-405.json",
+      "status": 200,
+      "bytes": 1758,
+      "sha256": "c68daf3fec68a7cab0173244b0a57084bc9bdde9a89b49329a4c1c8ec2b10c17",
+      "expect": "the default host's MOODLE_405_STABLE manifest, for the moodle-branch probe row",
+      "source": "network"
+    },
+    {
+      "url": "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_501_STABLE.json",
+      "file": "playground-manifest-501.json",
+      "status": 200,
+      "bytes": 1753,
+      "sha256": "ec3d9ba9b482e9a73954ce36529975de977b3ed7338ea5e91a537f0452b8425d",
+      "expect": "a real version the action has no data for: builds, with the warning banner",
+      "source": "network"
+    },
+    {
+      "url": "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_50_STABLE.json",
+      "file": "playground-manifest-50-typo.json",
+      "status": 404,
+      "bytes": 9379,
+      "sha256": "b620507312c5e97566a3c6cfaf99144fefc18a0da7d941401dfa0f5f58fb0368",
+      "expect": "404: a typo'd moodle-branch the build must refuse",
+      "source": "network"
     }
   ]
 }

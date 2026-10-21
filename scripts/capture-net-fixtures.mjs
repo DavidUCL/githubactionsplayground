@@ -158,6 +158,27 @@ export const URLS = [
     allowMissing: true,
   },
   {
+    file: "playground-manifest-500.json",
+    url: "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_500_STABLE.json",
+    expect: "the default host's MOODLE_500_STABLE manifest: the version exists, no banner",
+  },
+  {
+    file: "playground-manifest-405.json",
+    url: "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_405_STABLE.json",
+    expect: "the default host's MOODLE_405_STABLE manifest, for the moodle-branch probe row",
+  },
+  {
+    file: "playground-manifest-501.json",
+    url: "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_501_STABLE.json",
+    expect: "a real version the action has no data for: builds, with the warning banner",
+  },
+  {
+    file: "playground-manifest-50-typo.json",
+    url: "https://daviducl.github.io/moodle-playground/assets/manifests/MOODLE_50_STABLE.json",
+    expect: "404: a typo'd moodle-branch the build must refuse",
+    allowMissing: true,
+  },
+  {
     file: "probe-coursework-a.php",
     url: `${RAW}/DavidUCL/moodle-mod_coursework/${"a".repeat(40)}/version.php`,
     expect: "404 — the head-repo probe row",

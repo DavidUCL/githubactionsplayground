@@ -80,3 +80,63 @@ test("the comment step reads playground-origins: a link to a listed host is post
   assert.match(run({ PLAYGROUND_ORIGINS: "https://playground.example.ac.uk" }), /Open this pull request in Moodle Playground/);
   assert.throws(() => run({ PLAYGROUND_ORIGINS: "" }), /refusing to post/);
 });
+
+// The version check, end to end through the real builder, served by the
+// recorded manifest replies in test/fixtures/net (playground-manifest-*.json).
+const buildWith = (branch) => {
+  const dir = mkdtempSync(join(tmpdir(), "branch-"));
+  let out = "";
+  let rc = 0;
+  try {
+    out = execFileSync(process.execPath, ["scripts/build-preview.mjs"], {
+      env: {
+        ...process.env,
+        HEAD_REPO: "DavidUCL/moodle-mod_attendance",
+        HEAD_SHA: "a".repeat(40),
+        PLUGIN_TYPE: "mod",
+        PLUGIN_NAME: "attendance",
+        MOODLE_BRANCH: branch,
+        PLUGIN_ROOT: join(dir, "no-such-checkout"),
+        OUT_DIR: dir,
+        GITHUB_OUTPUT: join(dir, "gho"),
+        GITHUB_STEP_SUMMARY: join(dir, "sum"),
+      },
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  } catch (err) {
+    rc = err.status;
+    out = `${err.stdout ?? ""}${err.stderr ?? ""}`;
+  }
+  const read = (f) => {
+    try {
+      return readFileSync(join(dir, f), "utf8");
+    } catch {
+      return "";
+    }
+  };
+  return { rc, out, outputs: read("gho"), blueprint: read("preview-blueprint.json") };
+};
+
+test("a Moodle version the playground does not have stops the build, and no link is written", () => {
+  const r = buildWith("MOODLE_50_STABLE");
+  assert.notEqual(r.rc, 0);
+  assert.match(r.out, /has no Moodle "MOODLE_50_STABLE"\. Check the spelling/);
+  assert.doesNotMatch(r.outputs, /^preview-url=/m);
+});
+
+test("a real version the action has no data for builds, with the warning banner before the login", () => {
+  const r = buildWith("MOODLE_501_STABLE");
+  assert.equal(r.rc, 0, r.out);
+  const steps = JSON.parse(r.blueprint).steps;
+  const banner = steps.findIndex((st) => st.step === "runPhpCode" && /additionalhtmltopofbody/.test(st.code));
+  assert.ok(banner >= 0, "the banner step is in the blueprint");
+  assert.equal(steps[banner + 1].step, "login", "and it sits just before the login");
+});
+
+test("a version the action has data for builds with no banner and no version caveat", () => {
+  const r = buildWith("MOODLE_500_STABLE");
+  assert.equal(r.rc, 0, r.out);
+  assert.doesNotMatch(r.blueprint, /additionalhtmltopofbody/);
+  assert.doesNotMatch(r.outputs, /Whether the playground has Moodle/);
+});

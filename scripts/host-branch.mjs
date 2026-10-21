@@ -38,6 +38,13 @@ export async function checkBranchOnHost(playgroundHost, branch, { fetchImpl = fe
   } catch (err) {
     return { unknown: `could not read ${url}: ${err.message}` };
   }
+  // A redirect that lands somewhere else means a DIFFERENT host answered:
+  // moodle-playground.com sends every manifest request to another site's home
+  // page, which is a 200 that says nothing about this version. Said plainly
+  // rather than read as an answer. (An empty res.url is a test double.)
+  if (res.url && new URL(res.url).pathname !== new URL(url).pathname) {
+    return { unknown: `${url} redirected to ${res.url}, so this playground's versions could not be read` };
+  }
   if (res.status === 404) {
     return { exists: false, reason: `the playground at ${playgroundHost} has no Moodle "${branch}"` };
   }
