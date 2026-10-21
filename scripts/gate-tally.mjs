@@ -13,8 +13,8 @@
 // check hides.
 //
 // Usage: node scripts/gate-tally.mjs <verify.sh> <gate log>
-// Exit 0 when every check reported and the scan knew them all, 1 when not,
-// 2 on its own error.
+// Exit 0 when every check reported, none failed and the scan knew them all;
+// 1 when not; 2 on its own error.
 
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -117,7 +117,10 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     // An id the scan missed is a failure too: it means a check could go
     // silent without this noticing. This is what keeps the scan honest, run
     // against the real verify.sh on every gate run.
-    process.exit(result.groups.MISSING.length || result.unlisted.length ? 1 : 0);
+    // A FAIL line also fails the tally. verify.sh adds every FAIL to its own
+    // list too, so today this only matters if a check prints FAIL and forgets
+    // to; then the gate must not exit 0 on the strength of the list alone.
+    process.exit(result.groups.MISSING.length || result.unlisted.length || result.groups.FAIL.length ? 1 : 0);
   } catch (err) {
     // Neither a verdict nor a tally: the tally itself broke.
     console.log(`GATE TALLY ERROR: ${err.message}`);

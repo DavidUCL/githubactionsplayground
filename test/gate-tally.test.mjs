@@ -68,3 +68,15 @@ test("an id the log reports but the scan missed is flagged, so the scan cannot d
   assert.deepEqual(r.unlisted, ["9z"]);
   assert.match(render(r), /REPORTED BUT NOT FOUND IN verify\.sh \(counted as a failure; fix the scan\): 9z/);
 });
+
+test("the CLI exit code: a FAIL line fails the tally even if every check reported", async () => {
+  const { execFileSync } = await import("node:child_process");
+  const { mkdtempSync, writeFileSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const d = mkdtempSync(join(tmpdir(), "tally-"));
+  const v = "FAIL";
+  writeFileSync(join(d, "src.sh"), `echo "CHECK 1a ${"PASS"}: a"\n`);
+  writeFileSync(join(d, "log"), `CHECK 1a ${v}: broke\n`);
+  assert.throws(() => execFileSync(process.execPath, ["scripts/gate-tally.mjs", join(d, "src.sh"), join(d, "log")]), (e) => e.status === 1);
+});
