@@ -157,7 +157,16 @@ export function renderComment({
 // error). Render it as plain words: no characters that make links, images,
 // HTML or code in markdown, and a bounded length.
 function plainText(s) {
-  return String(s).replace(/[\[\]()<>`|*_!\\]/g, " ").replace(/\s+/g, " ").trim().slice(0, 300);
+  return String(s)
+    .replace(/[\[\]()<>`|*_!\\]/g, " ")
+    // An @name in a PR comment notifies that person, and GitHub turns a bare
+    // address into a link. Break both with a zero-width space so a fetched
+    // error message can neither ping anyone nor become a link.
+    .replace(/@/g, "@\u200b")
+    .replace(/:\/\//g, ":\u200b//")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
 }
 
 // This step runs even when the build failed, so it must still write a body.

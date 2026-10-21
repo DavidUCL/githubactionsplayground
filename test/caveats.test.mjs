@@ -26,6 +26,9 @@ test("a caveat cannot make a link, image or HTML in the comment, and is bounded"
   const block = body.slice(body.indexOf("Not checked"));
   assert.doesNotMatch(block, /\]\(|<img|`code`/);
   assert.ok(!block.includes("y".repeat(301)), "each caveat is cut to 300 characters");
+  assert.doesNotMatch(renderComment({ ...COMMENT, caveats: ["HTTP 403 for @someone"] }), /@someone/);
+  const bare = renderComment({ ...COMMENT, caveats: ["HTTP 404 reading https://evil.tld/x"] });
+  assert.doesNotMatch(bare.slice(bare.indexOf("Not checked")), /https:\/\/evil/);
 });
 
 test("a check that could not run reaches the outputs and the summary, end to end", () => {
@@ -56,4 +59,24 @@ test("a check that could not run reaches the outputs and the summary, end to end
   const summary = readFileSync(join(dir, "sum"), "utf8");
   assert.match(summary, /\*\*Not checked in this run:\*\*/);
   assert.match(summary, /component list did not load/);
+});
+
+test("the comment step reads playground-origins: a link to a listed host is posted", () => {
+  // The env wiring in main(), which no unit call of renderComment reaches. With
+  // the built-in list instead, this link would be refused and nothing posted.
+  const run = (env) =>
+    execFileSync(process.execPath, ["scripts/render-comment.mjs"], {
+      env: {
+        ...process.env,
+        PREVIEW_URL: "https://playground.example.ac.uk/?blueprint=abc",
+        PLUGIN: "mod_attendance",
+        HEAD_SHA: "d0638b39df1c28fd93c27778ae2cbada7cc1660f",
+        GITHUB_OUTPUT: "",
+        ...env,
+      },
+      encoding: "utf8",
+      stdio: "pipe",
+    });
+  assert.match(run({ PLAYGROUND_ORIGINS: "https://playground.example.ac.uk" }), /Open this pull request in Moodle Playground/);
+  assert.throws(() => run({ PLAYGROUND_ORIGINS: "" }), /refusing to post/);
 });
