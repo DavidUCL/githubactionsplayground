@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { checkBranchOnHost } from "../scripts/host-branch.mjs";
+import { checkBranchOnHost, normalizeMoodleBranch } from "../scripts/host-branch.mjs";
 import { buildWarningBannerStep, bannerHtml, escapeHtml } from "../scripts/warning-banner.mjs";
 
 const HOST = "https://h.example.org/moodle-playground";
@@ -74,4 +74,24 @@ test("the banner escapes every message and decodes to exactly that HTML", () => 
 test("no messages, no banner step", () => {
   assert.equal(buildWarningBannerStep([]), null);
   assert.equal(buildWarningBannerStep(["", "  "]), null);
+});
+
+test("the playground's shorthand is read as the full branch name", () => {
+  for (const [given, want] of [
+    ["5.0", "MOODLE_500_STABLE"],
+    ["5.0.x", "MOODLE_500_STABLE"],
+    ["4.5", "MOODLE_405_STABLE"],
+    ["5.1", "MOODLE_501_STABLE"],
+    [" 5.2 ", "MOODLE_502_STABLE"],
+    ["dev", "main"],
+    ["MOODLE_500_STABLE", "MOODLE_500_STABLE"],
+    ["main", "main"],
+    // Not shorthand: left alone, so the manifest check refuses a real typo.
+    ["MOODLE_50_STABLE", "MOODLE_50_STABLE"],
+    ["50", "50"],
+    ["5", "5"],
+    ["", ""],
+  ]) {
+    assert.equal(normalizeMoodleBranch(given), want, JSON.stringify(given));
+  }
 });

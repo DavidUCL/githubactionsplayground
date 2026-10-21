@@ -29,6 +29,8 @@ const MUTATIONS = [
     "  if (branchOnHost.exists === false) {", "  if (false) {"],
   ["banner: never put the warning banner in the blueprint", "scripts/build-preview.mjs",
     "  if (banner) {", "  if (false) {"],
+  ["branch: stop reading the playground's 5.0 shorthand", "scripts/host-branch.mjs",
+    "  if (m) return `MOODLE_${m[1]}${m[2].padStart(2, \"0\")}_STABLE`;", "  if (false) return s;"],
   ["branch: read a redirect as an answer", "scripts/host-branch.mjs",
     "if (res.url && new URL(res.url).pathname !== new URL(url).pathname) {", "if (false) {"],
   // assert.mjs — every term of every assertion

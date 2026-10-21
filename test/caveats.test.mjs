@@ -140,3 +140,11 @@ test("a version the action has data for builds with no banner and no version cav
   assert.doesNotMatch(r.blueprint, /additionalhtmltopofbody/);
   assert.doesNotMatch(r.outputs, /Whether the playground has Moodle/);
 });
+
+test("shorthand 5.0 builds exactly like MOODLE_500_STABLE, with the version pinned in full", () => {
+  const r = buildWith("5.0");
+  assert.equal(r.rc, 0, r.out);
+  assert.match(r.out, /moodle-branch "5\.0" read as MOODLE_500_STABLE/);
+  assert.equal(JSON.parse(r.blueprint).preferredVersions.moodle, "MOODLE_500_STABLE");
+  assert.doesNotMatch(r.blueprint, /additionalhtmltopofbody/);
+});

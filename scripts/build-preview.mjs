@@ -58,7 +58,7 @@ import {
   DEFAULT_MOODLE_BRANCH,
   MOODLE_BRANCH_VERSIONS,
 } from "./plugin-version.mjs";
-import { checkBranchOnHost } from "./host-branch.mjs";
+import { checkBranchOnHost, normalizeMoodleBranch } from "./host-branch.mjs";
 import { buildWarningBannerStep } from "./warning-banner.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -2317,7 +2317,10 @@ async function main() {
   // Which Moodle the playground will boot. Not pinned in the link today (see
   // README) — this states the assumption the compatibility check is made
   // against, so a wrong assumption is visible rather than silent.
-  const moodleBranch = (process.env.MOODLE_BRANCH || "").trim() || DEFAULT_MOODLE_BRANCH;
+  const moodleBranch = normalizeMoodleBranch(process.env.MOODLE_BRANCH) || DEFAULT_MOODLE_BRANCH;
+  if (moodleBranch !== (process.env.MOODLE_BRANCH || "").trim() && process.env.MOODLE_BRANCH) {
+    console.log(`note: moodle-branch ${JSON.stringify(sanitiseForLog(process.env.MOODLE_BRANCH))} read as ${moodleBranch}`);
+  }
   // Checks that could not run, said to the REVIEWER, not only in the log.
   // Each of these used to be a single `note:` line in the workflow log, which
   // no reviewer reads, while the comment looked like every other green one.

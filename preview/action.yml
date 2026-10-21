@@ -162,8 +162,9 @@ inputs:
     default: "."
   moodle-branch:
     description: >-
-      Which Moodle the preview boots, for example MOODLE_500_STABLE. It must be
-      a version the playground has: one it does not have (usually a typo) is
+      Which Moodle the preview boots, for example MOODLE_500_STABLE. The
+      playground's shorthand also works ("5.0", "4.5", "dev"). It must be a
+      version the playground has: one it does not have (usually a typo) is
       refused, because the playground would otherwise boot its default Moodle
       in silence. The plugin's $plugin->requires is checked against it for the
       versions this action has data for (MOODLE_404_STABLE, MOODLE_405_STABLE,

@@ -16,6 +16,23 @@
 const BRANCH_SHAPE = /^[A-Za-z0-9._-]{1,64}$/;
 
 /**
+ * Read the shorthand the playground itself accepts as the full branch name:
+ * "5.0" and "5.0.x" are MOODLE_500_STABLE, "4.5" is MOODLE_405_STABLE, "dev" is
+ * main (the playground's resolveMoodleBranch, src/shared/version-resolver.js).
+ * Without this, a workflow typing `moodle-branch: 5.0` booted Moodle 5.0 but
+ * was refused here, because the manifests are named by branch. A formula, not
+ * a copy of the playground's table: the manifest check still decides whether
+ * the version exists. Anything else is returned trimmed and unchanged.
+ */
+export function normalizeMoodleBranch(input) {
+  const s = String(input ?? "").trim();
+  if (s === "dev") return "main";
+  const m = /^([1-9])\.([0-9]{1,2})(?:\.x)?$/.exec(s);
+  if (m) return `MOODLE_${m[1]}${m[2].padStart(2, "0")}_STABLE`;
+  return s;
+}
+
+/**
  * @returns {Promise<{exists: true, release: string} | {exists: false, reason: string} | {unknown: string}>}
  *   `exists: false` only on a definite 404. Anything else that stops the
  *   answer (network, another status, a malformed manifest) is `unknown`: not
