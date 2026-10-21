@@ -1,0 +1,38 @@
+# Nightly: is the live playground the build we think it is?
+#
+# Its own workflow, not a job in canary.yml, on purpose. GitHub reports and
+# emails per WORKFLOW, and this check fails until the playground is redeployed
+# from a clean copy: the live build was deployed on 2026-08-20 with uncommitted
+# changes. Inside canary.yml that red would hide a real boot failure every
+# night; here it is red on its own, and the canary stays green unless something
+# really breaks.
+
+name: playground-version
+
+on:
+  schedule:
+    - cron: "27 2 * * *"
+  workflow_dispatch: {}
+
+permissions: {}
+
+jobs:
+  # Is the live playground the build we think it is? Fails when the host does
+  # not serve the deploy branch's head, or was deployed from a working copy
+  # with uncommitted changes (build-version.json says dirty) — a build that is
+  # no commit at all, so nothing in the repo explains how it behaves.
+  playground-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Live playground serves the deploy branch head, clean
+        env:
+          PLAYGROUND_HOST: "https://daviducl.github.io/moodle-playground"
+          EXPECTED_REPO: "DavidUCL/moodle-playground"
+          EXPECTED_BRANCH: "main"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/check-host-version.mjs
