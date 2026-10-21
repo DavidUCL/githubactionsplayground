@@ -18,6 +18,8 @@ test("a 200 ZIP a page may read passes", () => {
 test("an error status, a missing CORS header and a non-ZIP body each fail", () => {
   assert.match(judgeProxyResponse({ status: 502, allowOrigin: "*", firstBytes: ZIP })[0], /HTTP 502/);
   assert.match(judgeProxyResponse({ status: 200, allowOrigin: null, firstBytes: ZIP })[0], /Access-Control-Allow-Origin/);
+  assert.match(judgeProxyResponse({ status: 200, allowOrigin: "https://other.example", firstBytes: ZIP })[0], /cannot read it/);
+  assert.deepEqual(judgeProxyResponse({ status: 200, allowOrigin: "https://daviducl.github.io", firstBytes: ZIP }), []);
   assert.match(
     judgeProxyResponse({ status: 200, allowOrigin: "*", firstBytes: Uint8Array.from([0x3c, 0x68, 0x74, 0x6d]) })[0],
     /not a ZIP/,

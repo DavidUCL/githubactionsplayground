@@ -19,6 +19,8 @@ import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 export const DEFAULT_PROXY_URL = "https://github-proxy.exelearning.dev/";
+// The origin the request claims, as the playground page would send it.
+export const PAGE_ORIGIN = "https://daviducl.github.io";
 // A public plugin at a fixed commit, so the bytes never change under the check.
 export const DEFAULT_TEST_ZIP_URL =
   "https://github.com/danmarsden/moodle-mod_attendance/archive/8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c.zip";
@@ -34,10 +36,12 @@ export function proxiedUrl(proxyUrl, zipUrl) {
  * Judge a proxy response the way a browser page would experience it.
  * @returns {string[]} problems; empty means a page could download the ZIP.
  */
-export function judgeProxyResponse({ status, allowOrigin, firstBytes }) {
+export function judgeProxyResponse({ status, allowOrigin, firstBytes, origin = PAGE_ORIGIN }) {
   const problems = [];
   if (status !== 200) problems.push(`HTTP ${status}, not 200`);
-  if (allowOrigin !== "*" && !allowOrigin) problems.push("no Access-Control-Allow-Origin header, so a page cannot read it");
+  if (allowOrigin !== "*" && allowOrigin !== origin) {
+    problems.push(`Access-Control-Allow-Origin is ${JSON.stringify(allowOrigin)}, so a page on ${origin} cannot read it`);
+  }
   const zip = firstBytes && firstBytes.length >= 4 && firstBytes[0] === 0x50 && firstBytes[1] === 0x4b &&
     firstBytes[2] === 0x03 && firstBytes[3] === 0x04;
   if (status === 200 && !zip) problems.push("the body is not a ZIP");
@@ -51,7 +55,7 @@ async function main() {
   let problems;
   try {
     const res = await fetch(url, {
-      headers: { origin: "https://daviducl.github.io" },
+      headers: { origin: PAGE_ORIGIN },
       signal: AbortSignal.timeout(60000),
     });
     const body = new Uint8Array(await res.arrayBuffer());
