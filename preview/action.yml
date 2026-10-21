@@ -327,12 +327,11 @@ inputs:
     default: "https://daviducl.github.io/moodle-playground"
   playground-origins:
     description: >-
-      Comma-separated playground origins a link may point at, for example
-      "https://playground.example.ac.uk". Empty uses the built-in list
-      (moodle-playground.com, ateeducacion.github.io, daviducl.github.io). A
-      value REPLACES that list, so it can narrow it as well as add a host, and
-      playground-host must be on it or the link is refused. Each entry is a
-      bare https origin: no path, query or credentials.
+      Comma-separated playground origins a link may point at, IN ADDITION to
+      the built-in list (moodle-playground.com, ateeducacion.github.io,
+      daviducl.github.io), for example "https://playground.example.ac.uk".
+      playground-host must be one of them or the link is refused. Each entry is
+      a bare https origin: no path, query or credentials.
     required: false
     default: ""
 outputs:

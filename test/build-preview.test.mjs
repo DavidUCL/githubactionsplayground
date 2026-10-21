@@ -3019,10 +3019,10 @@ test("parseOrigins: empty means the built-in list", () => {
   assert.equal(parseOrigins(" , ,"), DEFAULT_ORIGINS);
 });
 
-test("parseOrigins: a value replaces the list, trimmed, trailing slash allowed", () => {
-  assert.deepEqual(parseOrigins(" https://playground.example.ac.uk/ ,https://b.example.org"), [
+test("parseOrigins: a value adds to the built-in list, trimmed, trailing slash allowed, no duplicates", () => {
+  assert.deepEqual(parseOrigins(" https://playground.example.ac.uk/ ,https://daviducl.github.io"), [
+    ...DEFAULT_ORIGINS,
     "https://playground.example.ac.uk",
-    "https://b.example.org",
   ]);
 });
 

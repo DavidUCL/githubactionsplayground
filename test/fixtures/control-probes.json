@@ -314,10 +314,12 @@
     {
       "input": "playground-origins",
       "env": "PLAYGROUND_ORIGINS",
-      "probe": "https://moodle-playground.com",
-      "target": "refusal",
-      "expect_error": "playground origin not allowed",
-      "note": "playground-origins REPLACES the allowed list and only affects the origin guard, so a widening value changes no artifact. Narrowing it to exclude the baseline host is the one observable proof that the env var reaches the guard."
+      "probe": "https://playground.example.ac.uk",
+      "env_extra": {
+        "PLAYGROUND_HOST": "https://playground.example.ac.uk/moodle-playground"
+      },
+      "target": "url",
+      "note": "playground-origins ADDS to the built-in list, so on its own it changes no artifact. env_extra points playground-host at the added origin: the link then moves there, which is only possible if this env var reaches the origin guard. Without it that host is refused and no link is written."
     },
     {
       "input": "restore-course-url",

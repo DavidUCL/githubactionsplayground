@@ -268,12 +268,12 @@ export const DEFAULT_ORIGINS = [
 ];
 
 /**
- * The playground origins a link may point at, from the `playground-origins`
- * input. Empty means DEFAULT_ORIGINS. A value REPLACES the defaults rather
- * than adding to them, so a deployment can narrow the list to its own host as
- * well as add one; `playground-host` must then be on it.
+ * The playground origins a link may point at: DEFAULT_ORIGINS plus any listed
+ * in the `playground-origins` input. A value ADDS to the defaults and never
+ * removes them (David, 2026-10-21): adding an address can then never make a
+ * build refuse. Where links actually go is still set by `playground-host`.
  *
- * This list used to be fixed in the code, so pointing `playground-host` at a
+ * The list used to be fixed in the code, so pointing `playground-host` at a
  * UCL address was refused however the workflow was set up.
  *
  * Each entry must be a bare https origin: no path, query, fragment or
@@ -286,7 +286,7 @@ export function parseOrigins(raw) {
     .map((s) => s.trim())
     .filter(Boolean);
   if (entries.length === 0) return DEFAULT_ORIGINS;
-  return entries.map((entry) => {
+  const extra = entries.map((entry) => {
     let url;
     try {
       url = new URL(entry);
@@ -300,6 +300,7 @@ export function parseOrigins(raw) {
     }
     return url.origin;
   });
+  return [...new Set([...DEFAULT_ORIGINS, ...extra])];
 }
 
 /** Course the reviewer lands in. */
