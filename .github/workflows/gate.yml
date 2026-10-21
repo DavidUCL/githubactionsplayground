@@ -68,7 +68,9 @@ jobs:
     # Nearly five minutes for one control. Raised ahead of the next one rather
     # than after it: this project has already paid once for finding the ceiling
     # by hitting it, and a timeout kill is the least readable failure there is.
-    timeout-minutes: 40
+    # 60 since 2026-10-21 (David): headroom, whatever else is decided about
+    # what this job runs.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -103,7 +105,9 @@ jobs:
     # 30-minute cap, while the offline job took 17m48s — the LIVE job is the one
     # with less headroom, and it is the one every new browser arm lands in. A
     # timeout kill here would be hard to read: cancelled, naming no check.
-    timeout-minutes: 40
+    # 60 since 2026-10-21 (David): headroom, whatever else is decided about
+    # what this job runs.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
