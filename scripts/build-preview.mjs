@@ -56,7 +56,10 @@ import {
   checkNotCoreComponent,
   fetchPluginVersion,
   DEFAULT_MOODLE_BRANCH,
+  MOODLE_BRANCH_VERSIONS,
 } from "./plugin-version.mjs";
+import { checkBranchOnHost } from "./host-branch.mjs";
+import { buildWarningBannerStep } from "./warning-banner.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 // Deliberately stricter than GitHub: a segment of `.` or `..` is folded away
@@ -2375,6 +2378,29 @@ async function main() {
   const problems = new Problems();
   problems.check("plugin-component", notCore);
 
+  // Does the playground have the Moodle version asked for? A typo used to boot
+  // the playground's default Moodle in silence while everything printed named
+  // the typo. A definite "no" stops the build (David, 2026-10-21); a host we
+  // cannot read is a caveat, not a refusal.
+  const branchOnHost = await checkBranchOnHost(playgroundHost, moodleBranch);
+  if (branchOnHost.exists === false) {
+    problems.add(
+      "moodle-branch",
+      `${branchOnHost.reason}. Check the spelling, for example MOODLE_500_STABLE.`,
+    );
+  } else if (branchOnHost.unknown) {
+    caveats.push(`Whether the playground has Moodle "${moodleBranch}": ${branchOnHost.unknown}.`);
+  }
+  // A real version the action holds no compatibility data for is allowed, and
+  // said INSIDE the preview, where the reviewer is looking.
+  const bannerMessages = [];
+  if (branchOnHost.exists && !Object.hasOwn(MOODLE_BRANCH_VERSIONS, moodleBranch)) {
+    bannerMessages.push(
+      `This preview runs Moodle "${moodleBranch}"${branchOnHost.release ? ` (${branchOnHost.release})` : ""}, ` +
+        "which the preview action has no data for, so whether this plugin supports it was not checked.",
+    );
+  }
+
   // A parse we could not trust is a REFUSAL. It used to collapse to nulls, and
   // nulls pass every check — so an unreadable version.php was indistinguishable
   // from a permissive one.
@@ -2715,6 +2741,14 @@ async function main() {
     installs: extras.installs,
     themeName: extras.themeName,
   });
+  // The warning banner goes in just before the login step, so it is set by the
+  // time the reviewer's first page renders, and after every step that could
+  // replace the site's configuration (a restored database brings its own).
+  const banner = buildWarningBannerStep(bannerMessages);
+  if (banner) {
+    const at = blueprint.steps.findIndex((st) => st.step === "login");
+    blueprint.steps.splice(at < 0 ? blueprint.steps.length : at, 0, banner);
+  }
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
   const url = buildPreviewUrl({

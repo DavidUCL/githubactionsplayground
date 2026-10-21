@@ -162,9 +162,13 @@ inputs:
     default: "."
   moodle-branch:
     description: >-
-      Which Moodle the playground will boot, used to check the plugin's
-      $plugin->requires. Must match the playground's own default, which is
-      MOODLE_500_STABLE. The link does not yet pin this (see README).
+      Which Moodle the preview boots, for example MOODLE_500_STABLE. It must be
+      a version the playground has: one it does not have (usually a typo) is
+      refused, because the playground would otherwise boot its default Moodle
+      in silence. The plugin's $plugin->requires is checked against it for the
+      versions this action has data for (MOODLE_404_STABLE, MOODLE_405_STABLE,
+      MOODLE_500_STABLE); any other version still works, with a warning banner
+      inside the preview saying compatibility was not checked.
     required: false
     default: "MOODLE_500_STABLE"
   sample-content:
