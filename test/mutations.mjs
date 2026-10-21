@@ -1399,8 +1399,12 @@ const label = (s) => s.replace(/ \(scripts\/.*\)$/, "").replace(/ — MUTATION S
 // worse thing and the list must not launder it.
 const isStale = (s) => s.includes("MUTATION STALE");
 const unexpected = survivors.filter((s) => isStale(s) || !KNOWN_SURVIVORS.has(label(s)));
+// A listed survivor whose mutant no longer EXISTS is stale in every shard, so
+// every shard reports it. Only "listed but now killed" is limited to the shard
+// that ran the mutant; filtering both by shard lost the first alarm entirely.
+const ALL_LABELS = new Set(MUTATIONS.map(([l]) => l));
 const fixed = [...KNOWN_SURVIVORS.keys()]
-  .filter((k) => MINE_LABELS.has(k))
+  .filter((k) => !ALL_LABELS.has(k) || MINE_LABELS.has(k))
   .filter((k) => !survivors.some((s) => label(s) === k));
 
 if (unexpected.length) {
