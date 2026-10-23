@@ -162,9 +162,14 @@ inputs:
     default: "."
   moodle-branch:
     description: >-
-      Which Moodle the playground will boot, used to check the plugin's
-      $plugin->requires. Must match the playground's own default, which is
-      MOODLE_500_STABLE. The link does not yet pin this (see README).
+      Which Moodle the preview boots, for example MOODLE_500_STABLE. The
+      playground's shorthand also works ("5.0", "4.5", "dev"). It must be a
+      version the playground has: one it does not have (usually a typo) is
+      refused, because the playground would otherwise boot its default Moodle
+      in silence. The plugin's $plugin->requires is checked against it for the
+      versions this action has data for (MOODLE_404_STABLE, MOODLE_405_STABLE,
+      MOODLE_500_STABLE); any other version still works, with a warning banner
+      inside the preview saying compatibility was not checked.
     required: false
     default: "MOODLE_500_STABLE"
   sample-content:
@@ -239,8 +244,9 @@ inputs:
       driver patches, and the export is what converts it.
 
       It does NOT have to live in a git repository — any address your
-      `data-hosts` allows will do — which is why the digest below is required
-      rather than optional.
+      `data-hosts` allows will do. A file at an address like that can change
+      after the link is built; restore-database-sha256 pins it if you want
+      that checked.
 
       The file is downloaded and OPENED when the link is built, because that is
       the only place anything can be checked. `restoreDatabase` renames the
@@ -324,6 +330,15 @@ inputs:
       for immediately before go-live.
     required: false
     default: "https://daviducl.github.io/moodle-playground"
+  playground-origins:
+    description: >-
+      Comma-separated playground origins a link may point at, IN ADDITION to
+      the built-in list (moodle-playground.com, ateeducacion.github.io,
+      daviducl.github.io), for example "https://playground.example.ac.uk".
+      playground-host must be one of them or the link is refused. Each entry is
+      a bare https origin: no path, query or credentials.
+    required: false
+    default: ""
 outputs:
   preview-url:
     description: "The URL to put on the pull request"
@@ -344,6 +359,19 @@ outputs:
   risky-steps:
     description: "Comma-separated steps in the blueprint that can rewrite Moodle after installing (empty for an ordinary preview)"
     value: ${{ steps.build.outputs.risky-steps }}
+  playground-version:
+    description: >-
+      The playground build the link was made against, read from the host's
+      assets/build-version.json (for example 20260820T070625Z-ab13283da6dd-dirty).
+      Empty when it could not be read. Recorded, not verified: this action does
+      not open the link.
+    value: ${{ steps.build.outputs.playground-version }}
+  caveats:
+    description: >-
+      Checks the builder could not run for this preview, separated by " ¦ "
+      (for example when Moodle's component list could not be fetched). Empty
+      when everything ran. Shown in the comment and the job summary.
+    value: ${{ steps.build.outputs.caveats }}
   plugin-type:
     description: "Resolved plugin type"
     value: ${{ steps.build.outputs.plugin-type }}
@@ -380,6 +408,7 @@ runs:
         PLUGIN_TYPE: ${{ inputs.plugin-type }}
         PLUGIN_NAME: ${{ inputs.plugin-name }}
         PLAYGROUND_HOST: ${{ inputs.playground-host }}
+        PLAYGROUND_ORIGINS: ${{ inputs.playground-origins }}
         PLUGIN_ROOT: ${{ inputs.plugin-root }}
         PLUGIN_COMPONENT: ${{ inputs.plugin-component }}
         LANDING_PATH: ${{ inputs.landing-path }}
@@ -428,5 +457,8 @@ runs:
         PREVIEW_USER: ${{ steps.build.outputs.preview-user }}
         PREVIEW_USER_IS_ADMIN: ${{ steps.build.outputs.preview-user-is-admin }}
         RISKY_STEPS: ${{ steps.build.outputs.risky-steps }}
+        PLAYGROUND_ORIGINS: ${{ inputs.playground-origins }}
+        PLAYGROUND_VERSION: ${{ steps.build.outputs.playground-version }}
+        CAVEATS: ${{ steps.build.outputs.caveats }}
         RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
       run: node "$GITHUB_ACTION_PATH/../scripts/render-comment.mjs"

@@ -44,8 +44,17 @@ concurrency:
 
 jobs:
   gate:
-    name: verify.sh (offline + drift)
+    name: verify.sh (offline + drift, mutants ${{ matrix.shard }})
     runs-on: ubuntu-latest
+    # Three jobs in parallel, each running the whole gate but only a third of
+    # the mutants (MUTATIONS_SHARD). The mutation test is most of this job's
+    # time and grows with every control; splitting it buys headroom for every
+    # future control, where raising the cap buys one. Together the three
+    # shards cover every mutant exactly once (test/shard.test.mjs).
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ["1/3", "2/3", "3/3"]
     # 40. The mutation harness runs the WHOLE unit suite once per mutant, so this
     # job grows with BOTH numbers at once and it grows fast. Measured, same job,
     # three consecutive controls:
@@ -59,7 +68,9 @@ jobs:
     # Nearly five minutes for one control. Raised ahead of the next one rather
     # than after it: this project has already paid once for finding the ceiling
     # by hitting it, and a timeout kill is the least readable failure there is.
-    timeout-minutes: 40
+    # 60 since 2026-10-21 (David): headroom, whatever else is decided about
+    # what this job runs.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:
@@ -80,6 +91,8 @@ jobs:
       # copy, and a CI runner has none — but it means the plugin-directory
       # drift check is NOT covered by CI. Left explicit rather than hidden.
       - name: Run the gate
+        env:
+          MUTATIONS_SHARD: ${{ matrix.shard }}
         run: ./verify.sh
 
   gate-live:
@@ -90,10 +103,11 @@ jobs:
     runs-on: ubuntu-latest
     # 40, not 30. MEASURED on run 31994375185: this job took 23m36s against the
     # 30-minute cap, while the offline job took 17m48s — the LIVE job is the one
-    # with less headroom, and it is the one every new browser arm lands in. It
-    # already waives two theme arms for an unreachable third-party proxy, so a
-    # timeout kill here would be doubly hard to read: cancelled, naming no check.
-    timeout-minutes: 40
+    # with less headroom, and it is the one every new browser arm lands in. A
+    # timeout kill here would be hard to read: cancelled, naming no check.
+    # 60 since 2026-10-21 (David): headroom, whatever else is decided about
+    # what this job runs.
+    timeout-minutes: 60
     permissions:
       contents: read
     steps:

@@ -54,3 +54,22 @@ jobs:
           FINAL="${RETRY_STATUS:-$STATUS}"
           echo "first=$STATUS retry=${RETRY_STATUS:-<none>} final=$FINAL"
           [ "$FINAL" = "pass" ]
+
+  # Is the plugin download proxy alive? Not part of the gate: the gate's plugin
+  # installs are moving to a locally served ZIP, which would otherwise delete
+  # the only signal that this real dependency of every preview went away.
+  # continue-on-error, so a proxy outage is reported without reading as "the
+  # playground broke". PROXY_URL moves to UCL's proxy with CTP-6878.
+  proxy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: The plugin download proxy returns a plugin ZIP a page can read
+        env:
+          PROXY_URL: "https://github-proxy.exelearning.dev/"
+        run: node scripts/check-proxy.mjs

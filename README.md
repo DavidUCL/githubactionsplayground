@@ -95,6 +95,23 @@ Everything in it exists to stop the link lying about which code it opens:
   after posting, and it survives a playground redeploy.
 - **The review course is named `PR #42 · <sha> · <plugin>`**, so the
   reviewer's own screen confirms the commit rather than the comment doing it.
+- **Only allowed playground origins.** The link must point at an origin on
+  the allowed list: the built-in one (moodle-playground.com,
+  ateeducacion.github.io, daviducl.github.io) plus any in the
+  `playground-origins` input. Moving to a new host means setting both
+  `playground-host` and `playground-origins`.
+- **Says what it could not check.** When a check cannot run (Moodle's
+  component list does not load, no `version.php` can be read, the playground's
+  step list is unreadable), the comment and the job summary list it under
+  "Not checked in this run", and the comment names the playground build the
+  link was made against. Neither claims the link works: nothing here opens it.
+- **The Moodle version must exist.** `moodle-branch` is checked against the
+  playground's own list (its `assets/manifests/<version>.json`): a version it
+  does not have, usually a typo, is refused. A real version the action has no
+  compatibility data for is allowed, and a warning box on every page of the
+  preview says so: Moodle's own "additional HTML" setting, pinned to the
+  bottom of the window, because a page notification needs the reviewer's
+  session and most previews do not land on the course page.
 
 ### Looking at the plugin under a real theme (`theme`)
 

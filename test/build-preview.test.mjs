@@ -22,6 +22,8 @@ import {
   snapshotReservations,
   isAdministrator,
   previewSummary,
+  parseOrigins,
+  DEFAULT_ORIGINS,
 } from "../scripts/build-preview.mjs";
 
 const SHA = "d0638b39df1c28fd93c27778ae2cbada7cc1660f";
@@ -3009,4 +3011,44 @@ test("the snapshot digest is optional, and recorded whether or not it is given",
     [],
     "nothing about a snapshot's acceptability depends on a digest being supplied",
   );
+});
+
+test("parseOrigins: empty means the built-in list", () => {
+  assert.equal(parseOrigins(""), DEFAULT_ORIGINS);
+  assert.equal(parseOrigins(undefined), DEFAULT_ORIGINS);
+  assert.equal(parseOrigins(" , ,"), DEFAULT_ORIGINS);
+});
+
+test("parseOrigins: a value adds to the built-in list, trimmed, trailing slash allowed, no duplicates", () => {
+  assert.deepEqual(parseOrigins(" https://playground.example.ac.uk/ ,https://daviducl.github.io"), [
+    ...DEFAULT_ORIGINS,
+    "https://playground.example.ac.uk",
+  ]);
+});
+
+test("parseOrigins: refuses anything that is not a bare https origin", () => {
+  for (const [bad, why] of [
+    ["http://playground.example.ac.uk", /must be https/],
+    ["https://user@playground.example.ac.uk", /userinfo/],
+    ["https://playground.example.ac.uk/moodle-playground", /bare origin/],
+    ["https://playground.example.ac.uk?x=1", /bare origin/],
+    ["https://playground.example.ac.uk#x", /bare origin/],
+    ["playground.example.ac.uk", /not a URL/],
+  ]) {
+    assert.throws(() => parseOrigins(bad), why, bad);
+  }
+});
+
+test("a UCL host is refused by default and accepted once it is on the list", () => {
+  const blueprint = buildBlueprint(base);
+  const playgroundHost = "https://playground.example.ac.uk/";
+  const requireSelfUrl = pluginZipUrl(base.headRepo, base.headSha);
+  assert.throws(() => buildPreviewUrl({ playgroundHost, blueprint, requireSelfUrl }), /playground origin not allowed/);
+  const url = buildPreviewUrl({
+    playgroundHost,
+    blueprint,
+    requireSelfUrl,
+    allowedOrigins: parseOrigins("https://playground.example.ac.uk"),
+  });
+  assert.equal(new URL(url).origin, "https://playground.example.ac.uk");
 });

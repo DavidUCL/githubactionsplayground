@@ -1,0 +1,18 @@
+{
+  "_comment": [
+    "Plugin ZIPs the LIVE gate serves to the browser instead of fetching them through the",
+    "playground's download proxy (test/helpers/serve-zips.mjs). Kept in the repo rather than",
+    "downloaded at gate time because GitHub does not promise archive bytes stay identical,",
+    "so a pinned hash on a fresh download could fail for no reason of ours. Outside test/ and",
+    "fixtures/ so the mutation harness does not copy 3 MB once per mutant.",
+    "Both are GPL-3.0-or-later; origins are recorded in COPYRIGHT."
+  ],
+  "https://github.com/danmarsden/moodle-mod_attendance/archive/8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c.zip": {
+    "file": "fixtures-live/mod_attendance-8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c.zip",
+    "sha256": "804aff585af4b8fc43f047a50d0f99e24769005178aded4bf151776f2f4b13be"
+  },
+  "https://github.com/moodle-an-hochschulen/moodle-theme_boost_union/archive/649c2d7b22fee1de767d145b7ec5a95543e9a305.zip": {
+    "file": "fixtures-live/theme_boost_union-649c2d7b22fee1de767d145b7ec5a95543e9a305.zip",
+    "sha256": "acfe9ecdb68fc2775aba18f518f1792d7b2feafa59d772bd030f6b1f816d631a"
+  }
+}

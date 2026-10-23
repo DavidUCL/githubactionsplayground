@@ -11,7 +11,9 @@
 
 import { appendFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { DEFAULT_ORIGINS } from "./build-preview.mjs";
+import { DEFAULT_ORIGINS, parseOrigins } from "./build-preview.mjs";
+
+const BUILD_VERSION_RE = /^[0-9A-Za-z][0-9A-Za-z._-]{0,79}$/;
 
 const MARKER = "<!-- moodle-playground-preview -->";
 const SHA_RE = /^[0-9a-f]{40}$/;
@@ -55,6 +57,13 @@ export function renderComment({
   // preview that restores nothing — behaves exactly as before.
   isAdmin = user === "admin",
   allowedOrigins = DEFAULT_ORIGINS, riskySteps = [],
+  // The playground build the link was made against (the builder's
+  // `playground-version` output). Empty when it could not be read; undefined
+  // for older callers, which then print nothing about it.
+  playgroundVersion,
+  // Checks the builder could not run (its `caveats` output, split). Shown so a
+  // comment for a preview with gaps does not look like every other one.
+  caveats = [],
 }) {
   const short = String(headSha).slice(0, 7);
   if (!SHA_RE.test(String(headSha))) throw new Error(`bad head sha: ${headSha}`);
@@ -130,9 +139,46 @@ export function renderComment({
           "",
         ]
       : []),
+    ...(caveats.length
+      ? ["**Not checked in this run:**", ...caveats.slice(0, 8).map((c) => `- ${plainText(c)}`), ""]
+      : []),
+    // Recorded, not checked: nothing in this action opens the link.
+    ...(playgroundVersion === undefined
+      ? []
+      : BUILD_VERSION_RE.test(String(playgroundVersion))
+        ? [`Built against playground build \`${playgroundVersion}\`; this run did not open the link.`, ""]
+        : ["The playground's build record could not be read, so which build this link opens is not recorded.", ""]),
     "Smoke test only: it shows whether the plugin installs and renders, not",
     "whether it is correct. Rewritten in place on every push.",
   ].join("\n");
+}
+
+// A caveat's reason can carry text fetched from elsewhere (a URL, an HTTP
+// error). Render it as plain words: no characters that make links, images,
+// HTML or code in markdown, and a bounded length.
+function plainText(s) {
+  return String(s)
+    .replace(/[\[\]()<>`|*_!\\]/g, " ")
+    // An @name in a PR comment notifies that person, and GitHub turns a bare
+    // address into a link. Break both with a zero-width space so a fetched
+    // error message can neither ping anyone nor become a link.
+    .replace(/@/g, "@\u200b")
+    .replace(/:\/\//g, ":\u200b//")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 300);
+}
+
+// This step runs even when the build failed, so it must still write a body.
+// A malformed list already failed the build with the reason; here it means
+// no origin is postable, which renders the "no preview" body instead of
+// crashing and leaving an older commit's link looking current.
+function originsOrNone(raw) {
+  try {
+    return parseOrigins(raw);
+  } catch {
+    return [];
+  }
 }
 
 function main() {
@@ -148,6 +194,11 @@ function main() {
       ? process.env.PREVIEW_USER_IS_ADMIN === "true"
       : (process.env.PREVIEW_USER || "admin") === "admin",
     riskySteps: (process.env.RISKY_STEPS || "").split(",").map((r) => r.trim()).filter(Boolean),
+    // The same list the builder checked the link against; with the defaults
+    // here instead, a link to a UCL host would be built and then not posted.
+    allowedOrigins: originsOrNone(process.env.PLAYGROUND_ORIGINS),
+    playgroundVersion: process.env.PLAYGROUND_VERSION ?? "",
+    caveats: (process.env.CAVEATS || "").split(" ¦ ").map((c) => c.trim()).filter(Boolean),
   });
   if (process.env.GITHUB_OUTPUT) {
     // Multi-line outputs need a delimiter that cannot appear in the body.

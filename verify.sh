@@ -28,6 +28,37 @@ set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 # ---------------------------------------------------------------------------
+# THE CLOSING TALLY.
+#
+# This script used to end on a bare `=== GATE PASS ===`, saying nothing about
+# what did not run. Six runs in a row of a check waived for a structural
+# reason read as green to anyone who did not scroll two thousand lines, and a
+# check that crashed before printing a verdict was simply absent.
+#
+# So the gate runs itself once more as a child, keeps its log, and hands the
+# log to scripts/gate-tally.mjs, which names every check that was waived,
+# skipped or FAILED, and counts a check that never reported as a failure.
+# The child's exit code is kept: the tally can turn a pass into a fail, never
+# the other way round.
+if [[ -z "${GATE_TALLY_INNER:-}" ]]; then
+    GATE_LOG="$(mktemp)"
+    GATE_TALLY_INNER=1 bash "$SCRIPT_DIR/verify.sh" "$@" 2>&1 | tee "$GATE_LOG"
+    GATE_RC=${PIPESTATUS[0]}
+    echo ""
+    node scripts/gate-tally.mjs verify.sh "$GATE_LOG"
+    TALLY_RC=$?
+    rm -f "$GATE_LOG"
+    if [[ $TALLY_RC -ne 0 && $GATE_RC -eq 0 ]]; then
+        if [[ $TALLY_RC -eq 1 ]]; then
+            echo "=== GATE FAIL: a check never reported, or reported under an id the tally does not know (see above) ==="
+        else
+            echo "=== GATE FAIL: the tally itself broke, so what ran is unknown ==="
+        fi
+        exit 1
+    fi
+    exit "$GATE_RC"
+fi
+# ---------------------------------------------------------------------------
 # ISOLATE THE RUNNER'S OUTPUT FILES.
 #
 # This is a TEST HARNESS, and much of what it runs exists to append to
@@ -59,7 +90,64 @@ check() {
     else echo "CHECK $num FAIL: $label"; FAILED+=("$num: $label"); fi
 }
 
+# Grade a probe on its exit code AND an affirmative token, never on the absence
+# of a bad one. Prints BAD (the probe found a problem), OK (it ran and said so),
+# or BROKE (neither: it crashed, printed nothing, or printed something else).
+# Checks 1l and 1r used to grep for the bad token and fall through to PASS, so a
+# stack trace read as a pass. 1l-self and 1r-self prove this fires.
+grade_probe() {
+    local rc=$1 out=$2 ok_re=$3 bad_re=$4
+    if [[ "$out" =~ $bad_re ]]; then echo BAD
+    elif [[ $rc -eq 0 && "$out" =~ $ok_re ]]; then echo OK
+    else echo BROKE; fi
+}
+
 echo "=== verify.sh — boot-verify action gate ==="
+
+# Five checks (1g, 1i, 1j, 1m, 1u) parse YAML with pyyaml and exit 2 if it is
+# missing. Say so once, up front, rather than leaving five bare failures. The
+# self-test plants a yaml module that refuses to import, and proves this
+# notices.
+YAML_PROBE='import yaml'
+if python3 -c "$YAML_PROBE" 2>/dev/null; then
+    YAML_FAKE=$(mktemp -d)
+    printf 'raise ImportError("planted by verify.sh 1w self-test")\n' >"$YAML_FAKE/yaml.py"
+    if PYTHONPATH="$YAML_FAKE" python3 -c "$YAML_PROBE" 2>/dev/null; then
+        echo "CHECK 1w FAIL: the self-test could not hide pyyaml, so this check would not notice it missing"
+        FAILED+=("1w: self-test does not fire")
+    else
+        echo "CHECK 1w PASS: pyyaml imports, and a planted broken yaml module is noticed"
+    fi
+    rm -rf "$YAML_FAKE"
+else
+    echo "CHECK 1w FAIL: pyyaml is not installed — checks 1g, 1i, 1j, 1m and 1u cannot run"
+    FAILED+=("1w: pyyaml missing")
+fi
+
+# 1x: the closing tally (scripts/gate-tally.mjs, run by the wrapper at the top)
+# must FAIL a check that never reports, and one reported under an id it does
+# not know. Its unit tests cover the logic; this covers the command's exit code,
+# which is the part the wrapper actually acts on.
+TALLY_SELF=$(mktemp -d)
+# The verdict word is passed in as %s on purpose: written out literally, these
+# sample lines would be read by the tally's own scan of this file as real
+# checks named 1a, 1b and 9z, which then never report.
+V=PASS
+printf 'echo "CHECK 1a %s: a"\necho "CHECK 1b %s: b"\n' "$V" "$V" >"$TALLY_SELF/src.sh"
+printf 'CHECK 1a %s: a\nCHECK 1b %s: b\n' "$V" "$V" >"$TALLY_SELF/ok.log"
+printf 'CHECK 1a %s: a\n' "$V" >"$TALLY_SELF/silent.log"
+printf 'CHECK 1a %s: a\nCHECK 1b %s: b\nCHECK 9z %s: new\n' "$V" "$V" "$V" >"$TALLY_SELF/unknown.log"
+X_SELF=""
+node scripts/gate-tally.mjs "$TALLY_SELF/src.sh" "$TALLY_SELF/ok.log" >/dev/null 2>&1 || X_SELF+="a clean log; "
+node scripts/gate-tally.mjs "$TALLY_SELF/src.sh" "$TALLY_SELF/silent.log" >/dev/null 2>&1 && X_SELF+="a silent check; "
+node scripts/gate-tally.mjs "$TALLY_SELF/src.sh" "$TALLY_SELF/unknown.log" >/dev/null 2>&1 && X_SELF+="an unknown id; "
+rm -rf "$TALLY_SELF"
+if [[ -z "$X_SELF" ]]; then
+    echo "CHECK 1x PASS: the closing tally fails a silent check and an unknown id, and passes a clean log"
+else
+    echo "CHECK 1x FAIL: the closing tally misreads: $X_SELF"
+    FAILED+=("1x: closing tally misreads $X_SELF")
+fi
 
 # THE OFFLINE SUITE IS OFFLINE, and this asserts it rather than hoping.
 #
@@ -152,8 +240,10 @@ check $? 1a2 "every mutation anchor still matches (log: /tmp/bv-verify-anchors.l
 # Anti-vacuity: every assertion term must be pinned by some test. Without
 # this, a green suite proves nothing:
 # the first version of these tests let 13 of 14 terms be deleted silently.
+# MUTATIONS_SHARD=i/n (set by CI's matrix) runs one share of the mutants; the
+# label says which, so a green shard is never read as the whole list.
 node test/mutations.mjs >/tmp/bv-verify-mutations.log 2>&1
-check $? 1b "no surviving mutants (log: /tmp/bv-verify-mutations.log)"
+check $? 1b "no surviving mutants${MUTATIONS_SHARD:+ in shard $MUTATIONS_SHARD} (log: /tmp/bv-verify-mutations.log)"
 
 # Contract: every env var the scripts read must be supplied by action.yml.
 # Checks 2-3 use hand-made fixtures, so a renamed env var would otherwise
@@ -647,15 +737,37 @@ import("node:fs").then(async (fs) => {
       }
     }
   }
-  console.log(bad.length ? "BAD " + bad.join(" | ") : "OK");
+  console.log(bad.length ? "BAD " + bad.join(" | ") : "OK " + files.length + " files scanned");
 });
-' 2>&1) || true
-if [[ "$RUN_INTERP" == BAD* ]]; then
+' 2>&1)
+RUN_INTERP_RC=$?
+R_OK='^OK [0-9]+ files scanned$'
+R_BAD='^BAD '
+RUN_VERDICT=$(grade_probe "$RUN_INTERP_RC" "$RUN_INTERP" "$R_OK" "$R_BAD")
+if [[ "$RUN_VERDICT" == BAD ]]; then
     echo "CHECK 1r FAIL: \${{ }} interpolated into a run: block — ${RUN_INTERP#BAD }"
     echo "               Pass the value through env: and read it as a shell variable."
     FAILED+=("1r: \${{ }} inside a run: block")
+elif [[ "$RUN_VERDICT" == BROKE ]]; then
+    # Neither a verdict nor a waiver: the scan itself broke. This used to fall
+    # through to PASS, so a stack trace certified the injection scan.
+    echo "CHECK 1r FAIL: the check did not run — ${RUN_INTERP:0:300}"
+    FAILED+=("1r: the check did not run")
 else
-    echo "CHECK 1r PASS: no \${{ }} is interpolated into any run: block"
+    echo "CHECK 1r PASS: no \${{ }} is interpolated into any run: block (${RUN_INTERP#OK })"
+fi
+# 1r-self: the grader must call a crash a crash. These are the shapes 1r used
+# to print as PASS: a stack trace with a non-zero exit, and empty output.
+R_SELF=""
+[[ $(grade_probe 1 "TypeError: fs.readdirSync is not a function" "$R_OK" "$R_BAD") == BROKE ]] || R_SELF+="stack trace; "
+[[ $(grade_probe 0 "" "$R_OK" "$R_BAD") == BROKE ]] || R_SELF+="empty output; "
+[[ $(grade_probe 0 "BAD action.yml:9: x" "$R_OK" "$R_BAD") == BAD ]] || R_SELF+="a finding; "
+[[ $(grade_probe 0 "OK 9 files scanned" "$R_OK" "$R_BAD") == OK ]] || R_SELF+="a clean scan; "
+if [[ -z "$R_SELF" ]]; then
+    echo "CHECK 1r-self PASS: 1r's grader fails a crash and empty output, and still passes a clean scan"
+else
+    echo "CHECK 1r-self FAIL: 1r's grader misreads: $R_SELF"
+    FAILED+=("1r-self: grader misreads $R_SELF")
 fi
 
 # The gate does not run the program. Every other check here reads a hand-made
@@ -937,7 +1049,7 @@ import sys, re, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping YAML contract check'); sys.exit(0)
+    print('1g: pyyaml unavailable — the check did not run'); sys.exit(2)
 root = pathlib.Path('.')
 for f in list(root.glob('.github/workflows/*.yml')) + [root/'action.yml', root/'preview'/'action.yml']:
     yaml.safe_load(f.read_text())
@@ -1092,7 +1204,7 @@ import sys, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping trigger check'); sys.exit(0)
+    print('1i: pyyaml unavailable — the check did not run'); sys.exit(2)
 bad = []
 for f in list(pathlib.Path('.').glob('.github/workflows/*.yml')) + list(pathlib.Path('.').glob('examples/*.yml')):
     doc = yaml.safe_load(f.read_text()) or {}
@@ -1122,7 +1234,7 @@ import sys, re, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping host default check'); sys.exit(0)
+    print('1j: pyyaml unavailable — the check did not run'); sys.exit(2)
 action = yaml.safe_load(pathlib.Path('preview/action.yml').read_text())
 declared = action['inputs']['playground-host']['default']
 m = re.search(r'PLAYGROUND_HOST \|\| "([^"]+)"', pathlib.Path('scripts/build-preview.mjs').read_text())
@@ -1168,7 +1280,7 @@ import sys, pathlib
 try:
     import yaml
 except ImportError:
-    print('pyyaml unavailable — skipping origin-default check'); sys.exit(0)
+    print('1m: pyyaml unavailable — the check did not run'); sys.exit(2)
 inputs = yaml.safe_load(pathlib.Path('action.yml').read_text())['inputs']
 host = (inputs['playground-host'].get('default') or '').strip()
 extra = [o.strip() for o in (inputs['accepted-origins'].get('default') or '').split(',') if o.strip()]
@@ -1232,6 +1344,10 @@ fi
 # emitted link or be a deliberate exception. If the playground gains a new one,
 # notice it here rather than when a link starts behaving differently.
 RESOLVER_SRC="${RESOLVER_SRC:-$SCRIPT_DIR/../moodle-playground/src/shared/version-resolver.js}"
+# The tokens 1l grades on. 1l-self below uses these same two, so it tests the
+# grading this check really does.
+L_OK='^OK [0-9]+ params read'
+L_BAD='UNGUARDED'
 if [[ -f "$RESOLVER_SRC" ]]; then
     RESOLVER_SRC="$RESOLVER_SRC" node -e '
 import("./scripts/build-preview.mjs").then(async (m) => {
@@ -1249,12 +1365,19 @@ import("./scripts/build-preview.mjs").then(async (m) => {
   console.log("OK " + read.length + " params read, all guarded or deliberately benign");
 });
 ' >/tmp/bv-verify-params.log 2>&1
-    if grep -q UNGUARDED /tmp/bv-verify-params.log; then
+    PARAMS_RC=$?
+    PARAMS_VERDICT=$(grade_probe "$PARAMS_RC" "$(cat /tmp/bv-verify-params.log)" "$L_OK" "$L_BAD")
+    if [[ "$PARAMS_VERDICT" == BAD ]]; then
         echo "CHECK 1l FAIL: the playground reads URL params our links do not forbid —"
         sed 's/^/               /' /tmp/bv-verify-params.log
         echo "               Add them to FORBIDDEN_PARAMS, or to BENIGN in verify.sh if"
         echo "               they cannot change what code runs or where it comes from."
         FAILED+=("1l: unguarded playground URL params")
+    elif [[ "$PARAMS_VERDICT" == BROKE ]]; then
+        # Neither a verdict nor a waiver: the probe itself broke. This used to
+        # fall through to PASS, printing the stack trace as the pass reason.
+        echo "CHECK 1l FAIL: the check did not run — $(head -c 300 /tmp/bv-verify-params.log)"
+        FAILED+=("1l: the check did not run")
     else
         echo "CHECK 1l PASS: $(cat /tmp/bv-verify-params.log)"
     fi
@@ -1263,13 +1386,67 @@ else
     echo "                 URL-param drift is UNCHECKED in this run."
 fi
 
+# 1l-self: the case Gus found. Turn FORBIDDEN_PARAMS into a Set and
+# `.includes` throws; the log is a stack trace with no "UNGUARDED" in it,
+# and this check printed it as the PASS reason.
+L_SELF=""
+[[ $(grade_probe 1 "TypeError: m.FORBIDDEN_PARAMS.includes is not a function" "$L_OK" "$L_BAD") == BROKE ]] || L_SELF+="stack trace; "
+[[ $(grade_probe 0 "" "$L_OK" "$L_BAD") == BROKE ]] || L_SELF+="empty output; "
+[[ $(grade_probe 1 "UNGUARDED newparam" "$L_OK" "$L_BAD") == BAD ]] || L_SELF+="a finding; "
+[[ $(grade_probe 0 "OK 12 params read, all guarded or deliberately benign" "$L_OK" "$L_BAD") == OK ]] || L_SELF+="a clean read; "
+if [[ -z "$L_SELF" ]]; then
+    echo "CHECK 1l-self PASS: 1l's grader fails a crash and empty output, and still passes a clean read"
+else
+    echo "CHECK 1l-self FAIL: 1l's grader misreads: $L_SELF"
+    FAILED+=("1l-self: grader misreads $L_SELF")
+fi
+
+# The drift comparison itself is a unit test (contract.test.mjs), so it ran in
+# check 1 against this same default path. This check used to print PASS because
+# the file EXISTED, and then export a variable nothing read afterwards. It now
+# reads check 1's log: the test must have run, not waived, and passed.
 PLAYGROUND_SRC="${PLAYGROUND_SRC:-$SCRIPT_DIR/../moodle-playground/src/blueprint/steps/moodle-plugins.js}"
+DRIFT_TEST='PLUGIN_TYPE_DIRS matches the playground source it was copied from'
+grade_drift_log() { # grade_drift_log <unit log> -> DRIFT | OK | BROKE
+    if grep -E "^not ok [0-9]+ - $DRIFT_TEST" "$1" >/dev/null; then echo DRIFT
+    elif ! grep -qF "(WAIVED: no playground source" "$1" \
+        && grep -E "^ok [0-9]+ - $DRIFT_TEST" "$1" >/dev/null; then echo OK
+    else echo BROKE; fi
+}
 if [[ -f "$PLAYGROUND_SRC" ]]; then
-    export PLAYGROUND_SRC
-    echo "CHECK 1e PASS: plugin-directory drift check ran against $PLAYGROUND_SRC"
+    case $(grade_drift_log /tmp/bv-verify-unit.log) in
+    DRIFT)
+        echo "CHECK 1e FAIL: PLUGIN_TYPE_DIRS has drifted from $PLAYGROUND_SRC (see /tmp/bv-verify-unit.log)"
+        FAILED+=("1e: plugin-directory map has drifted") ;;
+    OK)
+        echo "CHECK 1e PASS: PLUGIN_TYPE_DIRS matches $PLAYGROUND_SRC (unit suite, check 1)" ;;
+    *)
+        echo "CHECK 1e FAIL: the check did not run — the source is at $PLAYGROUND_SRC but the unit suite"
+        echo "               has no passing '$DRIFT_TEST' (see /tmp/bv-verify-unit.log)"
+        FAILED+=("1e: the check did not run") ;;
+    esac
 else
     echo "CHECK 1e WAIVED: no playground source at $PLAYGROUND_SRC —"
     echo "                 PLUGIN_TYPE_DIRS drift is UNCHECKED in this run."
+fi
+
+# 1e-self: the grader must not read a waived or missing test as a pass.
+E_SELF=""
+E_TMP=$(mktemp)
+printf '# Subtest: %s\nok 238 - %s\n' "$DRIFT_TEST" "$DRIFT_TEST" >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == OK ]] || E_SELF+="a passing test; "
+printf '  (WAIVED: no playground source at /x — set PLAYGROUND_SRC)\nok 238 - %s\n' "$DRIFT_TEST" >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == BROKE ]] || E_SELF+="a waived test; "
+printf 'ok 1 - something else\n' >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == BROKE ]] || E_SELF+="a missing test; "
+printf 'not ok 238 - %s\n' "$DRIFT_TEST" >"$E_TMP"
+[[ $(grade_drift_log "$E_TMP") == DRIFT ]] || E_SELF+="a failing test; "
+rm -f "$E_TMP"
+if [[ -z "$E_SELF" ]]; then
+    echo "CHECK 1e-self PASS: 1e's grader fails a waived or missing drift test, and passes a real one"
+else
+    echo "CHECK 1e-self FAIL: 1e's grader misreads: $E_SELF"
+    FAILED+=("1e-self: grader misreads $E_SELF")
 fi
 
 WORK=$(mktemp -d)
@@ -1381,9 +1558,9 @@ import("./scripts/restore-assert.mjs").then(async (m) => {
     # for the RIGHT reason.
     #
     # This one needs NO download: the whole blueprint is createCourse plus the
-    # assertion, all core. Unlike LIVE 7's theme arms — which waive on GitHub
-    # runners because the plugin ZIP proxy is unreachable from Actions — both
-    # arms here run everywhere, so neither is waivable and a red is always ours.
+    # assertion, all core, so both arms run everywhere and a red is always
+    # ours. (LIVE 7's theme arms need a ZIP, which is served locally from
+    # fixtures-live/ so that they run everywhere too.)
     #
     # 8b asserts exit 41 SPECIFICALLY, and that is the standing measurement, not
     # a detail: 41 means "the resolved format is not what we asked for AND the
@@ -1450,9 +1627,8 @@ import("./scripts/course-assert.mjs").then(async (m) => {
     #
     # NOTHING HERE DOWNLOADS A LANGUAGE PACK. The packs are FABRICATED on disk by
     # a runPhpCode step, the same move LIVE 6 makes with a .mbz. That keeps all
-    # four arms unwaivable on a GitHub runner — unlike LIVE 7's theme arms, which
-    # waive because the ZIP proxy is unreachable from Actions — and it lets 9c
-    # build a state a real download could never be relied on to produce.
+    # four arms independent of any download, and it lets 9c build a state a
+    # real download could never be relied on to produce.
     #
     # 9d is the GREEN arm and it is not optional: an assertion that can never
     # exit 0 would pass 9a, 9b and 9c while killing every real preview. A set of
@@ -1716,9 +1892,10 @@ import("./scripts/db-assert.mjs").then(async (m) => {
     # assertion to fail. If it passes, this check is measuring nothing.
     PV_REPO="danmarsden/moodle-mod_attendance"
     PV_SHA="8b217b1807bc0d33b3ac3b50ba516a7aaa7f367c"
-    pv_boot() { # $1=label $2=none|noplugin -> echoes OK, or FAIL: <reason>
+    pv_boot() { # $1=label $2=none|noplugin $3=served|unserved -> echoes OK, WAIVE: <step>, or FAIL: <reason>
         local PV_OUT="$WORK/pv_$1"
         mkdir -p "$PV_OUT/out"
+        : >"$PV_OUT/served.txt"
         : >"$PV_OUT/gho"
         # THE REAL BUILDER, as a subprocess, with the env the action sets. Not
         # a function call: the wiring between action.yml and the script is part
@@ -1743,7 +1920,14 @@ import("./scripts/build-preview.mjs").then(async (m) => {
   console.log(u.toString());
 });')
         fi
-        LD_LIBRARY_PATH="${NSS_LIBS:-}" PREVIEW_URL="$PV_URL" OUT_DIR="$PV_OUT/boot" \
+        # The plugin ZIP comes from fixtures-live/, served by the route in
+        # test/helpers/serve-zips.mjs, and the real proxy is made unreachable,
+        # so nothing here depends on a third party answering a GitHub runner.
+        local PV_MAP="$SERVE_ZIPS_MAP"
+        [ "$3" = "unserved" ] && PV_MAP="$SERVE_ZIPS_NONE"
+        NODE_OPTIONS="--import=file://$PWD/test/helpers/serve-zips.mjs" \
+            BV_SERVE_ZIPS="$PV_MAP" BV_BLOCK_PROXY=1 BV_SERVED_COUNT_FILE="$PV_OUT/served.txt" \
+            LD_LIBRARY_PATH="${NSS_LIBS:-}" PREVIEW_URL="$PV_URL" OUT_DIR="$PV_OUT/boot" \
             node scripts/boot-capture.mjs >>/tmp/bv-verify-preview.log 2>&1
         PV_DIR="$PV_OUT/boot" PV_SHA="$PV_SHA" node -e '
 import("./scripts/assert.mjs").then(async (m) => {
@@ -1768,12 +1952,11 @@ import("./scripts/assert.mjs").then(async (m) => {
     if (p.steps.length !== n) bad.push(`only ${p.steps.length} of ${n} steps ran`);
     if (!p.steps.every((s, i) => s.k === i + 1)) bad.push("the steps were not contiguous");
   }
-  // THE PROXY, not us. The playground routes github.com ZIP fetches through
-  // github-proxy.exelearning.dev, a courtesy service with no SLA, and it
-  // answers 502 from GitHub runners while working on a workstation minutes
-  // earlier — measured twice on this project, once here. Reported separately
-  // so the caller can waive it LOUDLY rather than going red on an outage in
-  // somebody elses infrastructure.
+  // THE PLUGIN DOWNLOAD DIED. Reported as its own outcome, not a plain FAIL:
+  // the self-test arm, which serves nothing with the proxy blocked, REQUIRES
+  // exactly this, and the real arm treats it as a failure. (It used to be
+  // waived as an outage of github-proxy.exelearning.dev, which a GitHub runner
+  // cannot reach; the ZIP is now served locally instead.)
   //
   // Matched on the STEP, never on the error text. That mistake has already
   // been paid for once: a workstation said "Failed to download plugin ZIP …:
@@ -1801,32 +1984,27 @@ import("./scripts/assert.mjs").then(async (m) => {
 });'
     }
     : >/tmp/bv-verify-preview.log
-    PV_REAL=$(pv_boot real none)
-    PV_STRIPPED=$(pv_boot noplugin noplugin)
+    # The ZIPs the browser is served, from the vendored copies. An empty map
+    # serves nothing, for the self-test arm below.
+    SERVE_ZIPS_MAP="$WORK/serve-zips.json"
+    SERVE_ZIPS_NONE="$WORK/serve-zips-none.json"
+    python3 -c "import json; d=json.load(open('fixtures-live/zips.json')); json.dump({k: v for k, v in d.items() if not k.startswith('_')}, open('$SERVE_ZIPS_MAP', 'w'))"
+    echo '{}' >"$SERVE_ZIPS_NONE"
+    PV_REAL=$(pv_boot real none served)
+    PV_UNSERVED=$(pv_boot unserved none unserved)
+    PV_STRIPPED=$(pv_boot noplugin noplugin served)
     PV_PROBLEMS=""
-    PV_WAIVED=""
-    if [[ "$PV_REAL" == WAIVE:* ]]; then
-        # The plugin ZIP never arrived. Say what was NOT checked, then check
-        # what still can be WITHOUT the network: that the link the builder
-        # produced really does install the commit under review. That is a claim
-        # about our own output, and it is the part a proxy outage must not be
-        # allowed to stop covering.
-        PV_WAIVED="the boot of the real link (${PV_REAL#WAIVE: })"
-        PV_STATIC=$(PV_IN="$(cat "$WORK/pv_real/url.txt" 2>/dev/null)" PV_SHA="$PV_SHA" node -e '
-import("node:zlib").then(({ gunzipSync }) => {
-  const u = new URL(process.env.PV_IN);
-  const bp = JSON.parse(gunzipSync(Buffer.from(
-    u.searchParams.get("blueprint").replace(/-/g,"+").replace(/_/g,"/"), "base64")).toString("utf8"));
-  const self = bp.steps.filter((s) => s.step === "installMoodlePlugin");
-  if (self.length !== 1) return console.log(`FAIL: ${self.length} install steps, expected 1`);
-  if (!self[0].url.includes(process.env.PV_SHA)) return console.log("FAIL: not pinned to the head commit");
-  if (`${self[0].pluginType}_${self[0].pluginName}` !== "mod_attendance") return console.log("FAIL: wrong component");
-  console.log("OK");
-});' 2>/dev/null)
-        [[ "$PV_STATIC" == "OK" ]] || PV_PROBLEMS+="with the boot waived, the link itself does not install the commit under review: ${PV_STATIC:-nothing}; "
-    else
-        [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly: ${PV_REAL:-nothing}; "
-    fi
+    # No waiver any more. This arm used to waive as a "proxy outage" whenever the
+    # plugin step died, which on CI was every run: the real arm had never once
+    # passed there. With the ZIP served locally there is no outage to excuse, so
+    # a plugin that does not install is a failure.
+    [[ "$PV_REAL" == "OK" ]] || PV_PROBLEMS+="a link the action built did not boot cleanly with its plugin ZIP served locally: ${PV_REAL:-nothing}; "
+    [[ -s "$WORK/pv_real/served.txt" ]] || PV_PROBLEMS+="the local plugin ZIP was never served, so whatever installed did not come from it; "
+    # THE SELF-TEST. The same link, the real proxy still unreachable, and
+    # nothing served: the plugin step must die. If it does not, the ZIP is
+    # arriving by some other path and the arm above proves nothing about the
+    # route. Graded on the step, like the rest of this check.
+    [[ "$PV_UNSERVED" == WAIVE:*installMoodlePlugin* ]] || PV_PROBLEMS+="with the proxy blocked and nothing served, the plugin step did not fail (got: ${PV_UNSERVED:-nothing}), so the served ZIP is not what the passing arm installed; "
     # NOT WAIVABLE, and graded on the REASON rather than on failing at all.
     # This arm downloads no plugin, so a proxy outage cannot excuse it — and
     # `FAIL:` alone would be satisfied by a boot that broke for any reason
@@ -1836,11 +2014,8 @@ import("node:zlib").then(({ gunzipSync }) => {
     if [[ -n "$PV_PROBLEMS" ]]; then
         echo "CHECK 12 FAIL: the action's own link is not being proved — $PV_PROBLEMS"
         FAILED+=("12: nothing proves a link the action produces actually boots")
-    elif [[ -n "$PV_WAIVED" ]]; then
-        echo "CHECK 12 WAIVED: $PV_WAIVED — the plugin ZIP proxy did not answer."
-        echo "  The link was still checked to install ${PV_SHA:0:7}; what is NOT covered is that it boots."
     else
-        echo "CHECK 12 PASS: a link the ACTION built boots, installs the commit under review, and one with the plugin step removed is caught"
+        echo "CHECK 12 PASS: a link the ACTION built boots and installs the commit under review from a locally served ZIP; with nothing served the install fails, and a link with the plugin step removed is caught"
     fi
 
     # LIVE 7 — the theme control, in a real browser.
@@ -1904,7 +2079,13 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
       : [{ url: zip, pluginType: "theme", pluginName: "boost_union" }] }));
 });
 ' >/dev/null 2>&1
-        LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$TB_OUT" \
+        # The theme ZIP is served from fixtures-live/ with the real proxy
+        # unreachable, as in check 12 (whose self-test proves the route is
+        # what delivers it).
+        : >"$TB_OUT/served.txt"
+        NODE_OPTIONS="--import=file://$PWD/test/helpers/serve-zips.mjs" \
+            BV_SERVE_ZIPS="$SERVE_ZIPS_MAP" BV_BLOCK_PROXY=1 BV_SERVED_COUNT_FILE="$TB_OUT/served.txt" \
+            LD_LIBRARY_PATH="${NSS_LIBS:-}" OUT_DIR="$TB_OUT" \
             BLUEPRINT_URL="https://raw.githubusercontent.com/DavidUCL/mchef-urls/integrationtest/blueprints/tb-$1.json" \
             node scripts/boot-capture.mjs >>/tmp/bv-verify-theme.log 2>&1
         # TWO files, deliberately. Step outcomes are in boot-log.txt; the
@@ -1963,29 +2144,26 @@ import("./scripts/theme-assert.mjs").then(async (m) => {
         [[ "$1" == *"Blueprint failed at step"* && "$1" == *"installMoodlePlugin"* ]]
     }
     TB_PROBLEMS=""
-    TB_WAIVED=""
+    # No waivers any more: the theme ZIP is served locally, so a download that
+    # dies is a failure, not an outage of the proxy a runner cannot reach.
     if tb_download_died "$TB_GOOD"; then
-        TB_WAIVED+="the installed-and-activated arm; "
+        TB_PROBLEMS+="the theme ZIP did not install even though it was served locally (got: ${TB_GOOD}); "
     else
         [[ "$TB_GOOD" == *"setLandingPage"* ]] || TB_PROBLEMS+="an installed, activated theme did not complete (got: ${TB_GOOD:-nothing}); "
         [[ "$TB_GOOD" != *"theme-css-build-failed"* ]] || TB_PROBLEMS+="the theme's stylesheet did not build (got: ${TB_GOOD}); "
         [[ "$TB_GOOD" != *"no-console-capture"* ]] || TB_PROBLEMS+="nothing captured the browser console, so the stylesheet check proved nothing; "
     fi
+    [[ -s "$WORK/tb_correct/served.txt" ]] || TB_PROBLEMS+="the local theme ZIP was never served to the installed-and-activated arm; "
     if tb_download_died "$TB_WRONG"; then
-        TB_WAIVED+="the wrong-theme arm; "
+        TB_PROBLEMS+="the theme ZIP did not install for the wrong-theme arm even though it was served locally (got: ${TB_WRONG}); "
     else
         [[ "$TB_WRONG" == *"exit code 32"* ]] || TB_PROBLEMS+="a site left on another theme was not caught (got: ${TB_WRONG:-nothing}); "
     fi
-    # Not waivable: neither downloads anything.
     [[ "$TB_MISSING" == *"exit code 31"* ]] || TB_PROBLEMS+="a theme that was never installed was not caught (got: ${TB_MISSING:-nothing}); "
     [[ "$TB_PARENTS" == *"exit code 33"* ]] || TB_PROBLEMS+="a theme Moodle silently refused to initialise was not caught (got: ${TB_PARENTS:-nothing}); "
     if [[ -n "$TB_PROBLEMS" ]]; then
         echo "CHECK 7 FAIL: the theme check is not doing its job — $TB_PROBLEMS"
         FAILED+=("7: theme activation check cannot fail")
-    elif [[ -n "$TB_WAIVED" ]]; then
-        echo "CHECK 7 WAIVED IN PART: the theme ZIP would not install, so $TB_WAIVED"
-        echo "                       were UNCHECKED in this run. The two arms needing no"
-        echo "                       download still passed, so the assertion can still fail."
     else
         echo "CHECK 7 PASS: a real theme installs, activates and builds its CSS — and all three silent failures are caught"
     fi
@@ -2009,7 +2187,10 @@ json.dump(bp, open('$TAMPER_OUT/blueprint.json', 'w'))
         && python3 -c "import json,sys; v=json.load(open('$TAMPER_OUT/verdict.json')); sys.exit(0 if v['status'] != 'pass' else 1)"
     check $? 5 "swapped local blueprint is refused by the hash binding (log: /tmp/bv-verify-tamper.log)"
 else
-    echo "CHECK 4-7 SKIP: live boot (set LIVE=1 to include — required for the gate)"
+    # One line per check, so the tally can name each one that did not run.
+    for LIVE_ID in 4 5 6 7 8 9 10 11 12; do
+        echo "CHECK $LIVE_ID SKIP: live browser boot (set LIVE=1 to include — required for the gate)"
+    done
 fi
 
 # Prove the isolation held. Without this the fix is invisible: a future edit

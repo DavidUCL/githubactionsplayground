@@ -216,11 +216,15 @@ async function main() {
       // the request past the route and out to the network.
       const blueprintNoQuery = blueprintUrl.split(/[?#]/)[0];
       // Routed on the CONTEXT rather than the page. Be precise about what this
-      // does and does not buy: Playwright documents that NEITHER
-      // page.route NOR context.route intercepts a fetch made BY a service
-      // worker, and this shell has one. `serviceWorkers: "block"` was tried and
-      // rejected — the playground needs its worker to serve PHP, so the boot
-      // never completes (measured: 420s, no boot anchor).
+      // does and does not buy. This was written when Playwright documented
+      // that neither page.route nor context.route sees a fetch made BY a
+      // service worker, and this shell has one. On Playwright 1.61.1 a
+      // context route DOES see the service worker's fetch of a plugin ZIP
+      // (measured 2026-10-20; the LIVE gate now relies on it, see
+      // test/helpers/serve-zips.mjs), but nothing here depends on that.
+      // `serviceWorkers: "block"` was tried and rejected: the playground needs
+      // its worker to serve PHP, so the boot never completes (measured: 420s,
+      // no boot anchor).
       //
       // The binding therefore fails CLOSED rather than being airtight: if the
       // worker ever serves this fetch, loopback_served stays 0 and the verdict

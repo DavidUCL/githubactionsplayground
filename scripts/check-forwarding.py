@@ -68,10 +68,9 @@ except ImportError:  # pragma: no cover - environment, not logic
     # passes, and an environment that cannot parse YAML has not checked
     # anything. Nothing pip-installs pyyaml — the ubuntu-latest image ships it
     # and this workstation has it — so if this ever fires it is a broken
-    # environment to fix, not something to wave through. NOTE: verify.sh's four
-    # OTHER yaml blocks still `exit(0)` on ImportError and would pass having
-    # checked nothing. That is pre-existing and logged as a follow-up; it is not
-    # a reason to make this one lie too.
+    # environment to fix, not something to wave through. verify.sh's four other
+    # yaml blocks (1g, 1i, 1j, 1m) exit 2 the same way, and its check 1w names
+    # a missing pyyaml up front.
     print("1u: pyyaml unavailable — the check did not run", file=sys.stderr)
     sys.exit(2)
 

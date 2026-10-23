@@ -33,6 +33,7 @@ import { buildCourseIdAssertion, landingCourseId } from "./course-id-assert.mjs"
 import { checkCourseBackup } from "./mbz.mjs";
 import { inspectSnapshot, checkSnapshot } from "./snapshot.mjs";
 import { fetchHostSteps, stepsHostCannotRun, explainMissingSteps } from "./host-steps.mjs";
+import { fetchHostVersion, describeHostVersion } from "./host-version.mjs";
 // Re-exported: the check now lives in preflight so BOTH halves get it (the
 // verify half fetches foreign blueprints and never had it), but this stays the
 // import site for preview concerns.
@@ -55,7 +56,10 @@ import {
   checkNotCoreComponent,
   fetchPluginVersion,
   DEFAULT_MOODLE_BRANCH,
+  MOODLE_BRANCH_VERSIONS,
 } from "./plugin-version.mjs";
+import { checkBranchOnHost, normalizeMoodleBranch } from "./host-branch.mjs";
+import { buildWarningBannerStep } from "./warning-banner.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 // Deliberately stricter than GitHub: a segment of `.` or `..` is folded away
@@ -265,6 +269,42 @@ export const DEFAULT_ORIGINS = [
   "https://ateeducacion.github.io",
   "https://daviducl.github.io",
 ];
+
+/**
+ * The playground origins a link may point at: DEFAULT_ORIGINS plus any listed
+ * in the `playground-origins` input. A value ADDS to the defaults and never
+ * removes them (David, 2026-10-21): adding an address can then never make a
+ * build refuse. Where links actually go is still set by `playground-host`.
+ *
+ * The list used to be fixed in the code, so pointing `playground-host` at a
+ * UCL address was refused however the workflow was set up.
+ *
+ * Each entry must be a bare https origin: no path, query, fragment or
+ * credentials, because the guard compares `URL.origin` and anything else could
+ * never match, or would read as one host while being another.
+ */
+export function parseOrigins(raw) {
+  const entries = String(raw ?? "")
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (entries.length === 0) return DEFAULT_ORIGINS;
+  const extra = entries.map((entry) => {
+    let url;
+    try {
+      url = new URL(entry);
+    } catch {
+      throw new Error(`playground-origins: not a URL: ${entry}`);
+    }
+    if (url.protocol !== "https:") throw new Error(`playground-origins: must be https: ${entry}`);
+    if (url.username || url.password) throw new Error(`playground-origins: must not carry userinfo: ${entry}`);
+    if (entry.replace(/\/$/, "") !== url.origin) {
+      throw new Error(`playground-origins: must be a bare origin like https://example.org, not ${entry}`);
+    }
+    return url.origin;
+  });
+  return [...new Set([...DEFAULT_ORIGINS, ...extra])];
+}
 
 /** Course the reviewer lands in. */
 const COURSE_SHORTNAME = "REVIEW";
@@ -1806,6 +1846,11 @@ export function previewSummary({
   courseRoster = [],
   landingPage,
   versionPhp, core, risky, loginAs,
+  // One line naming the playground build the link was made against, from
+  // describeHostVersion. Absent for callers that did not read it.
+  hostVersionLine,
+  // Checks that could not run in this build, each one sentence.
+  caveats = [],
 }) {
   return [
     "## ▶ Playground preview",
@@ -1921,6 +1966,10 @@ export function previewSummary({
         ]
       : []),
     ...riskyNotes(risky),
+    ...(caveats.length
+      ? ["**Not checked in this run:**", ...caveats.map((c) => `- ${sanitiseForLog(c)}`), ""]
+      : []),
+    ...(hostVersionLine ? [hostVersionLine, ""] : []),
     "Smoke test only: this shows whether the plugin installs and renders, not",
     "whether it is correct. Nothing here booted it — the link boots in your",
     "browser when you open it.",
@@ -2268,7 +2317,14 @@ async function main() {
   // Which Moodle the playground will boot. Not pinned in the link today (see
   // README) — this states the assumption the compatibility check is made
   // against, so a wrong assumption is visible rather than silent.
-  const moodleBranch = process.env.MOODLE_BRANCH || DEFAULT_MOODLE_BRANCH;
+  const moodleBranch = normalizeMoodleBranch(process.env.MOODLE_BRANCH) || DEFAULT_MOODLE_BRANCH;
+  if (moodleBranch !== (process.env.MOODLE_BRANCH || "").trim() && process.env.MOODLE_BRANCH) {
+    console.log(`note: moodle-branch ${JSON.stringify(sanitiseForLog(process.env.MOODLE_BRANCH))} read as ${moodleBranch}`);
+  }
+  // Checks that could not run, said to the REVIEWER, not only in the log.
+  // Each of these used to be a single `note:` line in the workflow log, which
+  // no reviewer reads, while the comment looked like every other green one.
+  const caveats = [];
 
   // version.php is the plugin's own declaration of what it is and what it
   // needs. When the plugin repo is the one checked out — the normal case for
@@ -2302,6 +2358,10 @@ async function main() {
   if (!core.ok) {
     // Loud, not silent: a skipped check must never look like a passed one.
     console.log(`note: core-component collision NOT checked — ${core.reason}`);
+    caveats.push(
+      "Whether the plugin claims the name of a plugin Moodle already ships, and whether its dependencies are met: " +
+        `Moodle's component list did not load (${core.reason}).`,
+    );
   }
 
   // The resolved identity, whatever it came from. `plugin-component` is a
@@ -2321,6 +2381,43 @@ async function main() {
   const problems = new Problems();
   problems.check("plugin-component", notCore);
 
+  // Does the playground have the Moodle version asked for? A typo used to boot
+  // the playground's default Moodle in silence while everything printed named
+  // the typo. A definite "no" stops the build (David, 2026-10-21); a host we
+  // cannot read is a caveat, not a refusal.
+  // Only asked of a host a link may point at. Any other host is refused below
+  // by buildPreviewUrl, with the right reason; asking it first would send it a
+  // request and then blame the spelling of the version.
+  const hostAllowed = (() => {
+    try {
+      const u = new URL(playgroundHost);
+      return u.protocol === "https:" && !u.username && !u.password &&
+        parseOrigins(process.env.PLAYGROUND_ORIGINS).includes(u.origin);
+    } catch {
+      return false;
+    }
+  })();
+  const branchOnHost = hostAllowed
+    ? await checkBranchOnHost(playgroundHost, moodleBranch)
+    : { skipped: true };
+  if (branchOnHost.exists === false) {
+    problems.add(
+      "moodle-branch",
+      `${branchOnHost.reason}. Check the spelling, for example MOODLE_500_STABLE.`,
+    );
+  } else if (branchOnHost.unknown) {
+    caveats.push(`Whether the playground has Moodle "${moodleBranch}": ${branchOnHost.unknown}.`);
+  }
+  // A real version the action holds no compatibility data for is allowed, and
+  // said INSIDE the preview, where the reviewer is looking.
+  const bannerMessages = [];
+  if (branchOnHost.exists && !Object.hasOwn(MOODLE_BRANCH_VERSIONS, moodleBranch)) {
+    bannerMessages.push(
+      `This preview runs Moodle "${moodleBranch}"${branchOnHost.release ? ` (${branchOnHost.release})` : ""}, ` +
+        "which the preview action has no data for, so whether this plugin supports it was not checked.",
+    );
+  }
+
   // A parse we could not trust is a REFUSAL. It used to collapse to nulls, and
   // nulls pass every check — so an unreadable version.php was indistinguishable
   // from a permissive one.
@@ -2334,7 +2431,10 @@ async function main() {
 
     const compat = checkMoodleCompatibility(declared, moodleBranch);
     problems.check("moodle-branch", compat);
-    if (compat.ok && compat.reason) console.log(`note: ${compat.reason}`);
+    if (compat.ok && compat.reason) {
+      console.log(`note: ${compat.reason}`);
+      caveats.push(`Moodle-version compatibility: ${compat.reason}.`);
+    }
   }
   if (!declared) {
     // Not fatal. This repo's own dogfood previews a third-party plugin that
@@ -2344,6 +2444,7 @@ async function main() {
       `note: no version.php on disk under ${JSON.stringify(sanitiseForLog(pluginRoot))} and none fetched for ` +
         `${headSha.slice(0, 7)} — Moodle-version compatibility NOT checked`,
     );
+    caveats.push("Moodle-version compatibility: no version.php could be read for this commit.");
   }
 
   // A landing override must stay on the playground's own origin. Validated
@@ -2368,7 +2469,10 @@ async function main() {
   const phpOverride = opt(process.env.PHP_VERSION);
   const phpOk = checkPhpForBranch(phpOverride, moodleBranch);
   problems.check("php-version", phpOk);
-  if (phpOk.ok && phpOk.reason) console.log(`note: ${phpOk.reason}`);
+  if (phpOk.ok && phpOk.reason) {
+    console.log(`note: ${phpOk.reason}`);
+    caveats.push(`PHP version: ${phpOk.reason}.`);
+  }
 
   const loginAs = opt(process.env.LOGIN_AS);
   // The NAME check runs against the maximum of every count, so an account this
@@ -2654,11 +2758,20 @@ async function main() {
     installs: extras.installs,
     themeName: extras.themeName,
   });
+  // The warning banner goes in just before the login step, so it is set by the
+  // time the reviewer's first page renders, and after every step that could
+  // replace the site's configuration (a restored database brings its own).
+  const banner = buildWarningBannerStep(bannerMessages);
+  if (banner) {
+    const at = blueprint.steps.findIndex((st) => st.step === "login");
+    blueprint.steps.splice(at < 0 ? blueprint.steps.length : at, 0, banner);
+  }
   // Hosts other plugins may come from. Comma separated, trimmed, empties
   // dropped so a trailing comma is not a silent empty-string host.
   const url = buildPreviewUrl({
     playgroundHost,
     blueprint,
+    allowedOrigins: parseOrigins(process.env.PLAYGROUND_ORIGINS),
     dataHosts: hosts,
     requireSelfUrl: pluginZipUrl(headRepo, headSha),
   });
@@ -2710,7 +2823,21 @@ async function main() {
       `::warning title=playground-host::could not confirm this playground implements ` +
         `every step in the blueprint — ${sanitiseForLog(hostVerdict.unknown).replace(/\r?\n/g, " ")}`,
     );
+    caveats.push(`Whether the playground can run every step in this preview: ${hostVerdict.unknown}.`);
   }
+  // Which build the link was made against, recorded rather than verified:
+  // nothing here opens the link. Said out loud when it cannot be read.
+  const hostVersion = await fetchHostVersion(playgroundHost);
+  if (hostVersion.unknown) {
+    console.log(
+      `::warning title=playground-host::could not read the playground's build record — ` +
+        `${sanitiseForLog(hostVersion.unknown).replace(/\r?\n/g, " ")}`,
+    );
+  }
+  setOutput("playground-version", hostVersion.buildVersion || "");
+  // One line, for the comment step. Its own text is ours; the reasons inside
+  // can carry fetched text, so render-comment cleans each one again.
+  setOutput("caveats", caveats.map((c) => sanitiseForLog(c).replace(/\s+/g, " ")).join(" ¦ "));
   setOutput("plugin-type", type);
   setOutput("plugin-name", name);
   setOutput("head-sha", headSha);
@@ -2744,6 +2871,8 @@ async function main() {
     name,
     headSha,
     url,
+    hostVersionLine: describeHostVersion(hostVersion),
+    caveats,
     component: declared?.component || `${type}_${name}`,
     headRepo,
     extras,
