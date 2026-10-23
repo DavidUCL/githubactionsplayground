@@ -86,10 +86,10 @@ jobs:
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      # The sibling playground checkout does not exist on a runner, so check 1e
-      # waives itself. That is correct here — 1e compares against a working
-      # copy, and a CI runner has none — but it means the plugin-directory
-      # drift check is NOT covered by CI. Left explicit rather than hidden.
+      # No playground source here, so checks 1e and 1l waive themselves and the
+      # tally names them. Deliberate: this job gates pull requests and must
+      # depend on this repo only, or a playground commit could block an
+      # unrelated PR. gate-live clones the playground source and runs both.
       - name: Run the gate
         env:
           MUTATIONS_SHARD: ${{ matrix.shard }}
@@ -124,12 +124,30 @@ jobs:
       - name: Install chromium
         run: npx playwright install --with-deps chromium
 
+      # Checks 1e and 1l compare the action against the playground's own source
+      # (its plugin-directory map and the URL parameters it reads). A runner has
+      # no sibling checkout, so without this they waived on every CI run. Shallow
+      # clone of the deploy repo's default branch, outside the workspace so no
+      # check that scans this repo sees it. Note this is the playground's latest
+      # commit, which can differ from what the live host serves until it is
+      # redeployed (scripts/check-host-version.mjs reports that nightly).
+      # The repo is named owner/name, as playground-version.yml names it: a full
+      # URL here would read to check 1j as a hardcoded playground host.
+      - name: Clone the playground source for checks 1e and 1l
+        env:
+          PLAYGROUND_REPO: DavidUCL/moodle-playground
+        run: |
+          git clone --depth 1 --quiet "https://github.com/$PLAYGROUND_REPO" "$RUNNER_TEMP/moodle-playground"
+          echo "playground source at $(git -C "$RUNNER_TEMP/moodle-playground" rev-parse --short HEAD)"
+
       # NSS_LIBS is the local-machine shim for a broken system NSS; a GitHub
       # runner has a working one, so it stays unset. verify.sh reads
       # LD_LIBRARY_PATH="${NSS_LIBS:-}", which is empty and harmless here.
       - name: Run the gate with LIVE checks
         env:
           LIVE: "1"
+          PLAYGROUND_SRC: ${{ runner.temp }}/moodle-playground/src/blueprint/steps/moodle-plugins.js
+          RESOLVER_SRC: ${{ runner.temp }}/moodle-playground/src/shared/version-resolver.js
         run: ./verify.sh
 
       - name: Upload evidence
