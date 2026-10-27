@@ -31,6 +31,8 @@
 // hand-typed: a hand-typed count is a second source of truth that silently
 // stops matching the fixture.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** Exit codes. Distinct so the boot log's "exit code N" names the failure. */
 export const ASSERT_CODES = {
   0: "the restored course is present and complete",
@@ -94,7 +96,7 @@ export function buildRestoreAssertion(expected) {
   if (/[\x00-\x1f\x7f]/.test(code)) {
     throw new Error("restore assertion: generated code contains a control character");
   }
-  return { step: "runPhpCode", code, critical: true };
+  return ownStep({ step: "runPhpCode", code, critical: true });
 }
 
 /** Turn a boot-log exit code back into a sentence, for the summary. */

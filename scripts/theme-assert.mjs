@@ -36,6 +36,8 @@
 // default_exception_handler, which builds a renderer inside a CLI script.
 // Always exit(N) explicitly.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** Exit codes. Distinct so the boot log's "exit code N" names the failure. */
 export const THEME_CODES = {
   0: "the theme is installed and active",
@@ -139,7 +141,7 @@ export function buildThemeAssertion(name) {
       `exit(0);`,
     "theme assertion",
   );
-  return { step: "runPhpCode", code, critical: true };
+  return ownStep({ step: "runPhpCode", code, critical: true });
 }
 
 /**
@@ -209,7 +211,7 @@ export function buildThemeCssWarmup(name) {
   // NOT critical. See the docblock: a WASM heap abort here would otherwise take
   // the whole preview down, which is worse than the unstyled site this exists
   // to avoid.
-  return { step: "runPhpCode", code, critical: false };
+  return ownStep({ step: "runPhpCode", code, critical: false });
 }
 
 /** Turn a boot-log exit code back into a sentence, for the summary. */

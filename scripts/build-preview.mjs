@@ -60,6 +60,7 @@ import {
 } from "./plugin-version.mjs";
 import { checkBranchOnHost, normalizeMoodleBranch } from "./host-branch.mjs";
 import { buildWarningBannerStep } from "./warning-banner.mjs";
+import { isOwnStep } from "./own-steps.mjs";
 
 const SHA_RE = /^[0-9a-f]{40}$/;
 // Deliberately stricter than GitHub: a segment of `.` or `..` is folded away
@@ -1616,7 +1617,11 @@ export function assertGated(
   if (problems.length) {
     throw new Error(`refusing to build a link from a blueprint our own gate rejects: ${problems.join("; ")}`);
   }
-  return riskySteps || [];
+  // A step type stays on the risky list only while some step of that type is
+  // not one this action wrote (own-steps.mjs). Our own assertions and banner
+  // are runPhpCode, and naming them made every preview "modify Moodle itself".
+  const foreign = new Set(blueprint.steps.filter((st) => !isOwnStep(st)).map((st) => st.step));
+  return (riskySteps || []).filter((name) => foreign.has(name));
 }
 
 

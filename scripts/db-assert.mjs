@@ -47,6 +47,8 @@
 // restore would compare the pre-restore value with itself and pass. The point
 // of this program is to look at the database that is actually installed.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** Exit codes. Distinct so the boot log's "exit code N" names the failure. */
 export const DB_ASSERT_CODES = {
   0: "the restored database is the one that was checked, and it is usable",
@@ -151,7 +153,7 @@ export function buildDatabaseAssertion(expected) {
   if (code.includes("//")) {
     throw new Error("database assertion: generated code contains a // comment on one line");
   }
-  return { step: "runPhpCode", code, critical: true };
+  return ownStep({ step: "runPhpCode", code, critical: true });
 }
 
 /** Turn a boot-log exit code back into a sentence, for the summary. */
