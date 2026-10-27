@@ -44,6 +44,8 @@
 // default_exception_handler, which builds a renderer inside a CLI script.
 // Always exit(N) explicitly.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** Exit codes this step can produce, for the boot-log explainer. Block 51-59. */
 export const LANG_CODES = {
   51: "a language pack the link asked for is NOT installed — the site would " +
@@ -174,5 +176,5 @@ export function buildLangAssertion({ codes }) {
   // `error_log` is for a human reading console.txt; the gate never depends on
   // it, because that is the only channel a step exiting 0 can reach and a check
   // built on log text is a check built on a courtesy.
-  return { step: "runPhpCode", code, critical: true };
+  return ownStep({ step: "runPhpCode", code, critical: true });
 }

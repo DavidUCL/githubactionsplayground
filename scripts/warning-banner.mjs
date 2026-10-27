@@ -16,6 +16,8 @@
 // itself, every message HTML-escaped, and passes it to PHP as base64 so no
 // quoting in the text can break out of the PHP string.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** HTML-escape a message for the banner. */
 export function escapeHtml(s) {
   return String(s)
@@ -44,10 +46,10 @@ export function buildWarningBannerStep(messages) {
   const list = (messages || []).map((m) => String(m).trim()).filter(Boolean);
   if (!list.length) return null;
   const b64 = Buffer.from(bannerHtml(list), "utf8").toString("base64");
-  return {
+  return ownStep({
     step: "runPhpCode",
     code:
       "<?php define('CLI_SCRIPT', true); require('/www/moodle/config.php'); " +
       `set_config('additionalhtmltopofbody', base64_decode('${b64}')); exit(0);`,
-  };
+  });
 }

@@ -374,6 +374,13 @@ and rebuilds a stylesheet, and that is a separate fix; a builder-generated
 `runPhpCode` already exists for the post-restore assertion, so the badge fires
 on sample-content previews today and this control does not create the problem.
 
+**Fixed 2026-10-27: the builder's own steps no longer earn the badge.** Every
+`runPhpCode` the builder generates is marked by object identity
+(`scripts/own-steps.mjs`), and `assertGated` drops a step type from the risky
+list when every step of that type is ours. The badge now fires only for a step
+someone else wrote. The mark is never written into the blueprint, so a copy of
+our step does not carry it (`test/own-steps.test.mjs`).
+
 The step also rebuilds the active theme's CSS. The runtime warms exactly one
 stylesheet at boot and the name is hardcoded to `boost`, before the blueprint
 runs — so any theme activated by a blueprint is compiled lazily, in WASM, on

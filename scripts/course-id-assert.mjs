@@ -43,6 +43,8 @@
 // it invalidates this premise entirely. That is the next panel's problem and is
 // recorded as such rather than half-guarded here.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** Exit codes this step can produce, for the boot-log explainer. Block 61-69. */
 export const COURSE_ID_CODES = {
   61: "the review course does not exist at the point its id was checked",
@@ -114,5 +116,5 @@ export function buildCourseIdAssertion({ courseId, shortname }) {
   // and `restore-database-*` will make more such paths. A code that says "no
   // course" is worth having the day one of them reaches here; without it that
   // case would report 62 and blame the numbering.
-  return { step: "runPhpCode", code, critical: true };
+  return ownStep({ step: "runPhpCode", code, critical: true });
 }

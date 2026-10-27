@@ -37,6 +37,8 @@
 // default_exception_handler, which builds a renderer inside a CLI script.
 // Always exit(N) explicitly.
 
+import { ownStep } from "./own-steps.mjs";
+
 /** Exit codes this step can produce, for the boot-log explainer. */
 export const COURSE_CODES = {
   41: "the review course is NOT in the format the link asked for — Moodle " +
@@ -113,5 +115,5 @@ export function buildCourseAssertion({ format, shortname }) {
   // step that exits 0, and a check built on log text is a check built on a
   // courtesy.
 
-  return { step: "runPhpCode", code, critical: true };
+  return ownStep({ step: "runPhpCode", code, critical: true });
 }
