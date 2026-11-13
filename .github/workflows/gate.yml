@@ -146,6 +146,7 @@ jobs:
       - name: Run the gate with LIVE checks
         env:
           LIVE: "1"
+          BV_EVIDENCE_DIR: ${{ runner.temp }}/gate-evidence
           PLAYGROUND_SRC: ${{ runner.temp }}/moodle-playground/src/blueprint/steps/moodle-plugins.js
           RESOLVER_SRC: ${{ runner.temp }}/moodle-playground/src/shared/version-resolver.js
         run: ./verify.sh
@@ -157,5 +158,6 @@ jobs:
           name: gate-live-evidence
           path: |
             /tmp/bv-verify-*.log
+            ${{ runner.temp }}/gate-evidence
           if-no-files-found: ignore
-          retention-days: 7
+          retention-days: 30

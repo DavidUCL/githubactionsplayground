@@ -1450,7 +1450,18 @@ else
 fi
 
 WORK=$(mktemp -d)
-trap 'rm -rf "$WORK"' EXIT
+# BV_EVIDENCE_DIR (set by gate.yml's LIVE job) keeps every boot folder, the ones
+# holding a meta.json, before the work folder is deleted. Without it a red LIVE
+# run left only the .log files, and those for 7 days (run 41438518298).
+keep_evidence() {
+    if [[ -n "${BV_EVIDENCE_DIR:-}" ]]; then
+        mkdir -p "$BV_EVIDENCE_DIR"
+        find "$WORK" -name meta.json -printf '%h\n' 2>/dev/null | while read -r dir; do
+            cp -r "$dir" "$BV_EVIDENCE_DIR/$(echo "${dir#"$WORK"/}" | tr / _)"
+        done
+    fi
+}
+trap 'keep_evidence; rm -rf "$WORK"' EXIT
 
 stage_preflight() { # stage_preflight <dir> <expectations file>
     python3 -c "
