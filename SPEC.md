@@ -15,7 +15,7 @@ Inputs (all cross into scripts via `env:`, never `${{ }}` in `run:`):
 | `timeout-seconds` | no | `420` | how long the browser may run before the attempt is abandoned; expiry → `infra_fail`/`timeout`. Measured boot on a GitHub runner: 84 s for a 7-step blueprint with 3 plugins (26 s on a dev laptop), whole job 2m24s — size this off the runner figure, not a local one |
 | `blueprint-hosts` | no | `raw.githubusercontent.com` | comma-separated allowlist for `blueprint-url` host |
 | `data-hosts` | no | `raw.githubusercontent.com` | comma-separated allowlist for `restoreDatabase`/ZIP URL hosts inside the blueprint |
-| `accepted-origins` | no | `https://ateeducacion.github.io` | extra origins the boot may legitimately finish on; the `playground-host` origin is always accepted. Needed because production `moodle-playground.com` redirects to its Pages origin — a custom deployment that redirects elsewhere must list it here or every run is `infra_fail/nav_fail` |
+| `accepted-origins` | no | `https://ateeducacion.github.io` | extra origins the boot may legitimately finish on; the `playground-host` origin is always accepted. Needed because production `moodle-playground.com` redirects to its Pages origin — a custom deployment that redirects elsewhere must list it here or every run is `infra_fail/wrong_origin` |
 | `artifacts-dir` | no | `boot-verify-out` | where log/console/screenshots/verdict land. Must be relative and free of `..`: preflight recursively deletes it |
 
 Outputs:
@@ -46,7 +46,10 @@ Retry policy: retry once on `infra_fail` only.
 | `blueprint_unsafe_string` | rejected | a string carries control characters — it would forge log lines once echoed into the boot log |
 | `blueprint_unbindable` | rejected | a plugin step lacks explicit `pluginType`/`pluginName`, so the extraction path could not be bound |
 | `browser_launch_failed` | infra_fail | Playwright/chromium failed to start |
-| `nav_fail` | infra_fail | navigation error, page crash, or final origin ≠ playground host |
+| `nav_fail` | infra_fail | the page did not load (navigation error) |
+| `page_crashed` | infra_fail | the page crashed |
+| `wrong_origin` | infra_fail | final origin ≠ playground host or an `accepted-origins` entry |
+| `loopback_failed` | infra_fail | the browser was not served the gated blueprint bytes (hash mismatch, or the route never fired) |
 | `logs_panel_missing` | infra_fail | `#log-panel` never appeared (never a fallback) |
 | `timeout` | infra_fail | wall-clock expired before boot anchor |
 | `anchor_drift` | infra_fail | boot completed by weak signals but strict anchors unmatched — playground log format changed (canary is the drift detector) |
@@ -59,7 +62,8 @@ Retry policy: retry once on `infra_fail` only.
 Precedence (implemented as one ordered list in `assert.mjs`):
 
 ```
-browser_launch_failed > nav_fail > logs_panel_missing > timeout >
+browser_launch_failed > nav_fail > page_crashed > wrong_origin >
+loopback_failed > logs_panel_missing > timeout >
 anchor_drift > resolver_fallback > step_failed > upgrade_soft_fail >
 step_count_mismatch > plugin_binding_mismatch
 ```
@@ -152,7 +156,7 @@ The browser is ALWAYS served the blueprint bytes preflight fetched, gated
 and hashed, via Playwright route interception; chromium never re-fetches
 the URL. Otherwise a mutable ref (a branch) can be swapped in the seconds
 between gate and boot, and the verdict would certify bytes that never ran.
-Two independent facts must hold or the verdict is `infra_fail/nav_fail`:
+Two independent facts must hold or the verdict is `infra_fail/loopback_failed`:
 sha256(local file) == `expectations.blueprintSha256`, **and**
 `meta.loopback_served >= 1` (the route actually fired — the hash alone
 compares the same file to itself and proves nothing).

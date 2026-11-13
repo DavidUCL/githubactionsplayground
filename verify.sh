@@ -1267,12 +1267,12 @@ print(f'default host: {declared}')
 PY_HOST
 check $? 1j "the default playground host is the same in the action and the script"
 
-# `accepted-origins` WIDENS a1_nav: the boot may finish on playground-host OR
+# `accepted-origins` WIDENS a1_origin: the boot may finish on playground-host OR
 # anything listed there (assert.mjs:142-147). It once defaulted to the
 # ateeducacion origin, from when playground-host defaulted to
 # moodle-playground.com which 301s there. After the host default moved to our
 # own build, every default run was quietly accepting a boot that ended on a
-# third party's origin — exactly what a1_nav exists to catch. The two defaults
+# third party's origin — exactly what a1_origin exists to catch. The two defaults
 # must stay coherent: extra origins are only ever needed for a host that
 # redirects.
 python3 - <<'PY_ORIGINS'

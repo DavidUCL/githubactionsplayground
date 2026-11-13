@@ -39,13 +39,13 @@ inputs:
       "https://ateeducacion.github.io" if you point playground-host at
       moodle-playground.com, which 301s there.
 
-      This WIDENS a security check: a1_nav passes when the boot's final origin
+      This WIDENS a security check: a1_origin passes when the boot's final origin
       is playground-host OR anything listed here (assert.mjs:142-147). It
       defaulted to the ateeducacion origin back when playground-host defaulted
       to moodle-playground.com; once the host default moved to our own build
       the pairing stopped making sense, and every default run was quietly
       accepting a boot that ended on a third party's origin — the precise thing
-      a1_nav exists to catch. Empty by default now.
+      a1_origin exists to catch. Empty by default now.
     required: false
     default: ""
   artifacts-dir:

@@ -77,8 +77,31 @@ test("browser never launched → infra_fail/browser_launch_failed", () => {
   assert.equal(v.error_class, "browser_launch_failed");
 });
 
-test("unexpected final origin → infra_fail/nav_fail", () => {
+test("page did not load → infra_fail/nav_fail", () => {
+  const v = assess(mutate(golden, (c) => (c.meta.nav_ok = false)));
+  assert.equal(v.status, "infra_fail");
+  assert.equal(v.error_class, "nav_fail");
+});
+
+test("unexpected final origin → infra_fail/wrong_origin", () => {
   const v = assess(mutate(golden, (c) => (c.meta.final_url = "https://evil.example/")));
+  assert.equal(v.status, "infra_fail");
+  assert.equal(v.error_class, "wrong_origin");
+});
+
+test("blueprint not served by the loopback → infra_fail/loopback_failed", () => {
+  const v = assess(mutate(golden, (c) => (c.meta.loopback_served = 0)));
+  assert.equal(v.status, "infra_fail");
+  assert.equal(v.error_class, "loopback_failed");
+});
+
+test("a page that did not load outranks a wrong origin", () => {
+  const v = assess(
+    mutate(golden, (c) => {
+      c.meta.nav_ok = false;
+      c.meta.final_url = "https://evil.example/";
+    }),
+  );
   assert.equal(v.error_class, "nav_fail");
 });
 
@@ -123,10 +146,10 @@ test("timed out with incomplete step sequence → infra_fail/timeout", () => {
   assert.equal(v.error_class, "timeout");
 });
 
-test("page crash → infra_fail/nav_fail", () => {
+test("page crash → infra_fail/page_crashed", () => {
   const v = assess(mutate(golden, (c) => (c.meta.page_crashed = true)));
   assert.equal(v.status, "infra_fail");
-  assert.equal(v.error_class, "nav_fail");
+  assert.equal(v.error_class, "page_crashed");
 });
 
 test("step failure line → verify_fail/step_failed", () => {

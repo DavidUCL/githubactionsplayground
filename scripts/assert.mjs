@@ -164,6 +164,9 @@ export const PLUGIN_TYPE_DIRS = {
 const PRECEDENCE = [
   "browser_launch_failed",
   "nav_fail",
+  "page_crashed",
+  "wrong_origin",
+  "loopback_failed",
   "logs_panel_missing",
   "timeout",
   "anchor_drift",
@@ -211,7 +214,10 @@ export function assess({ expectations, meta, bootLog, consoleLog, headSha = "", 
         return false;
       }
     })();
-    check("a1_nav", Boolean(meta.nav_ok) && originOk && !meta.page_crashed, "nav_fail");
+    // Four separate labels, so a red run says which of these happened.
+    check("a1_nav", Boolean(meta.nav_ok), "nav_fail");
+    check("a1_page_crash", !meta.page_crashed, "page_crashed");
+    check("a1_origin", originOk, "wrong_origin");
     check("a1_logs_panel", Boolean(meta.logs_panel_found), "logs_panel_missing");
 
     // Mandatory loopback: the browser must have been SERVED the gated bytes.
@@ -222,7 +228,7 @@ export function assess({ expectations, meta, bootLog, consoleLog, headSha = "", 
       Boolean(exp.blueprintSha256) &&
         meta.loopback_sha256 === exp.blueprintSha256 &&
         meta.loopback_served >= 1,
-      "nav_fail",
+      "loopback_failed",
     );
   }
 
